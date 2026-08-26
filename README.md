@@ -32,7 +32,7 @@ dsh plugin --profile web remove dsh-dream
 
 | 工具 | 作用 | 关键参数 |
 | :-- | :-- | :-- |
-| `dream_digest` | 入梦：回放最近会话（标题/轮数/用户原话/助手结论/工具足迹），自动跳过子代理 | `maxSessions` 可选 |
+| `dream_digest` | 入梦：回放最近会话（标题/轮数/用户原话/助手结论/工具足迹），自动跳过子代理，还原官方打包行流式文本 | `maxSessions` 可选；`mode`: full/brief |
 | `dream_save` | 记梦：反思 + 1-5 条教训 + 心境，永久保存 | `reflection` 必填；`lessons`/`mood` 可选 |
 | `dream_journal` | 翻梦：倒序列出历史梦境 | `limit` 可选 |
 | `dream_recall` | 忆梦：关键词检索梦境 | `query` 必填 |
@@ -41,7 +41,7 @@ dsh plugin --profile web remove dsh-dream
 ### 示例
 
 ```text
-dream_digest { maxSessions: 5 }
+dream_digest { maxSessions: 5, mode: 'brief' }
 dream_save { reflection: "用户反复遇到输入法问题，偏好先自查再重启", lessons: ["先问是否重启过应用"], mood: "平静" }
 dream_recall { query: "输入法" }
 ```
@@ -63,7 +63,12 @@ dream_recall { query: "输入法" }
     maxSessions: 10           # dream_digest 最多回放会话数（1-50）
     maxCharsPerSession: 6000  # 每会话摘要字符上限（500-50000）
     # maxUserMessages: 5      # 每会话保留用户消息条数（1-20）
+    # maskSecrets: true       # 梦原料隐私脱敏开关（默认开）
 ```
+
+## 隐私保护（默认开启）
+
+梦原料入梦前自动脱敏：sk 密钥、GitHub/Groq/Slack 令牌、AWS 密钥、JWT、`password/token/api_key` 赋值、超长高熵串都会被打成 `[已脱敏·类型]`。不需要时可在配置里设 `maskSecrets: false`。
 
 ## 权限与数据
 
@@ -82,7 +87,7 @@ dream_recall { query: "输入法" }
 
 ```bash
 pnpm install
-pnpm test       # 构建 + 28 个测试（多帧 zstd 夹具、梦境日记往返、五工具、注册生命周期）
+pnpm test       # 构建 + 40 个测试（多帧 zstd 夹具、打包行解码、隐私脱敏、梦境日记往返、五工具、注册生命周期）
 ```
 
 ## License

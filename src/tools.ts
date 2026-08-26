@@ -5,6 +5,7 @@
  */
 import { existsSync } from 'node:fs'
 import { type ResolvedDreamConfig } from './config.js'
+import { maskSecrets } from './mask.js'
 import { readDreams, saveDream, searchDreams } from './journal.js'
 import { digestSessionFile, listSessionFiles, type SessionDigest } from './sessions.js'
 
@@ -77,6 +78,7 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
     description: '入梦：回放最近会话的梦原料。读取 DSH 会话日志（多帧 zstd），返回最近 N 个会话的标题、轮数、用户原话摘录、助手结论尾段与工具足迹；自动跳过子代理会话。拿到摘要后请反思并用 dream_save 记梦。',
     parameters: compileParameters({
       maxSessions: { type: 'integer', description: '回放会话数（可选，默认配置值，上限 50）。' },
+      mode: { type: 'string', description: '摘要模式：full（默认，全量原料）/ brief（仅意图与结论，省 token）。' },
     }),
     output: {
       schema: baseSchema,
@@ -95,6 +97,8 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       const args = asRecord(rawArgs)
       const maxRaw = args.maxSessions
       const max = typeof maxRaw === 'number' && Number.isInteger(maxRaw) ? Math.min(50, Math.max(1, maxRaw)) : cfg.maxSessions
+      const mode = optionalString(args, 'mode') === 'brief' ? 'brief' : 'full'
+      const mask = (text: string): string => cfg.maskSecrets ? maskSecrets(text) : text
       const files = listSessionFiles(cfg.sessionsRoot, max * 3)
       const sessions: Array<Record<string, unknown>> = []
       for (const file of files) {
@@ -110,13 +114,13 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           cwd: digest.cwd,
           turns: digest.turns,
           agentPreset: digest.agentPreset,
-          userMessages: digest.userMessages.map((msg) => clip(msg, 400)),
-          assistantTail: digest.assistantTail.map((msg) => clip(msg, 600)),
+          userMessages: digest.userMessages.map((msg) => clip(mask(msg), 400)),
+          assistantTail: digest.assistantTail.map((msg) => clip(mask(msg), 600)),
           toolCalls: [...new Set(digest.toolCalls)],
-          digestText: clip(buildDigestText(digest), cfg.maxCharsPerSession),
+          digestText: clip(mask(buildDigestText(digest)), mode === 'brief' ? 400 : cfg.maxCharsPerSession),
         })
       }
-      return { count: sessions.length, sessions }
+      return { count: sessions.length, sessions, mode }
     },
     timeoutMs: 120000,
   }
@@ -253,6 +257,9 @@ export function buildDigestText(digest: SessionDigest): string {
   if (digest.assistantTail.length > 0) {
     lines.push('最终回应：')
     for (const msg of digest.assistantTail) lines.push('  < ' + msg.replace(/\n/g, ' ').slice(0, 300))
+  } else if (digest.streamTail !== '') {
+    lines.push('最终回应（流式还原）：')
+    lines.push('  < ' + digest.streamTail.slice(-600).replace(/\n/g, ' '))
   }
   if (digest.toolCalls.length > 0) {
     lines.push('工具足迹：' + [...new Set(digest.toolCalls)].slice(0, 30).join(', '))

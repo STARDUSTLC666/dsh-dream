@@ -34,6 +34,8 @@ export interface SessionDigest {
   userMessages: string[]
   assistantTail: string[]
   toolCalls: string[]
+  /** 流式文本还原尾部（来自 text-chunks 打包行，assistant/message 缺失时的兜底梦原料）。 */
+  streamTail: string
   endedAt: number | null
 }
 
@@ -105,6 +107,7 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
     userMessages: [],
     assistantTail: [],
     toolCalls: [],
+    streamTail: '',
     endedAt: null,
   }
   for (const line of lines.slice(1)) {
@@ -132,6 +135,17 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
         if (digest.assistantTail.length > 3) digest.assistantTail.shift()
       }
     } else if (type === 'tool/call') {
+      const name = typeof data === 'object' && data !== null ? String((data as Record<string, unknown>).name ?? '') : ''
+      if (name !== '' && digest.toolCalls.length < 200) digest.toolCalls.push(name)
+    } else if (type === 'text-chunks') {
+      // 官方打包行：{ data: { texts: string[], ... } }，还原流式正文
+      const texts = typeof data === 'object' && data !== null ? (data as Record<string, unknown>).texts : undefined
+      if (Array.isArray(texts)) {
+        digest.streamTail += texts.filter((t): t is string => typeof t === 'string').join('')
+        if (digest.streamTail.length > 4000) digest.streamTail = digest.streamTail.slice(-4000)
+      }
+    } else if (type === 'tool-call-chunks') {
+      // 官方打包行：还原工具名足迹
       const name = typeof data === 'object' && data !== null ? String((data as Record<string, unknown>).name ?? '') : ''
       if (name !== '' && digest.toolCalls.length < 200) digest.toolCalls.push(name)
     }

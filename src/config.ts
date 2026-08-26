@@ -18,6 +18,8 @@ export interface ResolvedDreamConfig {
   maxCharsPerSession: number
   /** 每个会话最多保留的用户消息条数（1-20，默认 5）。 */
   maxUserMessages: number
+  /** 梦原料入梦前是否做隐私脱敏（默认 true）。 */
+  maskSecrets: boolean
 }
 
 function str(value: unknown, fallback: string): string {
@@ -39,5 +41,6 @@ export function resolveConfig(raw?: Record<string, unknown> | null): ResolvedDre
     maxSessions: clamp(cfg.maxSessions, 10, 1, 50),
     maxCharsPerSession: clamp(cfg.maxCharsPerSession, 6000, 500, 50000),
     maxUserMessages: clamp(cfg.maxUserMessages, 5, 1, 20),
+    maskSecrets: cfg.maskSecrets !== false,
   }
 }

@@ -33,3 +33,19 @@ export function makeMainSessionLines(id) {
     makeEvent('turn/end', 9, {}),
   ]
 }
+
+/** 官方 text-chunks 打包行：{ type, seq0, time0, data: { turn, step, index, dt, texts } } */
+export function makeTextChunksRow(seq0, texts) {
+  return JSON.stringify({
+    type: 'text-chunks', seq0, time0: 1786646800000 + seq0,
+    data: { turn: 1, step: 1, index: 0, dt: new Array(Math.max(0, texts.length - 1)).fill(0), texts },
+  })
+}
+
+/** 官方 tool-call-chunks 打包行 */
+export function makeToolCallChunksRow(seq0, name, argsParts) {
+  return JSON.stringify({
+    type: 'tool-call-chunks', seq0, time0: 1786646800000 + seq0,
+    data: { turn: 1, step: 1, index: 1, dt: new Array(Math.max(0, argsParts.length - 1)).fill(0), id: 'call_x', name, args: argsParts },
+  })
+}

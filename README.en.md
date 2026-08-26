@@ -23,13 +23,17 @@ Restart the web service afterwards. The dream journal lives at `~/.dsh/.dsh-drea
 
 | Tool | Purpose | Key params |
 | :-- | :-- | :-- |
-| `dream_digest` | Replay recent sessions (title/turns/user quotes/assistant conclusions/tool footprint); subagent sessions skipped | `maxSessions` |
+| `dream_digest` | Replay recent sessions (title/turns/user quotes/assistant conclusions/tool footprint); subagent sessions skipped; official packed-chunk rows decoded | `maxSessions`; `mode`: full/brief |
 | `dream_save` | Write a reflection + 1-5 lessons + mood to the permanent journal | `reflection` required |
 | `dream_journal` | List dreams, newest first | `limit` |
 | `dream_recall` | Keyword search across the journal | `query` required |
 | `dream_health` | Self-check: sessions dir / dream count / config summary | — |
 
 The bundled `dream-protocol` skill teaches the agent when and how to dream (and the journaling discipline: patterns only, never secrets).
+
+## Privacy (on by default)
+
+Dream material is masked before journaling: sk keys, GitHub/Groq/Slack tokens, AWS keys, JWTs, `password/token/api_key` assignments and long high-entropy strings become `[masked·type]`. Disable with `maskSecrets: false`.
 
 ## Permissions & data
 
@@ -39,7 +43,7 @@ Read-only access to the sessions directory; appends JSONL to the journal directo
 
 ```bash
 pnpm install
-pnpm test   # build + 28 tests (multi-frame zstd fixtures, journal round-trip, five tools, registration lifecycle)
+pnpm test   # build + 40 tests (multi-frame zstd fixtures, packed-chunk decoding, privacy masking, journal round-trip, five tools, registration lifecycle)
 ```
 
 ## License

@@ -36,6 +36,7 @@ dsh plugin --profile web remove dsh-dream
 | `dream_save` | 记梦：反思 + 1-5 条教训 + 心境，永久保存 | `reflection` 必填；`lessons`/`mood` 可选 |
 | `dream_journal` | 翻梦：倒序列出历史梦境 | `limit` 可选 |
 | `dream_recall` | 忆梦：关键词检索梦境 | `query` 必填 |
+| `dream_bridge` | 渡梦：把高频教训幂等合并进 AGENTS.md，梦变成长期记忆 | `path` 必填；`maxLessons` 可选 |
 | `dream_health` | 自检：会话目录/梦境计数/配置汇总 | 无 |
 
 ### 示例
@@ -44,7 +45,12 @@ dsh plugin --profile web remove dsh-dream
 dream_digest { maxSessions: 5, mode: 'brief' }
 dream_save { reflection: "用户反复遇到输入法问题，偏好先自查再重启", lessons: ["先问是否重启过应用"], mood: "平静" }
 dream_recall { query: "输入法" }
+dream_bridge { path: "AGENTS.md", maxLessons: 10 }
 ```
+
+## 渡梦：让梦变成长期记忆
+
+`dream_bridge` 把梦境日记里出现频次最高的教训合并进目标 `AGENTS.md`：带 `<!-- dsh-dream:lessons:start/end -->` 标记块，重复执行只刷新块内内容（幂等），反复梦到的教训会标注次数。`dream_journal` 同时给出心境分布与最常梦到的教训统计。
 
 ## 做梦协议（随包技能）
 
@@ -87,7 +93,7 @@ dream_recall { query: "输入法" }
 
 ```bash
 pnpm install
-pnpm test       # 构建 + 40 个测试（多帧 zstd 夹具、打包行解码、隐私脱敏、梦境日记往返、五工具、注册生命周期）
+pnpm test       # 构建 + 48 个测试（多帧 zstd 夹具、打包行解码、隐私脱敏、梦境日记往返、记忆桥接幂等、统计、六工具、注册生命周期）
 ```
 
 ## License

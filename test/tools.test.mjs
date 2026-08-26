@@ -25,7 +25,7 @@ const recall = tools.find((t) => t.name === 'dream_recall')
 const health = tools.find((t) => t.name === 'dream_health')
 
 test('构建 5 个工具且名单正确', () => {
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['dream_digest', 'dream_health', 'dream_journal', 'dream_recall', 'dream_save'])
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['dream_bridge', 'dream_digest', 'dream_health', 'dream_journal', 'dream_recall', 'dream_save'])
 })
 
 test('dream_digest：回放主会话并跳过子代理', async () => {
@@ -44,6 +44,7 @@ test('dream_save：写入后可被 dream_journal 翻到', async () => {
   assert.match(value.dreams[0].reflection, /输入法问题/)
   const blocks = journal.output.render({}, value)
   assert.match(blocks[0].text, /梦境日记共 1 条/)
+  assert.match(blocks[0].text, /心境分布/)
 })
 
 test('dream_save：空反思抛中文错误', async () => {

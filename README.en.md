@@ -27,7 +27,10 @@ Restart the web service afterwards. The dream journal lives at `~/.dsh/.dsh-drea
 | `dream_save` | Write a reflection + 1-5 lessons + mood to the permanent journal | `reflection` required |
 | `dream_journal` | List dreams, newest first | `limit` |
 | `dream_recall` | Keyword search across the journal | `query` required |
+| `dream_bridge` | Merge top lessons into AGENTS.md (idempotent marker block) — dreams become long-term memory | `path` required |
 | `dream_health` | Self-check: sessions dir / dream count / config summary | — |
+
+`dream_bridge` merges the most frequent dream lessons into a target `AGENTS.md` behind idempotent marker blocks; `dream_journal` also reports mood distribution and top lessons.
 
 The bundled `dream-protocol` skill teaches the agent when and how to dream (and the journaling discipline: patterns only, never secrets).
 
@@ -43,7 +46,7 @@ Read-only access to the sessions directory; appends JSONL to the journal directo
 
 ```bash
 pnpm install
-pnpm test   # build + 40 tests (multi-frame zstd fixtures, packed-chunk decoding, privacy masking, journal round-trip, five tools, registration lifecycle)
+pnpm test   # build + 48 tests (multi-frame zstd fixtures, packed-chunk decoding, privacy masking, journal round-trip, bridge idempotency, stats, six tools, registration lifecycle)
 ```
 
 ## License

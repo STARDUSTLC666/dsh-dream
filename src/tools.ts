@@ -6,7 +6,8 @@
 import { existsSync } from 'node:fs'
 import { type ResolvedDreamConfig } from './config.js'
 import { maskSecrets } from './mask.js'
-import { readDreams, saveDream, searchDreams } from './journal.js'
+import { dreamStats, readDreams, saveDream, searchDreams } from './journal.js'
+import { bridgeDreams } from './bridge.js'
 import { digestSessionFile, listSessionFiles, type SessionDigest } from './sessions.js'
 
 /** 模型可见的内容块。 */
@@ -69,7 +70,7 @@ function clip(text: string, max: number): string {
 
 const baseSchema = { type: 'object', additionalProperties: true } as const
 
-/** 构建五个做梦工具。 */
+/** 构建六个做梦工具。 */
 export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinition[] {
   const cfg = config
 
@@ -167,6 +168,18 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           const d = asRecord(item)
           lines.push('- [' + d.at + ']（' + d.mood + '）' + String(d.reflection ?? '').slice(0, 80))
         }
+        const stats = asRecord(rec.stats)
+        if (typeof stats.total === 'number' && stats.total > 0) {
+          const moods = stats.moods as Record<string, number> | undefined
+          if (moods !== undefined) {
+            lines.push('· 心境分布：' + Object.entries(moods).map(([mood, n]) => mood + '×' + n).join('，'))
+          }
+          const top = Array.isArray(stats.topLessons) ? stats.topLessons : []
+          if (top.length > 0) {
+            const first = asRecord(top[0])
+            lines.push('· 最常梦到的教训：' + first.lesson + '（' + first.count + ' 次）')
+          }
+        }
         return [{ type: 'text', text: lines.join('\n') }]
       },
     },
@@ -175,7 +188,7 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       const limitRaw = args.limit
       const limit = typeof limitRaw === 'number' && Number.isInteger(limitRaw) ? Math.min(50, Math.max(1, limitRaw)) : 10
       const dreams = readDreams(cfg.journalDir, limit)
-      return { count: dreams.length, dreams }
+      return { count: dreams.length, dreams, stats: dreamStats(cfg.journalDir) }
     },
     timeoutMs: 15000,
   }
@@ -212,6 +225,32 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
     timeoutMs: 15000,
   }
 
+  const dreamBridge: DreamToolDefinition = {
+    name: 'dream_bridge',
+    description: '渡梦：把梦境日记里的高频教训合并进目标 AGENTS.md（幂等，带标记块，重复执行只更新块内内容）。让梦真正变成长期记忆。没有梦时会拒绝并提示先做梦。',
+    parameters: compileParameters({
+      path: { type: 'string', required: true, description: '目标文件路径（必填，通常是项目根 AGENTS.md）。' },
+      maxLessons: { type: 'integer', description: '最多桥接教训条数 1-30（默认 10）。' },
+    }),
+    output: {
+      schema: baseSchema,
+      render: (_args, value) => {
+        const rec = asRecord(value)
+        const actionText = rec.action === 'created' ? '新建了' : rec.action === 'replaced' ? '更新了' : '追加到了'
+        return [{ type: 'text', text: '已把 ' + rec.lessonsCount + ' 条梦境教训桥接：' + actionText + ' ' + rec.path + '。梦醒之后，教训长存。' }]
+      },
+    },
+    async execute(rawArgs: unknown) {
+      const args = asRecord(rawArgs)
+      const targetPath = requiredString(args, 'path', '目标文件路径')
+      const maxRaw = args.maxLessons
+      const maxLessons = typeof maxRaw === 'number' && Number.isInteger(maxRaw) ? Math.min(30, Math.max(1, maxRaw)) : 10
+      const result = bridgeDreams(cfg.journalDir, targetPath, maxLessons)
+      return { ok: true, path: targetPath, ...result }
+    },
+    timeoutMs: 15000,
+  }
+
   const dreamHealth: DreamToolDefinition = {
     name: 'dream_health',
     description: 'dsh-dream 自检：检查会话目录是否可读、梦境日记目录是否可用、梦境条数。遇到问题时先运行本工具定位。',
@@ -243,7 +282,7 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
     timeoutMs: 15000,
   }
 
-  return [dreamDigest, dreamSave, dreamJournal, dreamRecall, dreamHealth]
+  return [dreamDigest, dreamSave, dreamJournal, dreamRecall, dreamBridge, dreamHealth]
 }
 
 /** 把会话摘要拼成一段可读文本（供模型一次性阅读）。 */

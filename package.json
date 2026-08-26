@@ -1,6 +1,6 @@
 {
   "name": "dsh-dream",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DSH 做梦插件：agent 在会话间隙回放近期对话（dream_digest）、反思并写入梦境日记（dream_save/journal/recall），沉淀长期教训。多帧 zstd 会话读取，零运行时依赖。",
   "type": "module",
   "main": "lib/index.js",

@@ -58,6 +58,36 @@ export function readDreams(journalDir: string, limit: number): DreamEntry[] {
   return out.reverse().slice(0, limit)
 }
 
+/** 梦境统计：总数、心境分布、高频教训。 */
+export interface DreamStats {
+  total: number
+  moods: Record<string, number>
+  topLessons: Array<{ lesson: string; count: number }>
+}
+
+/** 统计梦境（基于全量日记）。 */
+export function dreamStats(journalDir: string): DreamStats {
+  const dreams = readDreams(journalDir, 100000)
+  const moods: Record<string, number> = {}
+  const lessonCount = new Map<string, number>()
+  for (const dream of dreams) {
+    const mood = dream.mood !== '' ? dream.mood : '平静'
+    moods[mood] = (moods[mood] ?? 0) + 1
+    for (const lesson of dream.lessons) {
+      const key = lesson.toLowerCase()
+      lessonCount.set(key, (lessonCount.get(key) ?? 0) + 1)
+    }
+  }
+  const topLessons = [...lessonCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([key, count]) => {
+      const original = dreams.flatMap((d) => d.lessons).find((l) => l.toLowerCase() === key) ?? key
+      return { lesson: original, count }
+    })
+  return { total: dreams.length, moods, topLessons }
+}
+
 /** 关键词检索梦境（不区分大小写，命中 reflection/lessons）。 */
 export function searchDreams(journalDir: string, query: string, limit: number): DreamEntry[] {
   const needle = query.toLowerCase()

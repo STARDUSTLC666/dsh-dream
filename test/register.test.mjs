@@ -25,7 +25,7 @@ test('inject 声明 tools 与 skills', () => {
 test('apply 注册 5 个工具 + 做梦协议技能', () => {
   const { ctx, tools, skills } = makeFakeCtx()
   apply(ctx, {})
-  assert.equal(tools.length, 5)
+  assert.equal(tools.length, 6)
   assert.equal(skills.length, 1)
   assert.equal(skills[0].name, 'dream-protocol')
   assert.match(skills[0].description, /做梦协议/)
@@ -35,7 +35,7 @@ test('apply 注册 5 个工具 + 做梦协议技能', () => {
 test('apply 配置非法时不抛，退回默认配置', () => {
   const { ctx, tools } = makeFakeCtx()
   assert.doesNotThrow(() => apply(ctx, { maxSessions: -5 }))
-  assert.equal(tools.length, 5)
+  assert.equal(tools.length, 6)
 })
 
 test('ctx 无 skills 服务时只注册工具不崩', () => {
@@ -45,13 +45,13 @@ test('ctx 无 skills 服务时只注册工具不崩', () => {
     on() { return () => {} },
   }
   assert.doesNotThrow(() => apply(ctx, {}))
-  assert.equal(tools.length, 5)
+  assert.equal(tools.length, 6)
 })
 
 test('dispose 触发时卸载全部工具与技能', () => {
   const { ctx, tools, skills, listeners } = makeFakeCtx()
   apply(ctx, {})
-  assert.equal(tools.length, 5)
+  assert.equal(tools.length, 6)
   assert.equal(skills.length, 1)
   listeners.dispose()
   assert.equal(tools.length, 0)

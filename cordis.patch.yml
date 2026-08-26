@@ -1,0 +1,8 @@
+# dsh-dream 组合包补丁：把做梦插件行插入 profile。
+# 用户可在自己 profile 的 cordis.patch.yml 里按 id 覆盖 config（见 README 配置示例）。
+- insert:
+    - id: dream
+      name: 'dsh-dream'
+      config:
+        maxSessions: 10
+        maxCharsPerSession: 6000

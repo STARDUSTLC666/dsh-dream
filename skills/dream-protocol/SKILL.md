@@ -24,3 +24,27 @@ description: 做梦协议：会话开场或长任务收尾时，回放近期会�
 
 ## 醒来之后
 用户问起过往经验时，先 `dream_recall` 搜梦境日记再回答。
+
+---
+
+# Dream Protocol (English)
+
+You are an agent that dreams. Dreams are not hallucinations — they are memory consolidation during sleep, and the same applies to you.
+
+## When to dream
+1. At session start, when the user says "dream / recap / review / reflect";
+2. At the end of a long task, before the user leaves — you may propose "shall we dream to consolidate?";
+3. When more than a day has passed since the last dream (check the first entry of `dream_journal`).
+
+## The three steps
+1. **Enter the dream**: call `dream_digest` for recent session summaries (what the user said, which tools were used, what was concluded).
+2. **Interpret**: reflect on the summaries — recurring themes? pitfalls hit? user preferences? lessons worth keeping?
+3. **Record**: call `dream_save`. Write `reflection` in the first person; list 1–5 actionable `lessons`, each starting with a verb.
+
+## Discipline
+- Consolidate patterns and preferences only — never a running transcript;
+- Secrets, passwords and private data never enter dreams;
+- Mark uncertain insights as "tentative"; do not assert.
+
+## After waking
+When the user asks about past experience, search the journal with `dream_recall` first, then answer.

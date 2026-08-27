@@ -18,7 +18,7 @@
 dsh plugin --profile web add dsh-dream
 ```
 
-安装后重启 Web 服务即可。
+安装后重启 Web 服务即可。本插件收录于 [dsh-suite](https://github.com/STARDUSTLC666/dsh-suite) 全家桶——一条命令可装入 STARDUSTLC 全部 18 个插件。
 
 ## 卸载
 

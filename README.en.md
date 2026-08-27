@@ -13,7 +13,7 @@ Verified against `@deepseek-ai/dsh@0.1.1-rc.2` (2026-08-26). Follows the cordis 
 ## Install / Uninstall
 
 ```bash
-dsh plugin --profile web add dsh-dream
+dsh plugin --profile web add github:STARDUSTLC666/dsh-dream
 dsh plugin --profile web remove dsh-dream
 ```
 

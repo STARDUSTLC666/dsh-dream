@@ -4,7 +4,7 @@
 
 > **会做梦的 agent**：会话回放（梦原料）→ 反思（解梦）→ 梦境日记（记忆巩固）。
 
-![npm version](https://img.shields.io/npm/v/dsh-dream?label=npm&color=blue) ![license](https://img.shields.io/npm/l/dsh-dream) ![stars](https://img.shields.io/github/stars/STARDUSTLC666/dsh-dream?style=social)
+![license](https://img.shields.io/github/license/STARDUSTLC666/dsh-dream) ![stars](https://img.shields.io/github/stars/STARDUSTLC666/dsh-dream?style=social)
 
 人睡觉时大脑回放白天的经历、巩固记忆——dsh-dream 让 DeepSeek Harness 的 agent 也拥有这个能力：读取你的历史会话（官方多帧 zstd 会话日志，零依赖解析），提炼梦原料，反思后写入永久梦境日记，下次醒来可以忆梦。
 
@@ -15,7 +15,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-dream
+dsh plugin --profile web add github:STARDUSTLC666/dsh-dream
 ```
 
 安装后重启 Web 服务即可。本插件收录于 [dsh-suite](https://github.com/STARDUSTLC666/dsh-suite) 全家桶——一条命令可装入 STARDUSTLC 全部 18 个插件。

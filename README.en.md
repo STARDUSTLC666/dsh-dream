@@ -8,7 +8,7 @@ Humans consolidate memories by replaying the day during sleep — dsh-dream give
 
 ## Compatibility
 
-Verified against `@deepseek-ai/dsh@0.1.1-rc.2` (2026-08-26). Follows the cordis patch-bundle model (`cordis.patch.yml` + `dsh.bundle.patch`); no runtime imports of `@deepseek-ai/*` internals. Session reading is layout-blind with respect to the official JSONL-zstd multi-frame format and packed-chunk rows.
+Verified against `@deepseek-ai/dsh@0.1.2-alpha.2` (2026-08-31). Follows the cordis patch-bundle model (`cordis.patch.yml` + `dsh.bundle.patch`); no runtime imports of `@deepseek-ai/*` internals. Session reading is layout-blind with respect to the official JSONL-zstd multi-frame format and packed-chunk rows.
 
 ## Install / Uninstall
 

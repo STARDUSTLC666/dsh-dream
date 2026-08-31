@@ -61,13 +61,39 @@ export function decompressAll(buf: Uint8Array): string {
   return Buffer.concat(parts).toString('utf8')
 }
 
+/** 提取任意载荷的纯文本：兼容字符串与官方 ContentBlock 数组（{type:'text', text}）。 */
+function blockText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (typeof item === 'object' && item !== null) {
+          const rec = item as Record<string, unknown>
+          return typeof rec.text === 'string' ? rec.text : ''
+        }
+        return ''
+      })
+      .filter((text) => text !== '')
+      .join('')
+  }
+  if (typeof value === 'object' && value !== null) {
+    const rec = value as Record<string, unknown>
+    for (const key of ['text', 'content']) {
+      const inner = blockText(rec[key])
+      if (inner !== '') return inner
+    }
+  }
+  return ''
+}
+
 function textOf(data: unknown): string {
   if (typeof data === 'string') return data
   if (typeof data === 'object' && data !== null) {
     const rec = data as Record<string, unknown>
     for (const key of ['text', 'content', 'message', 'title']) {
-      const value = rec[key]
-      if (typeof value === 'string') return value
+      const value = blockText(rec[key])
+      if (value !== '') return value
     }
   }
   return ''

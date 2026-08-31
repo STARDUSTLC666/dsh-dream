@@ -40,6 +40,20 @@ test('digestSessionFile：损坏/缺失文件返回 null 不抛错', () => {
   assert.equal(digestSessionFile(bad, 5), null)
 })
 
+test('digestSessionFile：0.1.2 ContentBlock 数组载荷仍能提取文本', () => {
+  const file = join(dir, 'blocks.jsonl.zstd')
+  writeFileSync(file, makeSessionFile([
+    makeHeader('session-blocks'),
+    makeEvent('turn/start', 1, {}),
+    makeEvent('user/message', 2, { content: [{ type: 'text', text: '帮我看看这个报错' }, { type: 'image', source: 'x' }] }),
+    makeEvent('assistant/message', 3, { message: { content: [{ type: 'text', text: '这是空指针' }] } }),
+    makeEvent('turn/end', 4, {}),
+  ]))
+  const digest = digestSessionFile(file, 5)
+  assert.deepEqual(digest.userMessages, ['帮我看看这个报错'])
+  assert.deepEqual(digest.assistantTail, ['这是空指针'])
+})
+
 test('listSessionFiles：按修改时间倒序 + limit 钳制', () => {
   const root = join(dir, 'sessions', '--demo--')
   for (const id of ['s1', 's2', 's3']) {

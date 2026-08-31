@@ -13,8 +13,10 @@ Verified against `@deepseek-ai/dsh@0.1.2-alpha.2` (2026-08-31). Follows the cord
 ## Install / Uninstall
 
 ```bash
+dsh plugin --profile web add @stardustlc/dsh-dream
+# or from source:
 dsh plugin --profile web add github:STARDUSTLC666/dsh-dream
-dsh plugin --profile web remove dsh-dream
+dsh plugin --profile web remove @stardustlc/dsh-dream
 ```
 
 Restart the web service afterwards. The dream journal lives at `~/.dsh/.dsh-dream/dreams.jsonl` and survives uninstallation; remove that directory manually for a full cleanup. Part of [dsh-suite](https://github.com/STARDUSTLC666/dsh-suite) — one command installs all 18 STARDUSTLC plugins.

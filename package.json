@@ -1,5 +1,5 @@
 {
-  "name": "dsh-dream",
+  "name": "@stardustlc/dsh-dream",
   "version": "0.3.1",
   "description": "DSH 做梦插件：agent 在会话间隙回放近期对话（dream_digest）、反思并写入梦境日记（dream_save/journal/recall），高频教训幂等桥接进 AGENTS.md（dream_bridge），六工具含健康自检。多帧 zstd 会话读取，默认隐私脱敏，零运行时依赖。",
   "type": "module",
@@ -59,5 +59,8 @@
   },
   "homepage": "https://github.com/STARDUSTLC666/dsh-dream#readme",
   "author": "stardustlc",
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@11.7.0"
 }

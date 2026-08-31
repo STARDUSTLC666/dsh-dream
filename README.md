@@ -15,6 +15,8 @@
 ## 安装
 
 ```bash
+dsh plugin --profile web add @stardustlc/dsh-dream
+# 或从源码：
 dsh plugin --profile web add github:STARDUSTLC666/dsh-dream
 ```
 
@@ -23,7 +25,7 @@ dsh plugin --profile web add github:STARDUSTLC666/dsh-dream
 ## 卸载
 
 ```bash
-dsh plugin --profile web remove dsh-dream
+dsh plugin --profile web remove @stardustlc/dsh-dream
 ```
 
 卸载后重启 Web 服务。梦境日记默认保存在 `~/.dsh/.dsh-dream/dreams.jsonl`，卸载不会删除；如需彻底清理请手动删除该目录。
@@ -62,7 +64,7 @@ dream_bridge { path: "AGENTS.md", maxLessons: 10 }
 
 ```yaml
 - id: dream
-  name: 'dsh-dream'
+  name: '@stardustlc/dsh-dream'
   config:
     # sessionsRoot: ''        # 会话根目录（默认 ~/.dsh/sessions）
     # journalDir: ''          # 梦境日记目录（默认 ~/.dsh/.dsh-dream）

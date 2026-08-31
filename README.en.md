@@ -1,5 +1,7 @@
 [简体中文](README.md)
 
+![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream) ![downloads](https://img.shields.io/npm/dm/@stardustlc/dsh-dream) ![license](https://img.shields.io/github/license/STARDUSTLC666/dsh-dream) ![stars](https://img.shields.io/github/stars/STARDUSTLC666/dsh-dream?style=social)
+
 # dsh-dream
 
 > **An agent that dreams**: session replay (dream material) → reflection (interpretation) → dream journal (memory consolidation).

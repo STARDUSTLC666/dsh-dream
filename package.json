@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "DSH 做梦插件：agent 在会话间隙回放近期对话（dream_digest）、反思并写入梦境日记（dream_save/journal/recall），高频教训幂等桥接进 AGENTS.md（dream_bridge），六工具含健康自检。多帧 zstd 会话读取，默认隐私脱敏，零运行时依赖。",
   "type": "module",
   "main": "lib/index.js",
@@ -29,6 +29,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.1.0-rc.8": "unknown",
+        "0.1.1-rc.1": "unknown",
+        "0.1.1-rc.2": "compatible"
+      }
     }
   },
   "keywords": [

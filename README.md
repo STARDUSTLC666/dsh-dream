@@ -10,7 +10,9 @@
 
 ## 兼容性
 
-在 `@deepseek-ai/dsh@0.1.2-alpha.2` 上验证（2026-08-31）。遵循 cordis 组合包补丁模型（`cordis.patch.yml` + `dsh.bundle.patch`），运行时不 import 任何 `@deepseek-ai/*` 内部模块。会话读取兼容官方 JSONL-zstd 多帧格式与 packed-chunk 行（只取所需事件类型，布局无关）。
+按 `@deepseek-ai/dsh@0.1.3-alpha.1` 的会话接口适配。遵循 cordis 组合包补丁模型（`cordis.patch.yml` + `dsh.bundle.patch`），运行时不 import 任何 `@deepseek-ai/*` 内部模块。支持 v0/v1/v2 的普通 JSONL 与多帧 zstd、旧 packed-chunk 行和 v2 内嵌 stream。升级留下多个代际文件时，每个会话只读取最新规范文件。
+
+默认从 `DSH_HOME/sessions` 读取会话、在 `DSH_HOME/.dsh-dream` 保存日记；未设置 `DSH_HOME` 时使用 `~/.dsh`。配置中的 `sessionsRoot`、`journalDir` 始终优先。
 
 ## 安装
 
@@ -95,7 +97,7 @@ dream_bridge { path: "AGENTS.md", maxLessons: 10 }
 
 ```bash
 pnpm install
-pnpm test       # 构建 + 48 个测试（多帧 zstd 夹具、打包行解码、隐私脱敏、梦境日记往返、记忆桥接幂等、统计、六工具、注册生命周期）
+pnpm test       # 构建 + 离线测试（会话代际、多帧 zstd、流式记录、隐私脱敏、日记、桥接与注册生命周期）
 ```
 
 ## License

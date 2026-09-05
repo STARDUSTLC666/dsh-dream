@@ -10,7 +10,9 @@ Humans consolidate memories by replaying the day during sleep — dsh-dream give
 
 ## Compatibility
 
-Verified against `@deepseek-ai/dsh@0.1.2-alpha.2` (2026-08-31). Follows the cordis patch-bundle model (`cordis.patch.yml` + `dsh.bundle.patch`); no runtime imports of `@deepseek-ai/*` internals. Session reading is layout-blind with respect to the official JSONL-zstd multi-frame format and packed-chunk rows.
+Adapted to the session contracts in `@deepseek-ai/dsh@0.1.3-alpha.1`. Follows the cordis patch-bundle model (`cordis.patch.yml` + `dsh.bundle.patch`), with no runtime imports of `@deepseek-ai/*` internals. Reads v0/v1/v2 plaintext JSONL and multi-frame zstd, legacy packed chunks, and v2 embedded streams. When migrations retain older generations, only the newest canonical file is selected per session.
+
+Default data directories follow `DSH_HOME`: `sessions` for session logs and `.dsh-dream` for the journal. Without `DSH_HOME`, the base is `~/.dsh`. Explicit `sessionsRoot` and `journalDir` settings take precedence.
 
 ## Install / Uninstall
 
@@ -50,7 +52,7 @@ Read-only access to the sessions directory; appends JSONL to the journal directo
 
 ```bash
 pnpm install
-pnpm test   # build + 48 tests (multi-frame zstd fixtures, packed-chunk decoding, privacy masking, journal round-trip, bridge idempotency, stats, six tools, registration lifecycle)
+pnpm test   # build + offline tests (session generations, zstd, streams, masking, journal, bridge, registration)
 ```
 
 ## License

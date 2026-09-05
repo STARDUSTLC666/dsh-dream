@@ -14,4 +14,4 @@ export interface ResolvedDreamConfig {
     maskSecrets: boolean;
 }
 /** 解析并校验插件配置。 */
-export declare function resolveConfig(raw?: Record<string, unknown> | null): ResolvedDreamConfig;
+export declare function resolveConfig(raw?: Record<string, unknown> | null, env?: NodeJS.ProcessEnv): ResolvedDreamConfig;

@@ -1,5 +1,5 @@
 /**
- * DSH 会话日志读取：官方格式为“多帧 zstd 拼接的 JSONL”。
+ * DSH 会话日志读取：兼容 v0/v1/v2 的 JSONL 与多帧 zstd。
  * 首个逻辑行是会话头（{ type: 'session', ... }），其后每行一条存储记录（{ type, seq, time, data }）。
  * 本模块只读不写；损坏帧/行一律容错跳过。
  *
@@ -104,7 +104,8 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
   if (!existsSync(filePath)) return null
   let text: string
   try {
-    text = decompressAll(readFileSync(filePath))
+    const bytes = readFileSync(filePath)
+    text = filePath.endsWith('.zstd') ? decompressAll(bytes) : bytes.toString('utf8')
   } catch {
     return null
   }
@@ -114,6 +115,7 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
   try {
     const first = JSON.parse(lines[0]) as Record<string, unknown>
     if (first.type !== 'session') return null
+    if (first.version !== undefined && ![0, 1, 2].includes(first.version as number)) return null
     header = {
       id: String(first.id ?? ''),
       createdAt: typeof first.createdAt === 'number' ? first.createdAt : 0,
@@ -136,6 +138,25 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
     streamTail: '',
     endedAt: null,
   }
+  const appendStreamText = (text: string): void => {
+    digest.streamTail = (digest.streamTail + text).slice(-4000)
+  }
+  const appendToolName = (name: unknown): void => {
+    if (typeof name === 'string' && name !== '' && digest.toolCalls.length < 200) digest.toolCalls.push(name)
+  }
+  const readStreamRecord = (value: unknown): void => {
+    if (typeof value !== 'object' || value === null) return
+    const record = value as Record<string, unknown>
+    if (record.type === 'text-chunks' && Array.isArray(record.texts)) {
+      appendStreamText(record.texts.filter((part): part is string => typeof part === 'string').join(''))
+    } else if (record.type === 'tool-call-chunks') {
+      appendToolName(record.name)
+    } else if (record.type === 'chunk' && typeof record.chunk === 'object' && record.chunk !== null) {
+      const chunk = record.chunk as Record<string, unknown>
+      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText(chunk.text)
+      if (chunk.type === 'tool-call-start') appendToolName(chunk.name)
+    }
+  }
   for (const line of lines.slice(1)) {
     let rec: Record<string, unknown>
     try {
@@ -143,10 +164,16 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
     } catch {
       continue
     }
+    if (typeof rec !== 'object' || rec === null || Array.isArray(rec)) continue
     const type = String(rec.type ?? '')
     const data = rec.data as unknown
-    const time = typeof rec.time === 'number' ? rec.time : null
+    const time = typeof rec.time === 'number' ? rec.time : typeof rec.time0 === 'number' ? rec.time0 : null
     if (time !== null && (digest.endedAt === null || time > digest.endedAt)) digest.endedAt = time
+    // v2 把流式片段内嵌进 message/attempt；v0 的独立打包行继续兼容。
+    if ((type === 'assistant/message' || type === 'assistant/attempt') && typeof data === 'object' && data !== null) {
+      const stream = (data as Record<string, unknown>).stream
+      if (Array.isArray(stream)) for (const record of stream) readStreamRecord(record)
+    }
     if (type === 'session/title') {
       digest.title = textOf(data)
     } else if (type === 'turn/start') {
@@ -161,19 +188,11 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
         if (digest.assistantTail.length > 3) digest.assistantTail.shift()
       }
     } else if (type === 'tool/call') {
-      const name = typeof data === 'object' && data !== null ? String((data as Record<string, unknown>).name ?? '') : ''
-      if (name !== '' && digest.toolCalls.length < 200) digest.toolCalls.push(name)
-    } else if (type === 'text-chunks') {
-      // 官方打包行：{ data: { texts: string[], ... } }，还原流式正文
-      const texts = typeof data === 'object' && data !== null ? (data as Record<string, unknown>).texts : undefined
-      if (Array.isArray(texts)) {
-        digest.streamTail += texts.filter((t): t is string => typeof t === 'string').join('')
-        if (digest.streamTail.length > 4000) digest.streamTail = digest.streamTail.slice(-4000)
-      }
-    } else if (type === 'tool-call-chunks') {
-      // 官方打包行：还原工具名足迹
-      const name = typeof data === 'object' && data !== null ? String((data as Record<string, unknown>).name ?? '') : ''
-      if (name !== '' && digest.toolCalls.length < 200) digest.toolCalls.push(name)
+      if (typeof data === 'object' && data !== null) appendToolName((data as Record<string, unknown>).name)
+    } else if (type === 'text-chunks' || type === 'tool-call-chunks') {
+      if (typeof data === 'object' && data !== null) readStreamRecord({ ...data, type })
+    } else if (type === 'assistant/chunk' && typeof data === 'object' && data !== null) {
+      readStreamRecord({ type: 'chunk', chunk: (data as Record<string, unknown>).chunk })
     }
   }
   digest.userMessages = digest.userMessages.slice(0, maxUserMessages)
@@ -184,20 +203,34 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
 export function listSessionFiles(sessionsRoot: string, limit: number): string[] {
   if (!existsSync(sessionsRoot)) return []
   const out: Array<{ file: string; mtime: number }> = []
-  for (const project of readdirSync(sessionsRoot)) {
+  const listDirectory = (path: string): string[] => {
+    try { return readdirSync(path) } catch { return [] }
+  }
+  for (const project of listDirectory(sessionsRoot)) {
     const projectDir = join(sessionsRoot, project)
     try {
       if (!statSync(projectDir).isDirectory()) continue
     } catch {
       continue
     }
-    for (const session of readdirSync(projectDir)) {
-      const file = join(projectDir, session, 'session.jsonl.zstd')
-      try {
-        if (existsSync(file)) out.push({ file, mtime: statSync(file).mtimeMs })
-      } catch { /* 并发删除等竞态，跳过 */ }
+    for (const session of listDirectory(projectDir)) {
+      const sessionDir = join(projectDir, session)
+      // 迁移会保留旧代文件；每个会话只读最新已提交的规范文件，避免重复或读旧副本。
+      const candidates = listDirectory(sessionDir).flatMap((name) => {
+        const match = /^session(?:\.v([1-9][0-9]*))?\.jsonl(?:\.zstd)?$/.exec(name)
+        if (match === null) return []
+        const version = match[1] === undefined ? 0 : Number(match[1])
+        if (!Number.isSafeInteger(version)) return []
+        const file = join(sessionDir, name)
+        try {
+          const stat = statSync(file)
+          return stat.isFile() ? [{ file, version, mtime: stat.mtimeMs }] : []
+        } catch { return [] }
+      }).sort((a, b) => b.version - a.version || Number(b.file.endsWith('.zstd')) - Number(a.file.endsWith('.zstd')))
+      if (candidates[0] !== undefined) out.push(candidates[0])
     }
   }
   out.sort((a, b) => b.mtime - a.mtime)
-  return out.slice(0, limit).map((item) => item.file)
+  const capped = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0
+  return out.slice(0, capped).map((item) => item.file)
 }

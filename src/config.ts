@@ -32,12 +32,12 @@ function clamp(value: unknown, fallback: number, min: number, max: number): numb
 }
 
 /** 解析并校验插件配置。 */
-export function resolveConfig(raw?: Record<string, unknown> | null): ResolvedDreamConfig {
+export function resolveConfig(raw?: Record<string, unknown> | null, env: NodeJS.ProcessEnv = process.env): ResolvedDreamConfig {
   const cfg = raw ?? {}
-  const home = homedir()
+  const dshHome = str(env.DSH_HOME, join(homedir(), '.dsh'))
   return {
-    sessionsRoot: str(cfg.sessionsRoot, join(home, '.dsh', 'sessions')),
-    journalDir: str(cfg.journalDir, join(home, '.dsh', '.dsh-dream')),
+    sessionsRoot: str(cfg.sessionsRoot, join(dshHome, 'sessions')),
+    journalDir: str(cfg.journalDir, join(dshHome, '.dsh-dream')),
     maxSessions: clamp(cfg.maxSessions, 10, 1, 50),
     maxCharsPerSession: clamp(cfg.maxCharsPerSession, 6000, 500, 50000),
     maxUserMessages: clamp(cfg.maxUserMessages, 5, 1, 20),

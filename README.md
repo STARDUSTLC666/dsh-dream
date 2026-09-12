@@ -10,7 +10,9 @@
 
 ## 兼容性
 
-按 `@deepseek-ai/dsh@0.1.3-alpha.1` 的会话接口适配。遵循 cordis 组合包补丁模型（`cordis.patch.yml` + `dsh.bundle.patch`），运行时不 import 任何 `@deepseek-ai/*` 内部模块。支持 v0/v1/v2 的普通 JSONL 与多帧 zstd、旧 packed-chunk 行和 v2 内嵌 stream。升级留下多个代际文件时，每个会话只读取最新规范文件。
+已在官方 `@deepseek-ai/dsh@0.1.5-rc.1`、Node `24.16.0` 上验证（2026-09-11）：18 个组件与 Modlens 同载，工具 schema、技能注册及离线只读调用检查通过。采用 `cordis.patch.yml` + `dsh.bundle.patch` 组合包模型。Node 要求与该版本 Harness 一致：22.19 及以上的 22.x，或 24 及以上。外部服务的实际业务操作需按各组件配置单独验证。
+
+支持 v0/v1/v2/v3 的普通 JSONL 与多帧 zstd、旧 packed-chunk 行及 v2/v3 内嵌 stream；升级留下多代文件时只读取每个会话的最新规范文件。PTC 子工具调用保留工具名且不重复计数，不提取系统提示、推理、工具参数或结果正文。
 
 默认从 `DSH_HOME/sessions` 读取会话、在 `DSH_HOME/.dsh-dream` 保存日记；未设置 `DSH_HOME` 时使用 `~/.dsh`。配置中的 `sessionsRoot`、`journalDir` 始终优先。
 

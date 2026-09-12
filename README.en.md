@@ -10,7 +10,9 @@ Humans consolidate memories by replaying the day during sleep — dsh-dream give
 
 ## Compatibility
 
-Adapted to the session contracts in `@deepseek-ai/dsh@0.1.3-alpha.1`. Follows the cordis patch-bundle model (`cordis.patch.yml` + `dsh.bundle.patch`), with no runtime imports of `@deepseek-ai/*` internals. Reads v0/v1/v2 plaintext JSONL and multi-frame zstd, legacy packed chunks, and v2 embedded streams. When migrations retain older generations, only the newest canonical file is selected per session.
+Verified with official `@deepseek-ai/dsh@0.1.5-rc.1` and Node `24.16.0` on 2026-09-11: all 18 components load alongside Modlens, with passing tool-schema, skill-registration and offline read-only invocation checks. Uses the `cordis.patch.yml` + `dsh.bundle.patch` bundle model. Node requirements match this Harness release: 22.19 or later within 22.x, or 24 or later. Live external-service workflows require separate configuration and validation.
+
+Reads v0/v1/v2/v3 plaintext JSONL and multi-frame zstd, legacy packed chunks and v2/v3 embedded streams. Only the newest canonical file is selected per session. PTC child calls retain tool names without double counting; system prompts, reasoning, tool arguments and result bodies are excluded.
 
 Default data directories follow `DSH_HOME`: `sessions` for session logs and `.dsh-dream` for the journal. Without `DSH_HOME`, the base is `~/.dsh`. Explicit `sessionsRoot` and `journalDir` settings take precedence.
 

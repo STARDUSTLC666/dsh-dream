@@ -4,15 +4,19 @@
 
 # dsh-dream
 
+## 0.3.4 update (2026-09-28)
+
+Fixes [#2](https://github.com/STARDUSTLC666/dsh-dream/issues/2): digests now render human excerpts, assistant responses and tool names, skip truly empty sessions, and mask metadata as well as the body. Supports Harness v4 session files while excluding reasoning blocks and injected context from human excerpts.
+
 > **An agent that dreams**: session replay (dream material) → reflection (interpretation) → dream journal (memory consolidation).
 
 Humans consolidate memories by replaying the day during sleep — dsh-dream gives DeepSeek Harness agents the same ability. It reads your historical sessions (the official multi-frame zstd session logs, parsed with zero dependencies), distills dream material, lets the agent reflect, and writes permanent dream journal entries that can be recalled later.
 
 ## Compatibility
 
-Verified with official `@deepseek-ai/dsh@0.1.5-rc.1` and Node `24.16.0` on 2026-09-11: all 18 components load alongside Modlens, with passing tool-schema, skill-registration and offline read-only invocation checks. Uses the `cordis.patch.yml` + `dsh.bundle.patch` bundle model. Node requirements match this Harness release: 22.19 or later within 22.x, or 24 or later. Live external-service workflows require separate configuration and validation.
+Verified with Harness `0.1.7-rc.2` built from official sources and Node `24.16.0` on 2026-09-28, retaining the local tool-scheduler fix: 64 tests pass, and all 18 plugins register together. Host checks read the current session format and validate rendered content. Standard-mode browser testing recovered human text, assistant responses and tool names from isolated sessions. Uses the `cordis.patch.yml` + `dsh.bundle.patch` bundle model. Node requirement: 22.19 or later within 22.x, or 24 or later.
 
-Reads v0/v1/v2/v3 plaintext JSONL and multi-frame zstd, legacy packed chunks and v2/v3 embedded streams. Only the newest canonical file is selected per session. PTC child calls retain tool names without double counting; system prompts, reasoning, tool arguments and result bodies are excluded.
+Reads v0/v1/v2/v3/v4 plaintext JSONL and multi-frame zstd, legacy packed chunks and embedded streams. Only the newest canonical file is selected per session. PTC child calls retain tool names without double counting; system prompts, reasoning, tool arguments and result bodies are excluded.
 
 Default data directories follow `DSH_HOME`: `sessions` for session logs and `.dsh-dream` for the journal. Without `DSH_HOME`, the base is `~/.dsh`. Explicit `sessionsRoot` and `journalDir` settings take precedence.
 

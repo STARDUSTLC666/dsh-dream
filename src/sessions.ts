@@ -1,5 +1,5 @@
 /**
- * DSH 会话日志读取：兼容 v0/v1/v2/v3 的 JSONL 与多帧 zstd。
+ * DSH 会话日志读取：兼容 v0/v1/v2/v3/v4 的 JSONL 与多帧 zstd。
  * 首个逻辑行是会话头（{ type: 'session', ... }），其后每行一条存储记录（{ type, seq, time, data }）。
  * 本模块只读不写；损坏帧/行一律容错跳过。
  *
@@ -66,19 +66,14 @@ function blockText(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
     return value
-      .map((item) => {
-        if (typeof item === 'string') return item
-        if (typeof item === 'object' && item !== null) {
-          const rec = item as Record<string, unknown>
-          return typeof rec.text === 'string' ? rec.text : ''
-        }
-        return ''
-      })
+      .map(blockText)
       .filter((text) => text !== '')
       .join('')
   }
   if (typeof value === 'object' && value !== null) {
     const rec = value as Record<string, unknown>
+    // Assistant content can contain reasoning beside visible text (including v4).
+    if (typeof rec.type === 'string' && rec.type !== 'text') return ''
     for (const key of ['text', 'content']) {
       const inner = blockText(rec[key])
       if (inner !== '') return inner
@@ -112,10 +107,12 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
   const lines = text.split('\n').filter((line) => line.trim() !== '')
   if (lines.length === 0) return null
   let header: SessionHeader | null = null
+  let formatVersion = 0
   try {
     const first = JSON.parse(lines[0]) as Record<string, unknown>
     if (first.type !== 'session') return null
-    if (first.version !== undefined && ![0, 1, 2, 3].includes(first.version as number)) return null
+    if (first.version !== undefined && ![0, 1, 2, 3, 4].includes(first.version as number)) return null
+    formatVersion = typeof first.version === 'number' ? first.version : 0
     header = {
       id: String(first.id ?? ''),
       createdAt: typeof first.createdAt === 'number' ? first.createdAt : 0,
@@ -169,7 +166,7 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
     const data = rec.data as unknown
     const time = typeof rec.time === 'number' ? rec.time : typeof rec.time0 === 'number' ? rec.time0 : null
     if (time !== null && (digest.endedAt === null || time > digest.endedAt)) digest.endedAt = time
-    // v2/v3 把流式片段内嵌进 message/attempt；v0 的独立打包行继续兼容。
+    // v2/v3/v4 把流式片段内嵌进 message/attempt；v0 的独立打包行继续兼容。
     if ((type === 'assistant/message' || type === 'assistant/attempt') && typeof data === 'object' && data !== null) {
       const stream = (data as Record<string, unknown>).stream
       if (Array.isArray(stream)) for (const record of stream) readStreamRecord(record)
@@ -179,6 +176,11 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
     } else if (type === 'turn/start') {
       digest.turns++
     } else if (type === 'user/message') {
+      if (formatVersion >= 4 && typeof data === 'object' && data !== null) {
+        const source = (data as Record<string, unknown>).source
+        // User-role injections are context, not the human's original words.
+        if (typeof source === 'object' && source !== null && (source as Record<string, unknown>).kind !== 'user') continue
+      }
       const msg = textOf(data)
       if (msg !== '' && digest.userMessages.length < maxUserMessages * 2) digest.userMessages.push(msg)
     } else if (type === 'assistant/message') {

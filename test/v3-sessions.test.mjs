@@ -62,9 +62,9 @@ for (const [version, namespace] of [[2, 'code'], [3, 'ptc']]) {
   }
 }
 
-test('a future session version is left unread instead of interpreted as v3', (t) => {
+test('a future session version is left unread instead of interpreted as v4', (t) => {
   const root = temporary(t)
-  const file = join(root, 'session.v4.jsonl')
-  writeFileSync(file, makeHeader('future', { version: 4, isSeeded: false }))
+  const file = join(root, 'session.v5.jsonl')
+  writeFileSync(file, makeHeader('future', { version: 5, isSeeded: false }))
   assert.equal(digestSessionFile(file, 5), null)
 })

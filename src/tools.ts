@@ -90,6 +90,8 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         for (const item of sessions) {
           const s = asRecord(item)
           lines.push('- ' + (s.title !== '' ? s.title : '(无标题)') + '：' + s.turns + ' 轮，目录 ' + s.cwd)
+          // execute already masks secrets and applies the full/brief character budget.
+          if (typeof s.digestText === 'string' && s.digestText !== '') lines.push(s.digestText)
         }
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -107,17 +109,19 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         const digest = digestSessionFile(file, cfg.maxUserMessages)
         if (digest === null) continue
         if (digest.origin === 'subagent') continue
+        if (digest.turns === 0 && digest.userMessages.length === 0 && digest.assistantTail.length === 0
+          && digest.toolCalls.length === 0 && digest.streamTail.trim() === '') continue
         sessions.push({
           id: digest.id,
-          title: digest.title,
+          title: mask(digest.title),
           createdAt: digest.createdAt,
           endedAt: digest.endedAt,
-          cwd: digest.cwd,
+          cwd: mask(digest.cwd),
           turns: digest.turns,
-          agentPreset: digest.agentPreset,
+          agentPreset: mask(digest.agentPreset),
           userMessages: digest.userMessages.map((msg) => clip(mask(msg), 400)),
           assistantTail: digest.assistantTail.map((msg) => clip(mask(msg), 600)),
-          toolCalls: [...new Set(digest.toolCalls)],
+          toolCalls: [...new Set(digest.toolCalls)].map(mask),
           digestText: clip(mask(buildDigestText(digest)), mode === 'brief' ? 400 : cfg.maxCharsPerSession),
         })
       }

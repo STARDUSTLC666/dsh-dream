@@ -2,6 +2,10 @@
 
 # dsh-dream
 
+## 0.3.4 更新（2026-09-28）
+
+修复 [#2](https://github.com/STARDUSTLC666/dsh-dream/issues/2)：摘要现在实际输出用户原话、助手回应和工具足迹；跳过真正空会话，标题与正文一并脱敏。支持新版 Harness 的 v4 会话文件，并过滤推理内容与自动注入的上下文，避免当作用户原话。
+
 > **会做梦的 agent**：会话回放（梦原料）→ 反思（解梦）→ 梦境日记（记忆巩固）。
 
 ![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream) ![downloads](https://img.shields.io/npm/dm/@stardustlc/dsh-dream) ![license](https://img.shields.io/github/license/STARDUSTLC666/dsh-dream) ![stars](https://img.shields.io/github/stars/STARDUSTLC666/dsh-dream?style=social)
@@ -10,9 +14,9 @@
 
 ## 兼容性
 
-已在官方 `@deepseek-ai/dsh@0.1.5-rc.1`、Node `24.16.0` 上验证（2026-09-11）：18 个组件与 Modlens 同载，工具 schema、技能注册及离线只读调用检查通过。采用 `cordis.patch.yml` + `dsh.bundle.patch` 组合包模型。Node 要求与该版本 Harness 一致：22.19 及以上的 22.x，或 24 及以上。外部服务的实际业务操作需按各组件配置单独验证。
+已在官方源码构建的 Harness `0.1.7-rc.2`、Node `24.16.0` 上验证（2026-09-28，保留本地工具调度器修复）：64 项测试通过；18 个插件共同注册，宿主实际读取当前格式会话并检查最终渲染内容。浏览器标准模式已读到隔离会话的原话、回应与工具足迹。采用 `cordis.patch.yml` + `dsh.bundle.patch` 组合包模型。Node 要求：22.19 及以上的 22.x，或 24 及以上。
 
-支持 v0/v1/v2/v3 的普通 JSONL 与多帧 zstd、旧 packed-chunk 行及 v2/v3 内嵌 stream；升级留下多代文件时只读取每个会话的最新规范文件。PTC 子工具调用保留工具名且不重复计数，不提取系统提示、推理、工具参数或结果正文。
+支持 v0/v1/v2/v3/v4 的普通 JSONL 与多帧 zstd、旧 packed-chunk 行及内嵌 stream；升级留下多代文件时只读取每个会话的最新规范文件。PTC 子工具调用保留工具名且不重复计数，不提取系统提示、推理、工具参数或结果正文。
 
 默认从 `DSH_HOME/sessions` 读取会话、在 `DSH_HOME/.dsh-dream` 保存日记；未设置 `DSH_HOME` 时使用 `~/.dsh`。配置中的 `sessionsRoot`、`journalDir` 始终优先。
 

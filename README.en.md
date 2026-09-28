@@ -14,7 +14,7 @@ Humans consolidate memories by replaying the day during sleep — dsh-dream give
 
 ## Compatibility
 
-Verified with Harness `0.1.7-rc.2` built from official sources and Node `24.16.0` on 2026-09-28, retaining the local tool-scheduler fix: 64 tests pass, and all 18 plugins register together. Host checks read the current session format and validate rendered content. Standard-mode browser testing recovered human text, assistant responses and tool names from isolated sessions. Uses the `cordis.patch.yml` + `dsh.bundle.patch` bundle model. Node requirement: 22.19 or later within 22.x, or 24 or later.
+Validation host: Harness `0.2.0-rc.1` built from official sources (commit `407e65c8`) with Node `24.16.0` on 2026-09-28. All 64 plugin tests pass in an isolated environment; all 18 plugins mount together in one host registering 1 skills and 6 tools, with tool schemas and health-check contracts passing. No live ports or external services were exercised in this round.
 
 Reads v0/v1/v2/v3/v4 plaintext JSONL and multi-frame zstd, legacy packed chunks and embedded streams. Only the newest canonical file is selected per session. PTC child calls retain tool names without double counting; system prompts, reasoning, tool arguments and result bodies are excluded.
 

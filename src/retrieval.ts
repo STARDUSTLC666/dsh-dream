@@ -1,9 +1,10 @@
 /**
- * 任务相关经验检索（FREEZE §3）。
+ * 任务相关经验检索（FREEZE v1 + v1.1 增补 R1/R3/R4）。
  *
- * 顺序：范围过滤 → 排除 rejected/stale/disputed → 确定性排序 → 字符预算。
- * 条件（when）与例外（exceptions）不可截断：整条放不下时跳过并记 skipped.budget，
- * 绝不返回半条经验。
+ * 顺序：范围过滤 → 排除 rejected/stale/disputed → 候选/无证据策略过滤 → 版本包名上下文 →
+ * 确定性排序 → 按排名整条装入的字符预算（遇第一条放不下即停，rankInversionCount===0）。
+ * essential（title/when/action/exceptions，含 scopeLabel）永不截断；metadata（whyRelevant/
+ * evidenceSummary）放不下时可截断并置 truncated:true。
  *
  * @module dsh-dream/retrieval
  */
@@ -19,13 +20,20 @@ export interface RetrievalQuery {
   limit?: number
   /** 默认 3000，硬上限 20000。 */
   maxChars?: number
-  /** 当前任务相关依赖的版本，用于匹配 applicability.versions。 */
+  /** 当前任务相关依赖的版本，用于匹配 applicability.versions（R3：必须先识别包名）。 */
   packageVersion?: string
+  /** 显式包名上下文；与 query 文本一起用于识别 applicability[].package（R3）。 */
+  packageName?: string
+  /** 是否返回 candidate；默认 true（面板/审计需要）。dream_context 默认传 false（R1）。 */
+  includeCandidates?: boolean
+  /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
+  includeNoEvidence?: boolean
 }
 
-/** 检索结果中的单条经验（已完整保留 when/exceptions）。 */
+/** 检索结果中的单条经验（when/exceptions 永不截断）。 */
 export interface RetrievedLesson {
   lessonId: string
+  revision: number
   title: string
   when: string
   action: string
@@ -57,6 +65,8 @@ interface ApplicabilityMatch {
   packages: string[]
   versions: string[]
   platforms: string[]
+  /** 包名已识别但所有版本条件都不满足（R3）。 */
+  versionMismatch: boolean
 }
 
 interface Candidate {
@@ -79,6 +89,14 @@ function oneLine(value: string): string {
 
 function clip(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) + '…' : value
+}
+
+/** 在预算内截断（含省略号占用）；conditions/exceptions 不走这里。 */
+function clipTo(text: string, max: number): string {
+  if (max <= 0) return ''
+  if (text.length <= max) return text
+  if (max === 1) return '…'
+  return text.slice(0, max - 1) + '…'
 }
 
 function pathKey(value: string): string {
@@ -140,12 +158,47 @@ export function buildEvidenceSummary(lesson: Lesson, evidence: Evidence[]): stri
   return head + '：' + snippets.join('；') + (linked.length > 2 ? ' 等' : '')
 }
 
-/** 单条结果的字符成本（与 dream_context.budget.usedChars 同口径）。 */
-export function retrievedLessonChars(item: RetrievedLesson): number {
-  let total = item.title.length + item.when.length + item.action.length
-    + item.scopeLabel.length + item.whyRelevant.length + item.evidenceSummary.length
+/** essential 成本：title/when/action/exceptions/scopeLabel，永不截断（R4）。 */
+export function essentialLessonChars(item: Pick<RetrievedLesson, 'title' | 'when' | 'action' | 'exceptions' | 'scopeLabel'>): number {
+  let total = item.title.length + item.when.length + item.action.length + item.scopeLabel.length
   for (const exception of item.exceptions) total += exception.length
   return total
+}
+
+/** metadata 成本：whyRelevant/evidenceSummary，预算紧时可截断（R4）。 */
+export function metadataLessonChars(item: Pick<RetrievedLesson, 'whyRelevant' | 'evidenceSummary'>): number {
+  return item.whyRelevant.length + item.evidenceSummary.length
+}
+
+/** 单条结果的完整字符成本（与 dream_context.budget.usedChars 同口径）。 */
+export function retrievedLessonChars(item: RetrievedLesson): number {
+  return essentialLessonChars(item) + metadataLessonChars(item)
+}
+
+/**
+ * rank inversion 指标（R4）：被 budget-stop 跳过、且排在某个已返回条目之前的条目数。
+ * 按排名整条装入的预算策略必须让它恒为 0。
+ */
+export function rankInversionCount(
+  rankedLessonIds: string[],
+  result: { items: Array<Pick<RetrievedLesson, 'lessonId'>>; skipped: Array<{ lessonId: string; reason: string }> },
+): number {
+  const rank = new Map<string, number>()
+  rankedLessonIds.forEach((id, index) => { if (!rank.has(id)) rank.set(id, index) })
+  const returnedRanks: number[] = []
+  for (const item of result.items) {
+    const index = rank.get(item.lessonId)
+    if (index !== undefined) returnedRanks.push(index)
+  }
+  if (returnedRanks.length === 0) return 0
+  const lastReturned = Math.max(...returnedRanks)
+  let inversions = 0
+  for (const entry of result.skipped) {
+    if (entry.reason !== 'budget-stop' && entry.reason !== 'budget') continue
+    const index = rank.get(entry.lessonId)
+    if (index !== undefined && index < lastReturned) inversions += 1
+  }
+  return inversions
 }
 
 /** 解析 limit/maxChars，套用默认值与硬上限。 */
@@ -248,19 +301,35 @@ export function versionSatisfies(versionText: string, rangeText: string): boolea
   })
 }
 
+/** R3：只有显式 packageName 一致，或 query 文本出现该包名，才认为包名被识别。 */
+function packageIdentified(pkg: string, q: RetrievalQuery, queryText: string): boolean {
+  const normalizedPkg = normalizeText(pkg)
+  if (normalizedPkg === '') return false
+  const explicit = trimmed(q.packageName)
+  if (explicit !== undefined && normalizeText(explicit) === normalizedPkg) return true
+  return queryText.includes(normalizedPkg)
+}
+
 function matchApplicability(lesson: Lesson, q: RetrievalQuery, queryText: string): ApplicabilityMatch {
-  const out: ApplicabilityMatch = { packages: [], versions: [], platforms: [] }
+  const out: ApplicabilityMatch = { packages: [], versions: [], platforms: [], versionMismatch: false }
   const packageVersion = trimmed(q.packageVersion)
+  const identifiedVersionChecks: boolean[] = []
   for (const entry of lesson.applicability) {
     const pkg = trimmed(entry.package)
-    if (pkg !== undefined && queryText.includes(normalizeText(pkg)) && !out.packages.includes(pkg)) out.packages.push(pkg)
+    const identified = pkg !== undefined && packageIdentified(pkg, q, queryText)
+    if (identified && pkg !== undefined && !out.packages.includes(pkg)) out.packages.push(pkg)
     const versions = trimmed(entry.versions)
-    if (packageVersion !== undefined && versions !== undefined && versionSatisfies(packageVersion, versions) && !out.versions.includes(versions)) {
-      out.versions.push(versions)
+    if (identified && versions !== undefined && packageVersion !== undefined) {
+      const ok = versionSatisfies(packageVersion, versions)
+      identifiedVersionChecks.push(ok)
+      if (ok && !out.versions.includes(versions)) out.versions.push(versions)
     }
     const platform = trimmed(entry.platform)
-    if (platform !== undefined && queryText.includes(normalizeText(platform)) && !out.platforms.includes(platform)) out.platforms.push(platform)
+    if (platform !== undefined && queryText.includes(normalizeText(platform)) && !out.platforms.includes(platform)) {
+      out.platforms.push(platform)
+    }
   }
+  out.versionMismatch = identifiedVersionChecks.length > 0 && identifiedVersionChecks.every((ok) => !ok)
   return out
 }
 
@@ -341,6 +410,7 @@ function toRetrievedLesson(entry: Candidate, evidence: Evidence[], q: RetrievalQ
   const lesson = entry.lesson
   const item: RetrievedLesson = {
     lessonId: lesson.id,
+    revision: lesson.revision,
     title: lesson.title,
     when: lesson.when,
     action: lesson.action,
@@ -370,6 +440,11 @@ function stateRank(state: LessonState): number {
 /**
  * 任务相关经验检索。只返回 global 或与查询项目/工作区精确匹配的记录；
  * 未知项目（未给 projectId/workspaceRoot）时只返回 global，绝不跨项目扫描。
+ *
+ * R1：includeCandidates=false 时 candidate 记 skipped:candidate-hold；includeNoEvidence=false 时
+ * independentSupportCount===0 且非 usable 记 skipped:no-evidence（优先于 candidate-hold）。
+ * R3：applicability.versions 仅在包名被识别时参与；包名识别但版本不满足 → skipped:version-mismatch。
+ * R4：预算按排名整条装入，第一条 essential 放不下即停（budget-stop）；metadata 可截断。
  */
 export function retrieveLessons(
   lessons: Lesson[],
@@ -379,6 +454,8 @@ export function retrieveLessons(
   const { limit, maxChars } = resolveRetrievalBudget(q)
   const terms = queryTerms(q.query ?? '')
   const queryText = normalizeText(q.query ?? '')
+  const includeCandidates = q.includeCandidates !== false
+  const includeNoEvidence = q.includeNoEvidence !== false
   const skipped: Array<{ lessonId: string; reason: string }> = []
   const candidates: Candidate[] = []
 
@@ -389,8 +466,21 @@ export function retrieveLessons(
       skipped.push({ lessonId: lesson.id, reason: excludedReason })
       continue
     }
-    const hits = keywordHits(lesson, terms)
+    // R3 优先于 R1 的候选扣留：包名已识别但版本不满足时，reason 必须是 version-mismatch。
     const applicability = matchApplicability(lesson, q, queryText)
+    if (applicability.versionMismatch) {
+      skipped.push({ lessonId: lesson.id, reason: 'version-mismatch' })
+      continue
+    }
+    if (!includeNoEvidence && lesson.state !== 'usable' && lesson.independentSupportCount === 0) {
+      skipped.push({ lessonId: lesson.id, reason: 'no-evidence' })
+      continue
+    }
+    if (!includeCandidates && lesson.state === 'candidate') {
+      skipped.push({ lessonId: lesson.id, reason: 'candidate-hold' })
+      continue
+    }
+    const hits = keywordHits(lesson, terms)
     const applicabilityCount = applicability.packages.length + applicability.versions.length + applicability.platforms.length
     if (hits.length === 0 && applicabilityCount === 0) continue
     candidates.push({ lesson, keywordHits: hits, applicability })
@@ -416,19 +506,49 @@ export function retrieveLessons(
 
   const items: RetrievedLesson[] = []
   let usedChars = 0
-  for (const candidate of candidates) {
+  for (let index = 0; index < candidates.length; index += 1) {
     if (items.length >= limit) {
-      skipped.push({ lessonId: candidate.lesson.id, reason: 'limit' })
-      continue
+      for (let rest = index; rest < candidates.length; rest += 1) {
+        skipped.push({ lessonId: candidates[rest].lesson.id, reason: 'limit' })
+      }
+      break
     }
+    const candidate = candidates[index]
     const item = toRetrievedLesson(candidate, evidence, q)
-    const cost = retrievedLessonChars(item)
-    if (usedChars + cost > maxChars) {
-      skipped.push({ lessonId: candidate.lesson.id, reason: 'budget' })
+    const remaining = maxChars - usedChars
+    const essential = essentialLessonChars(item)
+    if (essential > remaining) {
+      for (let rest = index; rest < candidates.length; rest += 1) {
+        skipped.push({ lessonId: candidates[rest].lesson.id, reason: 'budget-stop' })
+      }
+      break
+    }
+    const fullCost = retrievedLessonChars(item)
+    if (fullCost <= remaining) {
+      items.push(item)
+      usedChars += fullCost
       continue
     }
-    items.push(item)
-    usedChars += cost
+    const trimmed = truncateMetadata(item, remaining - essential)
+    const trimmedCost = retrievedLessonChars(trimmed)
+    if (trimmedCost > remaining) {
+      for (let rest = index; rest < candidates.length; rest += 1) {
+        skipped.push({ lessonId: candidates[rest].lesson.id, reason: 'budget-stop' })
+      }
+      break
+    }
+    items.push(trimmed)
+    usedChars += trimmedCost
   }
   return { items, skipped }
+}
+
+/** metadata（whyRelevant/evidenceSummary）按预算截断，essential 保持不变。 */
+function truncateMetadata(item: RetrievedLesson, metadataBudget: number): RetrievedLesson {
+  const budget = Math.max(0, metadataBudget)
+  const whyBudget = Math.min(item.whyRelevant.length, Math.ceil(budget / 2))
+  const whyRelevant = clipTo(item.whyRelevant, whyBudget)
+  const evidenceSummary = clipTo(item.evidenceSummary, Math.max(0, budget - whyRelevant.length))
+  if (whyRelevant === item.whyRelevant && evidenceSummary === item.evidenceSummary) return item
+  return { ...item, whyRelevant, evidenceSummary, truncated: true }
 }

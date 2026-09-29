@@ -1,19 +1,23 @@
 /**
  * dsh-dream 知识存储：events.jsonl 为权威追加日志，evidence.jsonl 追加证据，
- * index.json 为可丢弃重建的派生索引，.lock 为短期文件锁。
+ * index.json 为可丢弃重建的派生索引（含 checkpoint），.lock 为短期文件锁。
  *
  * 设计要点：
- * - 幂等：同 idempotencyKey 重复调用返回首次结果且不写新事件。
- * - revision 守卫：expectedRevision 不符抛 KnowledgeError('revision')，不写盘。
- * - 崩溃安全：单行追加 + 单行 JSON.parse 容错；坏行跳过并计数。
- * - 有界回放：events.jsonl 超过 maxReplayEvents 行时只回放最近 N 行，stats().truncated=true。
- * - index.json 是派生物：自动更新失败按降级处理（事件仍是权威）；rebuildIndex() 会明确重建。
- * - 只读方法（listLessons/listEvidence/getLesson/stats）绝不建目录、绝不写盘。
+ * - 幂等：同 idempotencyKey + 同 requestHash 重复调用返回首次结果且不写新事件；
+ *   同 key 异 payload → KnowledgeError('duplicate')。
+ * - revision 守卫：expectedRevision 不符抛 KnowledgeError('revision')（details 带 currentRevision），不写盘。
+ * - 崩溃安全：单行追加 + 单行 JSON.parse 容错；坏行/孤儿事件/未知 schemaVersion 分开计数。
+ * - 有界回放：events.jsonl 超过 maxReplayEvents 行时 truncated=true；
+ *   index.json 的 checkpoint（lastEventOffset/lastEventBytes/lastEventId/前缀哈希）让读路径
+ *   "快照 + 尾部增量"，截断不再丢实体；checkpoint 失效回退全量回放；rebuildIndex() 权威重建。
+ * - 写路径在状态不完整/截断时自动做一次完整回放，避免"看不到旧实体就无法更新"。
+ * - 只读方法（listLessons/listEvidence/getLesson/stats/diagnose）绝不建目录、绝不写盘。
  * - 新写盘路径在 maskSecrets 开启（默认）时统一过 mask.ts。
  *
  * @module dsh-dream/knowledge-store
  */
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -23,12 +27,11 @@ import {
   renameSync,
   rmSync,
   statSync,
-  appendFileSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import {
@@ -53,6 +56,13 @@ import { maskSecrets } from './mask.js'
 /** events.jsonl 默认最多回放的行数（有界读取）。 */
 export const MAX_REPLAY_EVENTS = 200000
 
+const PREFIX_HASH_BYTES = 64 * 1024
+const LAST_LINE_WINDOW_BYTES = 64 * 1024
+const TOUCH_EVERY_LINES = 4096
+
+/** 本进程 boot 标识，用于锁的 PID 复用判别。 */
+const BOOT_ID = randomUUID()
+
 /** KnowledgeStore 构造选项（都可省略，保持 FREEZE 的 constructor(knowledgeDir) 可用）。 */
 export interface KnowledgeStoreOptions {
   /** 写盘前是否按 mask.ts 脱敏；默认 true（与插件默认 maskSecrets=true 一致）。 */
@@ -63,20 +73,75 @@ export interface KnowledgeStoreOptions {
   lockTimeoutMs?: number
   /** 锁年龄超过该毫秒数且 pid 不存活才允许接管；默认 30000。 */
   lockStaleMs?: number
+  /** 锁硬上限：超过且心跳停滞时给可操作错误、不静默抢占；默认 600000（10 分钟）。 */
+  lockHardLimitMs?: number
+  /** 心跳刷新间隔毫秒；默认 5000。长回放/压缩也会按行数主动 touch。 */
+  lockHeartbeatMs?: number
+}
+
+interface IdempotencyRecord {
+  lessonId: string
+  requestHash?: string
+  /** 尾部事件回放时保留的"首次结果"快照；checkpoint 里只存 lessonId/requestHash。 */
+  lesson?: Lesson
 }
 
 interface ReplayState {
   lessons: Map<string, Lesson>
   evidence: Map<string, Evidence>
-  idempotency: Map<string, Lesson>
+  idempotency: Map<string, IdempotencyRecord>
   events: number
-  truncated: boolean
+  replayedEvents: number
   badLines: number
+  orphanEvents: number
+  unsupportedVersions: number
+  firstReplayedEventId?: string
+  replayMode: 'full' | 'snapshot+tail'
+  idempotencyComplete: boolean
+  entitiesFromSnapshot: boolean
+  snapshotEvidenceCount: number
+  lastEventId?: string
 }
 
-interface LockOptions {
-  timeoutMs: number
-  staleMs: number
+interface CheckpointCounters {
+  badLines: number
+  orphanEvents: number
+  unsupportedVersions: number
+  evidenceCount: number
+}
+
+interface CheckpointRecord {
+  offset: number
+  bytes: number
+  lastEventId: string
+  prefixHash: string
+  prefixBytes: number
+  eventsTotal: number
+  counters: CheckpointCounters
+  idempotency: Record<string, { lessonId: string; requestHash?: string }>
+  idempotencyComplete: boolean
+}
+
+interface CheckpointSnapshot {
+  lessons: Map<string, Lesson>
+  idempotency: Map<string, IdempotencyRecord>
+  checkpoint: CheckpointRecord
+}
+
+interface LockInfo {
+  present: boolean
+  ageMs?: number
+  pid?: number
+  alive?: boolean
+  bootId?: string
+  token?: string
+  stale: boolean
+  raw?: string
+}
+
+interface LockHandle {
+  release(): void
+  touch(): void
 }
 
 const LESSON_STATES: readonly LessonState[] = ['candidate', 'usable', 'disputed', 'stale', 'rejected']
@@ -111,26 +176,40 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-/**
- * 判断锁是否过期可接管：
- * - 未超过 staleMs：一律视为占用（哪怕 pid 已退出）。
- * - 超过 staleMs：JSON 里的 pid 不存活（或内容不可验证所有者）→ 可接管；pid 存活 → 仍是占用。
- * 绝不无条件删锁。
- */
-function lockIsStale(lockPath: string, staleMs: number): boolean {
-  let mtimeMs: number
-  try {
-    mtimeMs = statSync(lockPath).mtimeMs
-  } catch {
-    return true
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    const text = JSON.stringify(value)
+    return text === undefined ? 'null' : text
   }
-  let at = mtimeMs
-  let pid: number | undefined
+  if (Array.isArray(value)) return '[' + value.map((item) => stableStringify(item)).join(',') + ']'
+  const record = value as Record<string, unknown>
+  return '{' + Object.keys(record).sort().map((key) => JSON.stringify(key) + ':' + stableStringify(record[key])).join(',') + '}'
+}
+
+/** 读取锁信息；绝不修改文件。 */
+function readLockInfo(lockPath: string, staleMs: number): LockInfo {
+  let raw: string
   try {
-    const parsed: unknown = JSON.parse(readFileSync(lockPath, 'utf8'))
+    raw = readFileSync(lockPath, 'utf8')
+  } catch {
+    return { present: false, stale: false }
+  }
+  let at = Date.now()
+  try {
+    at = statSync(lockPath).mtimeMs
+  } catch {
+    // 用文件 mtime 判断年龄失败时退回 now
+  }
+  let pid: number | undefined
+  let bootId: string | undefined
+  let token: string | undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
     if (isRecord(parsed)) {
       const rawPid = parsed.pid
       if (typeof rawPid === 'number' && Number.isInteger(rawPid) && rawPid > 0) pid = rawPid
+      if (typeof parsed.bootId === 'string') bootId = parsed.bootId
+      if (typeof parsed.token === 'string') token = parsed.token
       const rawAt = parsed.at
       if (typeof rawAt === 'string') {
         const parsedAt = Date.parse(rawAt)
@@ -140,9 +219,20 @@ function lockIsStale(lockPath: string, staleMs: number): boolean {
   } catch {
     // 内容损坏：无法验证所有者，只能用文件 mtime 判断年龄
   }
-  if (Date.now() - at <= staleMs) return false
-  if (pid === undefined) return true
-  return !isProcessAlive(pid)
+  const ageMs = Date.now() - at
+  const alive = pid === undefined ? undefined : isProcessAlive(pid)
+  const stale = ageMs > staleMs && (pid === undefined || alive === false)
+  return { present: true, ageMs, pid, alive, bootId, token, stale, raw }
+}
+
+function refreshLock(lockPath: string, token: string): void {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(lockPath, 'utf8'))
+    if (!isRecord(parsed) || parsed.token !== token) return
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), token, bootId: BOOT_ID }))
+  } catch {
+    // 锁已被接管/删除：心跳失败不覆盖他人锁
+  }
 }
 
 /** 释放自己持有的锁：token 不匹配或内容不可读时不删，避免误删他人锁。 */
@@ -160,8 +250,16 @@ function releaseLock(lockPath: string, token: string): void {
   }
 }
 
-/** 获取短期文件锁；失败抛 KnowledgeError('io')。 */
-function acquireLock(lockPath: string, options: LockOptions): () => void {
+function holderDetails(info: LockInfo): Record<string, unknown> {
+  const details: Record<string, unknown> = {}
+  if (info.pid !== undefined) details.holderPid = info.pid
+  if (info.ageMs !== undefined) details.ageMs = Math.round(info.ageMs)
+  if (info.bootId !== undefined) details.holderBootId = info.bootId
+  return details
+}
+
+/** 获取短期文件锁；失败抛 KnowledgeError('io')。超硬上限且心跳停滞时不静默抢占。 */
+function acquireLock(lockPath: string, options: { timeoutMs: number; staleMs: number; hardLimitMs: number; heartbeatMs: number }): LockHandle {
   const token = randomUUID()
   const deadline = Date.now() + options.timeoutMs
   for (;;) {
@@ -169,7 +267,7 @@ function acquireLock(lockPath: string, options: LockOptions): () => void {
     try {
       const fd = openSync(lockPath, 'wx')
       try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), token }))
+        writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString(), token, bootId: BOOT_ID }))
       } finally {
         closeSync(fd)
       }
@@ -178,23 +276,55 @@ function acquireLock(lockPath: string, options: LockOptions): () => void {
       const code = (error as NodeJS.ErrnoException).code
       if (code !== 'EEXIST') throw new KnowledgeError('io', '获取知识库锁失败：' + errorMessage(error))
     }
-    if (acquired) return () => releaseLock(lockPath, token)
+    if (acquired) {
+      const heartbeat = setInterval(() => refreshLock(lockPath, token), options.heartbeatMs)
+      if (typeof heartbeat.unref === 'function') heartbeat.unref()
+      return {
+        release: () => {
+          clearInterval(heartbeat)
+          releaseLock(lockPath, token)
+        },
+        touch: () => refreshLock(lockPath, token),
+      }
+    }
 
-    if (lockIsStale(lockPath, options.staleMs)) {
-      try {
-        unlinkSync(lockPath)
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code !== 'ENOENT') {
+    const info = readLockInfo(lockPath, options.staleMs)
+    if (info.stale) {
+      // TOCTOU：删除前再确认内容没有变化（他人刚接管/刷新则重新判断）。
+      const recheck = readLockInfo(lockPath, options.staleMs)
+      if (recheck.raw === info.raw) {
+        try {
+          unlinkSync(lockPath)
+          continue
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code
+          if (code === 'ENOENT') continue
           if (Date.now() >= deadline) {
-            throw new KnowledgeError('io', '知识库锁已过期但无法接管：' + errorMessage(error))
+            throw new KnowledgeError('io', '检测到过期知识库锁但无法接管：' + errorMessage(error), holderDetails(info))
           }
-          sleepSync(25)
         }
       }
+      sleepSync(25)
       continue
     }
-    if (Date.now() >= deadline) throw new KnowledgeError('io', '知识库被其他进程占用，请稍后重试')
+
+    if (info.present && info.pid !== undefined && info.alive === true && (info.ageMs ?? 0) > options.hardLimitMs) {
+      throw new KnowledgeError(
+        'io',
+        '知识库锁被进程 ' + info.pid + ' 持有 ' + Math.round(info.ageMs ?? 0) + 'ms（超过硬上限 ' + options.hardLimitMs + 'ms 且心跳停滞）；请结束该进程后重试，或确认无人写入后手动删除 ' + lockPath,
+        holderDetails(info),
+      )
+    }
+    if (Date.now() >= deadline) {
+      if (info.present) {
+        throw new KnowledgeError(
+          'io',
+          '知识库被其他进程占用（pid=' + (info.pid === undefined ? '未知' : String(info.pid)) + '，age=' + Math.round(info.ageMs ?? 0) + 'ms），请稍后重试',
+          holderDetails(info),
+        )
+      }
+      throw new KnowledgeError('io', '获取知识库锁超时，请稍后重试')
+    }
     sleepSync(25)
   }
 }
@@ -224,8 +354,38 @@ function isEventShape(value: unknown): value is KnowledgeEvent {
   }
 }
 
+/** 事件 / 证据行是否携带非当前 schemaVersion（R7：独立计 unsupportedVersions）。 */
+function hasUnsupportedSchema(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const version = value.schemaVersion
+  if (typeof version === 'number' && version !== 1) return true
+  const payload = value.payload
+  if (isRecord(payload)) {
+    const payloadVersion = payload.schemaVersion
+    if (typeof payloadVersion === 'number' && payloadVersion !== 1) return true
+  }
+  return false
+}
+
 function emptyStateCounts(): Record<LessonState, number> {
   return { candidate: 0, usable: 0, disputed: 0, stale: 0, rejected: 0 }
+}
+
+function createEmptyReplayState(): ReplayState {
+  return {
+    lessons: new Map(),
+    evidence: new Map(),
+    idempotency: new Map(),
+    events: 0,
+    replayedEvents: 0,
+    badLines: 0,
+    orphanEvents: 0,
+    unsupportedVersions: 0,
+    replayMode: 'full',
+    idempotencyComplete: true,
+    entitiesFromSnapshot: false,
+    snapshotEvidenceCount: 0,
+  }
 }
 
 /**
@@ -241,6 +401,9 @@ export class KnowledgeStore {
   private readonly maxReplayEvents: number
   private readonly lockTimeoutMs: number
   private readonly lockStaleMs: number
+  private readonly lockHardLimitMs: number
+  private readonly lockHeartbeatMs: number
+  private lastIndexError?: { message: string; at: string }
 
   constructor(knowledgeDir: string, options: KnowledgeStoreOptions = {}) {
     if (typeof knowledgeDir !== 'string' || knowledgeDir.trim() === '') {
@@ -249,6 +412,8 @@ export class KnowledgeStore {
     const maxReplay = typeof options.maxReplayEvents === 'number' && Number.isFinite(options.maxReplayEvents)
       ? Math.max(1, Math.floor(options.maxReplayEvents))
       : MAX_REPLAY_EVENTS
+    const numberOption = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
     this.dir = knowledgeDir
     this.eventsPath = join(knowledgeDir, 'events.jsonl')
     this.evidencePath = join(knowledgeDir, 'evidence.jsonl')
@@ -256,8 +421,10 @@ export class KnowledgeStore {
     this.lockPath = join(knowledgeDir, '.lock')
     this.mask = options.maskSecrets !== false
     this.maxReplayEvents = maxReplay
-    this.lockTimeoutMs = typeof options.lockTimeoutMs === 'number' && options.lockTimeoutMs >= 0 ? options.lockTimeoutMs : 2000
-    this.lockStaleMs = typeof options.lockStaleMs === 'number' && options.lockStaleMs >= 0 ? options.lockStaleMs : 30000
+    this.lockTimeoutMs = numberOption(options.lockTimeoutMs, 2000)
+    this.lockStaleMs = numberOption(options.lockStaleMs, 30000)
+    this.lockHardLimitMs = numberOption(options.lockHardLimitMs, 600000)
+    this.lockHeartbeatMs = Math.max(10, numberOption(options.lockHeartbeatMs, 5000))
   }
 
   /** 全部经验，按 updatedAt 降序（同刻按 id 稳定排序）。 */
@@ -286,8 +453,8 @@ export class KnowledgeStore {
   /** 追加证据；同 sessionId+recordSeq 或同 sourceHash 视为重复，返回已有记录且不写。 */
   appendEvidence(input: EvidenceInput): { evidence: Evidence; created: boolean } {
     if (!isRecord(input)) throw new KnowledgeError('invalid', '证据输入必须是对象')
-    return this.withLock(() => {
-      const state = this.loadAll()
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
       const existing = this.findEvidenceByNaturalKey(state, input)
       if (existing !== undefined) return { evidence: clone(existing), created: false }
       const created = this.persistEvidenceLocked(input, state)
@@ -296,21 +463,44 @@ export class KnowledgeStore {
   }
 
   /**
-   * 创建候选经验。同 idempotencyKey 幂等；同指纹（文本 + 范围相同）确定性合并，
+   * 创建候选经验。同 idempotencyKey + 同 requestHash 幂等；同指纹（文本 + 范围相同）确定性合并，
    * 只把新证据并入已有经验，不新增经验。
+   * R2′：有 read 证据 → 初始 usable（含 user-correction read 时 review=accepted/user）；只有 claimed 或无证据 → candidate。
    */
   createLesson(input: LessonInput, idempotencyKey: string): { lesson: Lesson; created: boolean } {
     assertIdempotencyKey(idempotencyKey)
     if (!isRecord(input)) throw new KnowledgeError('invalid', '经验输入必须是对象')
-    if (!Array.isArray(input.evidence)) throw new KnowledgeError('invalid', 'evidence 必须是数组')
-    return this.withLock(() => {
-      const state = this.loadAll()
+    if (input.evidence !== undefined && !Array.isArray(input.evidence)) {
+      throw new KnowledgeError('invalid', 'evidence 必须是数组')
+    }
+    const evidenceInputs = input.evidence === undefined ? [] : input.evidence
+    const requestHash = this.hashRequest({
+      operation: 'lesson.create',
+      kind: input.kind === undefined ? null : input.kind,
+      title: input.title === undefined ? null : input.title,
+      action: input.action === undefined ? null : input.action,
+      when: input.when === undefined ? null : input.when,
+      exceptions: input.exceptions === undefined ? null : input.exceptions,
+      projectId: input.projectId === undefined ? null : input.projectId,
+      workspaceRoot: input.workspaceRoot === undefined ? null : input.workspaceRoot,
+      global: input.global === true,
+      applicability: input.applicability === undefined ? null : input.applicability,
+      evidence: evidenceInputs,
+      conflictIds: input.conflictIds === undefined ? null : input.conflictIds,
+    })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
       const cached = state.idempotency.get(idempotencyKey)
-      if (cached !== undefined) return { lesson: clone(cached), created: false }
-
-      const scope: Lesson['scope'] = {
-        global: input.global === true,
+      if (cached !== undefined) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const lesson = this.resolveIdempotentLesson(state, idempotencyKey)
+        if (lesson === undefined) {
+          throw new KnowledgeError('io', '无法恢复幂等键的历史结果（events.jsonl 可能被删改）：' + idempotencyKey, { idempotencyKey })
+        }
+        return { lesson, created: false }
       }
+
+      const scope: Lesson['scope'] = { global: input.global === true }
       if (typeof input.projectId === 'string' && input.projectId.trim() !== '') scope.projectId = input.projectId
       if (typeof input.workspaceRoot === 'string' && input.workspaceRoot.trim() !== '') scope.workspaceRoot = input.workspaceRoot
 
@@ -336,7 +526,7 @@ export class KnowledgeStore {
       })
 
       const fingerprint = lessonFingerprint({
-        kind: input.kind as Lesson['kind'],
+        kind: input.kind,
         title: typeof input.title === 'string' ? input.title : undefined,
         action: typeof input.action === 'string' ? input.action : '',
         when: typeof input.when === 'string' ? input.when : '',
@@ -345,27 +535,53 @@ export class KnowledgeStore {
       const existing = Array.from(state.lessons.values()).find((lesson) => lessonFingerprint(lesson) === fingerprint)
 
       const appended: Evidence[] = []
-      for (const raw of input.evidence) appended.push(this.persistEvidenceLocked(raw, state))
+      for (const raw of evidenceInputs) appended.push(this.persistEvidenceLocked(raw, state))
 
       if (existing !== undefined) {
         const newIds = appended.map((item) => item.id).filter((id) => !existing.evidenceIds.includes(id))
-        let merged = existing
+        const mergedIds = existing.evidenceIds.concat(newIds)
+        const mergedEvidence = mergedIds
+          .map((id) => state.evidence.get(id))
+          .filter((item): item is Evidence => item !== undefined)
+        const hasRead = mergedEvidence.some((item) => item.verification === 'read')
+        const hasUserCorrectionRead = mergedEvidence.some((item) => item.kind === 'user-correction' && item.verification === 'read')
+
+        const patch: Partial<Lesson> = {}
         if (newIds.length > 0) {
-          const mergedIds = existing.evidenceIds.concat(newIds)
-          merged = this.appendLessonUpdate(
-            state,
-            existing,
-            {
-              evidenceIds: mergedIds,
-              independentSupportCount: mergeEvidenceSupport({ evidenceIds: mergedIds }, Array.from(state.evidence.values())),
-            },
-            idempotencyKey,
-          )
+          patch.evidenceIds = mergedIds
+          patch.independentSupportCount = mergeEvidenceSupport({ evidenceIds: mergedIds }, Array.from(state.evidence.values()))
         }
+        // R2′：候选经验遇到 read 证据可升为 usable；disputed/stale/rejected 状态保持不变。
+        if (existing.state === 'candidate' && hasRead) {
+          patch.state = 'usable'
+          if (hasUserCorrectionRead) {
+            patch.review = { decision: 'accepted', actor: 'user', at: now }
+          } else if (existing.review.decision !== 'unreviewed') {
+            patch.review = { decision: 'unreviewed' }
+          }
+        } else if (
+          existing.state === 'usable' &&
+          hasUserCorrectionRead &&
+          existing.review.decision !== 'accepted'
+        ) {
+          patch.review = { decision: 'accepted', actor: 'user', at: now }
+        }
+        if (Object.keys(patch).length === 0) return { lesson: clone(existing), created: false }
+        const merged = this.appendLessonUpdate(state, existing, patch, idempotencyKey, requestHash, touch)
         return { lesson: clone(merged), created: false }
       }
 
       const evidenceIds = appended.map((item) => item.id)
+      const allEvidence = evidenceIds
+        .map((id) => state.evidence.get(id))
+        .filter((item): item is Evidence => item !== undefined)
+      const hasRead = allEvidence.some((item) => item.verification === 'read')
+      const hasUserCorrectionRead = allEvidence.some((item) => item.kind === 'user-correction' && item.verification === 'read')
+      const initialState: LessonState = hasRead ? 'usable' : 'candidate'
+      const initialReview: Lesson['review'] = hasUserCorrectionRead
+        ? { decision: 'accepted', actor: 'user', at: now }
+        : { decision: 'unreviewed' }
+
       const lesson = validateLesson({
         schemaVersion: 1,
         id: 'lsn_' + randomUUID(),
@@ -377,62 +593,69 @@ export class KnowledgeStore {
         exceptions: input.exceptions === undefined ? [] : input.exceptions,
         scope,
         applicability: input.applicability === undefined ? [] : input.applicability,
-        state: 'candidate',
+        state: initialState,
         evidenceIds,
         independentSupportCount: mergeEvidenceSupport({ evidenceIds }, Array.from(state.evidence.values())),
-        review: { decision: 'unreviewed' },
+        review: initialReview,
         createdAt: now,
         updatedAt: now,
         conflictIds: input.conflictIds === undefined ? [] : input.conflictIds,
       })
       const stored = this.maskLesson(lesson)
-      this.appendEvent({
+      const event: KnowledgeEvent = {
         schemaVersion: 1,
         id: 'evt_' + randomUUID(),
         at: now,
         kind: 'lesson.create',
         lessonId: stored.id,
         idempotencyKey,
+        requestHash,
         payload: stored,
-      })
+      }
+      this.appendEvent(state, event)
       state.lessons.set(stored.id, stored)
-      if (!state.idempotency.has(idempotencyKey)) state.idempotency.set(idempotencyKey, stored)
-      this.writeIndex(state)
+      if (!state.idempotency.has(idempotencyKey)) {
+        state.idempotency.set(idempotencyKey, { lessonId: stored.id, requestHash, lesson: stored })
+      }
+      this.writeIndex(state, touch)
       return { lesson: clone(stored), created: true }
     })
   }
 
-  /** 按 patch 更新经验；revision 不符抛 KnowledgeError('revision') 且不写。 */
+  /** 按 patch 更新经验；revision 不符抛 KnowledgeError('revision')（details 带 currentRevision）且不写。 */
   updateLesson(id: string, patch: Partial<Lesson>, expectedRevision: number, idempotencyKey: string): Lesson {
     assertIdempotencyKey(idempotencyKey)
     if (!isRecord(patch)) throw new KnowledgeError('invalid', 'patch 必须是对象')
-    return this.withLock(() => {
-      const state = this.loadAll()
+    const requestHash = this.hashRequest({ operation: 'lesson.update', lessonId: id, patch: this.hashablePatch(patch) })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
       const cached = state.idempotency.get(idempotencyKey)
-      if (cached !== undefined) return clone(cached)
+      if (cached !== undefined) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const lesson = this.resolveIdempotentLesson(state, idempotencyKey)
+        if (lesson === undefined) throw new KnowledgeError('io', '无法恢复幂等键的历史结果：' + idempotencyKey, { idempotencyKey })
+        return lesson
+      }
       const lesson = state.lessons.get(id)
-      if (lesson === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id)
+      if (lesson === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id, { lessonId: id })
       if (lesson.revision !== expectedRevision) {
-        throw new KnowledgeError('revision', '经验 ' + id + ' 期望 revision ' + expectedRevision + '，实际 ' + lesson.revision)
+        throw new KnowledgeError('revision', '经验 ' + id + ' 期望 revision ' + expectedRevision + '，实际 ' + lesson.revision, {
+          lessonId: id,
+          expectedRevision,
+          currentRevision: lesson.revision,
+        })
       }
-      const clean: Partial<Lesson> = {}
-      for (const key of Object.keys(patch)) {
-        if (key === 'id' || key === 'schemaVersion' || key === 'revision' || key === 'createdAt' || key === 'updatedAt') continue
-        const value = (patch as Record<string, unknown>)[key]
-        if (value === undefined) continue
-        ;(clean as Record<string, unknown>)[key] = value
-      }
+      const clean = this.cleanPatch(patch)
       if (clean.state !== undefined && clean.state !== lesson.state && !canTransition(lesson.state, clean.state)) {
-        throw new KnowledgeError('invalid', '不允许的状态迁移：' + lesson.state + ' → ' + clean.state)
+        throw new KnowledgeError('invalid', '不允许的状态迁移：' + lesson.state + ' → ' + clean.state, { lessonId: id })
       }
       if (clean.evidenceIds !== undefined) {
-        if (!Array.isArray(clean.evidenceIds)) throw new KnowledgeError('invalid', 'evidenceIds 必须是数组')
         clean.independentSupportCount = mergeEvidenceSupport(
           { evidenceIds: clean.evidenceIds },
           Array.from(state.evidence.values()),
         )
       }
-      return clone(this.appendLessonUpdate(state, lesson, clean, idempotencyKey))
+      return clone(this.appendLessonUpdate(state, lesson, clean, idempotencyKey, requestHash, touch))
     })
   }
 
@@ -447,18 +670,28 @@ export class KnowledgeStore {
     assertIdempotencyKey(idempotencyKey)
     if (!isEnum(decision, REVIEW_DECISIONS)) throw new KnowledgeError('invalid', 'review decision 取值不合法')
     const maskedActor = actor === undefined ? undefined : this.mask ? maskSecrets(actor) : actor
-    return this.withLock(() => {
-      const state = this.loadEvents()
+    const requestHash = this.hashRequest({ operation: 'lesson.review', lessonId: id, decision, actor: maskedActor === undefined ? null : maskedActor })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
       const cached = state.idempotency.get(idempotencyKey)
-      if (cached !== undefined) return clone(cached)
+      if (cached !== undefined) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const lesson = this.resolveIdempotentLesson(state, idempotencyKey)
+        if (lesson === undefined) throw new KnowledgeError('io', '无法恢复幂等键的历史结果：' + idempotencyKey, { idempotencyKey })
+        return lesson
+      }
       const lesson = state.lessons.get(id)
-      if (lesson === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id)
+      if (lesson === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id, { lessonId: id })
       if (lesson.revision !== expectedRevision) {
-        throw new KnowledgeError('revision', '经验 ' + id + ' 期望 revision ' + expectedRevision + '，实际 ' + lesson.revision)
+        throw new KnowledgeError('revision', '经验 ' + id + ' 期望 revision ' + expectedRevision + '，实际 ' + lesson.revision, {
+          lessonId: id,
+          expectedRevision,
+          currentRevision: lesson.revision,
+        })
       }
       const nextState: LessonState = decision === 'accepted' ? 'usable' : decision === 'rejected' ? 'rejected' : 'candidate'
       if (nextState !== lesson.state && !canTransition(lesson.state, nextState)) {
-        throw new KnowledgeError('invalid', '不允许的审阅迁移：' + lesson.state + ' → ' + nextState)
+        throw new KnowledgeError('invalid', '不允许的审阅迁移：' + lesson.state + ' → ' + nextState, { lessonId: id })
       }
       const now = new Date().toISOString()
       const merged = validateLesson({
@@ -472,7 +705,7 @@ export class KnowledgeStore {
       })
       const payload: { decision: ReviewDecision; actor?: string; state: LessonState } = { decision, state: nextState }
       if (maskedActor !== undefined) payload.actor = maskedActor
-      this.appendEvent({
+      const event: KnowledgeEvent = {
         schemaVersion: 1,
         id: 'evt_' + randomUUID(),
         at: now,
@@ -480,11 +713,15 @@ export class KnowledgeStore {
         lessonId: lesson.id,
         revision: merged.revision,
         idempotencyKey,
+        requestHash,
         payload,
-      })
+      }
+      this.appendEvent(state, event)
       state.lessons.set(merged.id, merged)
-      if (!state.idempotency.has(idempotencyKey)) state.idempotency.set(idempotencyKey, merged)
-      this.writeIndex(state)
+      if (!state.idempotency.has(idempotencyKey)) {
+        state.idempotency.set(idempotencyKey, { lessonId: merged.id, requestHash, lesson: merged })
+      }
+      this.writeIndex(state, touch)
       return clone(merged)
     })
   }
@@ -493,31 +730,41 @@ export class KnowledgeStore {
   applyTransition(id: string, to: LessonState, expectedRevision: number, idempotencyKey: string): Lesson {
     assertIdempotencyKey(idempotencyKey)
     if (!isEnum(to, LESSON_STATES)) throw new KnowledgeError('invalid', '目标状态取值不合法')
-    return this.withLock(() => {
-      const state = this.loadEvents()
+    const requestHash = this.hashRequest({ operation: 'lesson.transition', lessonId: id, to })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
       const cached = state.idempotency.get(idempotencyKey)
-      if (cached !== undefined) return clone(cached)
+      if (cached !== undefined) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const lesson = this.resolveIdempotentLesson(state, idempotencyKey)
+        if (lesson === undefined) throw new KnowledgeError('io', '无法恢复幂等键的历史结果：' + idempotencyKey, { idempotencyKey })
+        return lesson
+      }
       const lesson = state.lessons.get(id)
-      if (lesson === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id)
+      if (lesson === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id, { lessonId: id })
       if (lesson.revision !== expectedRevision) {
-        throw new KnowledgeError('revision', '经验 ' + id + ' 期望 revision ' + expectedRevision + '，实际 ' + lesson.revision)
+        throw new KnowledgeError('revision', '经验 ' + id + ' 期望 revision ' + expectedRevision + '，实际 ' + lesson.revision, {
+          lessonId: id,
+          expectedRevision,
+          currentRevision: lesson.revision,
+        })
       }
       if (!canTransition(lesson.state, to)) {
-        throw new KnowledgeError('invalid', '不允许的状态迁移：' + lesson.state + ' → ' + to)
+        throw new KnowledgeError('invalid', '不允许的状态迁移：' + lesson.state + ' → ' + to, { lessonId: id })
       }
-      return clone(this.appendLessonUpdate(state, lesson, { state: to }, idempotencyKey))
+      return clone(this.appendLessonUpdate(state, lesson, { state: to }, idempotencyKey, requestHash, touch))
     })
   }
 
-  /** 从事件重建派生索引；不删除、不改写 events.jsonl / evidence.jsonl。 */
+  /** 从事件完整重建派生索引与 checkpoint；不删除、不改写 events.jsonl / evidence.jsonl。 */
   rebuildIndex(): void {
-    this.withLock(() => {
-      const state = this.loadAll()
-      this.writeIndexStrict(state)
+    this.withLock((touch) => {
+      const state = this.loadAllUnbounded(touch)
+      this.writeIndexStrict(state, touch)
     })
   }
 
-  /** 统计。truncated=true 表示回放被 MAX_REPLAY_EVENTS 截断（不静默）。 */
+  /** 统计。truncated=true 表示事件总量超过有界回放上限（不静默）；快照模式下实体已折叠进 checkpoint。 */
   stats(): {
     lessons: number
     evidence: number
@@ -525,6 +772,12 @@ export class KnowledgeStore {
     byState: Record<LessonState, number>
     truncated: boolean
     badLines: number
+    orphanEvents: number
+    unsupportedVersions: number
+    firstReplayedEventId?: string
+    replayMode: 'full' | 'snapshot+tail'
+    replayedEvents: number
+    skippedEvents: number
   } {
     const state = this.loadAll()
     const byState = emptyStateCounts()
@@ -534,9 +787,100 @@ export class KnowledgeStore {
       evidence: state.evidence.size,
       events: state.events,
       byState,
-      truncated: state.truncated,
+      truncated: state.events > this.maxReplayEvents,
       badLines: state.badLines,
+      orphanEvents: state.orphanEvents,
+      unsupportedVersions: state.unsupportedVersions,
+      firstReplayedEventId: state.firstReplayedEventId,
+      replayMode: state.replayMode,
+      replayedEvents: state.replayedEvents,
+      skippedEvents: Math.max(0, state.events - state.replayedEvents),
     }
+  }
+
+  /** 只读诊断：锁、文件、计数与最近一次派生索引写失败；绝不获取锁、绝不写盘。 */
+  diagnose(): {
+    writable: boolean
+    lock: { present: boolean; ageMs?: number; pid?: number; alive?: boolean; bootId?: string; stale: boolean }
+    files: {
+      dir: string
+      events: { path: string; exists: boolean; bytes: number }
+      evidence: { path: string; exists: boolean; bytes: number }
+      index: { path: string; exists: boolean; bytes: number; generatedAt?: string }
+    }
+    counts: {
+      lessons: number
+      evidence: number
+      events: number
+      badLines: number
+      orphanEvents: number
+      unsupportedVersions: number
+      truncated: boolean
+      byState: Record<LessonState, number>
+    }
+    lastIndexError?: { message: string; at: string }
+  } {
+    const info = readLockInfo(this.lockPath, this.lockStaleMs)
+    const state = this.loadAll()
+    const byState = emptyStateCounts()
+    for (const lesson of state.lessons.values()) byState[lesson.state]++
+    const lock: { present: boolean; ageMs?: number; pid?: number; alive?: boolean; bootId?: string; stale: boolean } = {
+      present: info.present,
+      stale: info.stale,
+    }
+    if (info.ageMs !== undefined) lock.ageMs = Math.round(info.ageMs)
+    if (info.pid !== undefined) lock.pid = info.pid
+    if (info.alive !== undefined) lock.alive = info.alive
+    if (info.bootId !== undefined) lock.bootId = info.bootId
+    let generatedAt: string | undefined
+    try {
+      const raw: unknown = existsSync(this.indexPath) ? JSON.parse(readFileSync(this.indexPath, 'utf8')) : undefined
+      if (isRecord(raw) && typeof raw.generatedAt === 'string') generatedAt = raw.generatedAt
+    } catch {
+      // 派生索引损坏不影响 diagnose
+    }
+    const result: {
+      writable: boolean
+      lock: typeof lock
+      files: {
+        dir: string
+        events: { path: string; exists: boolean; bytes: number }
+        evidence: { path: string; exists: boolean; bytes: number }
+        index: { path: string; exists: boolean; bytes: number; generatedAt?: string }
+      }
+      counts: {
+        lessons: number
+        evidence: number
+        events: number
+        badLines: number
+        orphanEvents: number
+        unsupportedVersions: number
+        truncated: boolean
+        byState: Record<LessonState, number>
+      }
+      lastIndexError?: { message: string; at: string }
+    } = {
+      writable: !info.present || info.stale,
+      lock,
+      files: {
+        dir: this.dir,
+        events: this.fileInfo(this.eventsPath),
+        evidence: this.fileInfo(this.evidencePath),
+        index: generatedAt === undefined ? this.fileInfo(this.indexPath) : { ...this.fileInfo(this.indexPath), generatedAt },
+      },
+      counts: {
+        lessons: state.lessons.size,
+        evidence: state.evidence.size,
+        events: state.events,
+        badLines: state.badLines,
+        orphanEvents: state.orphanEvents,
+        unsupportedVersions: state.unsupportedVersions,
+        truncated: state.events > this.maxReplayEvents,
+        byState,
+      },
+    }
+    if (this.lastIndexError !== undefined) result.lastIndexError = this.lastIndexError
+    return result
   }
 
   // ---------- 内部实现 ----------
@@ -545,86 +889,255 @@ export class KnowledgeStore {
     if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true })
   }
 
-  private withLock<T>(operation: () => T): T {
+  private withLock<T>(operation: (touch: () => void) => T): T {
     this.ensureDir()
-    const release = acquireLock(this.lockPath, { timeoutMs: this.lockTimeoutMs, staleMs: this.lockStaleMs })
+    const handle = acquireLock(this.lockPath, {
+      timeoutMs: this.lockTimeoutMs,
+      staleMs: this.lockStaleMs,
+      hardLimitMs: this.lockHardLimitMs,
+      heartbeatMs: this.lockHeartbeatMs,
+    })
     try {
-      return operation()
+      return operation(handle.touch)
     } finally {
-      release()
+      handle.release()
     }
   }
 
-  /** 有界读取 JSONL：只保留最后 maxReplayEvents 条非空行，并报告总行数与截断。 */
-  private readBoundedLines(file: string): { lines: string[]; total: number; truncated: boolean } {
-    if (!existsSync(file)) return { lines: [], total: 0, truncated: false }
-    const max = this.maxReplayEvents
+  private fileInfo(path: string): { path: string; exists: boolean; bytes: number } {
+    let bytes = 0
+    let exists = false
+    try {
+      const stat = statSync(path)
+      exists = true
+      bytes = stat.size
+    } catch {
+      exists = false
+    }
+    return { path, exists, bytes }
+  }
+
+  private hashRequest(value: unknown): string {
+    return createHash('sha256').update(stableStringify(value), 'utf8').digest('hex')
+  }
+
+  private hashablePatch(patch: Partial<Lesson>): Record<string, unknown> {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(patch)) {
+      if (key === 'id' || key === 'schemaVersion' || key === 'revision' || key === 'createdAt' || key === 'updatedAt') continue
+      const value = (patch as Record<string, unknown>)[key]
+      if (value !== undefined) out[key] = value
+    }
+    return out
+  }
+
+  private cleanPatch(patch: Partial<Lesson>): Partial<Lesson> {
+    const clean: Partial<Lesson> = {}
+    const hashable = this.hashablePatch(patch)
+    for (const key of Object.keys(hashable)) {
+      ;(clean as Record<string, unknown>)[key] = hashable[key]
+    }
+    return clean
+  }
+
+  private assertSameRequest(entry: IdempotencyRecord, requestHash: string, idempotencyKey: string): void {
+    if (entry.requestHash !== undefined && entry.requestHash !== requestHash) {
+      throw new KnowledgeError('duplicate', '幂等键已用于不同的请求 payload：' + idempotencyKey, {
+        idempotencyKey,
+        existingRequestHash: entry.requestHash,
+        requestHash,
+      })
+    }
+  }
+
+  /**
+   * 恢复"首次结果"：
+   * - 尾部回放产生的 entry 自带快照，直接返回；
+   * - checkpoint 里的 entry 只有 lessonId/requestHash，则做一次有针对性的完整扫描，
+   *   在命中该幂等键的那一刻取快照；失败再退回当前实体（best effort）。
+   */
+  private resolveIdempotentLesson(state: ReplayState, idempotencyKey: string): Lesson | undefined {
+    const entry = state.idempotency.get(idempotencyKey)
+    if (entry === undefined) return undefined
+    if (entry.lesson !== undefined) return clone(entry.lesson)
+    const exact = this.replayUntilIdempotencyKey(idempotencyKey)
+    if (exact !== undefined) return clone(exact)
+    const current = state.lessons.get(entry.lessonId)
+    return current === undefined ? undefined : clone(current)
+  }
+
+  private replayUntilIdempotencyKey(idempotencyKey: string): Lesson | undefined {
+    const state = createEmptyReplayState()
+    let found: Lesson | undefined
+    try {
+      this.forEachLine(this.eventsPath, 0, (line) => {
+        state.events++
+        this.applyEventLine(state, line)
+        const hit = state.idempotency.get(idempotencyKey)
+        if (hit !== undefined && hit.lesson !== undefined) {
+          found = hit.lesson
+          return false
+        }
+        return true
+      })
+    } catch {
+      return undefined
+    }
+    return found
+  }
+
+  /** 顺序读取 JSONL 的非空行；每 TOUCH_EVERY_LINES 行调用一次 touch（长回放锁心跳）。 */
+  private forEachLine(
+    file: string,
+    fromOffset: number,
+    onLine: (line: string) => boolean | void,
+    touch?: () => void,
+  ): void {
+    if (!existsSync(file)) return
     const fd = openSync(file, 'r')
     try {
       const decoder = new StringDecoder('utf8')
       const buffer = Buffer.allocUnsafe(64 * 1024)
-      const ring: string[] = []
-      let ringStart = 0
-      let total = 0
       let carry = ''
-      const push = (line: string): void => {
-        total++
-        if (ring.length < max) {
-          ring.push(line)
-        } else {
-          ring[ringStart] = line
-          ringStart = (ringStart + 1) % max
-        }
-      }
+      let position = fromOffset
+      let count = 0
       for (;;) {
-        const read = readSync(fd, buffer, 0, buffer.length, null)
+        const read = readSync(fd, buffer, 0, buffer.length, position)
         if (read <= 0) break
+        position += read
         carry += decoder.write(buffer.subarray(0, read))
         let index = carry.indexOf('\n')
         while (index >= 0) {
           let line = carry.slice(0, index)
           carry = carry.slice(index + 1)
           if (line.endsWith('\r')) line = line.slice(0, -1)
-          if (line.trim() !== '') push(line)
+          if (line.trim() !== '') {
+            count++
+            if (count % TOUCH_EVERY_LINES === 0) touch?.()
+            if (onLine(line) === false) return
+          }
           index = carry.indexOf('\n')
         }
       }
       carry += decoder.end()
-      if (carry.trim() !== '') push(carry.endsWith('\r') ? carry.slice(0, -1) : carry)
-      const lines = ringStart === 0 ? ring : ring.slice(ringStart).concat(ring.slice(0, ringStart))
-      return { lines, total, truncated: total > max }
+      if (carry.trim() !== '') onLine(carry.endsWith('\r') ? carry.slice(0, -1) : carry)
     } finally {
       closeSync(fd)
     }
   }
 
-  /** 只回放事件流。 */
-  private loadEvents(): ReplayState {
-    const bounded = this.readBoundedLines(this.eventsPath)
-    const state: ReplayState = {
-      lessons: new Map(),
-      evidence: new Map(),
-      idempotency: new Map(),
-      events: bounded.total,
-      truncated: bounded.truncated,
-      badLines: 0,
+  /** 有界读取：只保留最后 maxReplayEvents 条非空行，并报告总行数与是否截断。 */
+  private readBoundedLines(file: string, fromOffset: number, touch?: () => void): { lines: string[]; total: number; truncated: boolean } {
+    const max = this.maxReplayEvents
+    const ring: string[] = []
+    let ringStart = 0
+    let total = 0
+    this.forEachLine(file, fromOffset, (line) => {
+      total++
+      if (ring.length < max) {
+        ring.push(line)
+      } else {
+        ring[ringStart] = line
+        ringStart = (ringStart + 1) % max
+      }
+    }, touch)
+    const lines = ringStart === 0 ? ring : ring.slice(ringStart).concat(ring.slice(0, ringStart))
+    return { lines, total, truncated: total > max }
+  }
+
+  /** 快照 + 尾部增量（checkpoint 有效时）；否则有界全量回放。 */
+  private loadEvents(touch?: () => void): ReplayState {
+    const snapshot = this.tryLoadCheckpoint()
+    if (snapshot !== undefined) {
+      const state = createEmptyReplayState()
+      state.replayMode = 'snapshot+tail'
+      state.entitiesFromSnapshot = true
+      state.lessons = snapshot.lessons
+      state.idempotency = snapshot.idempotency
+      state.events = snapshot.checkpoint.eventsTotal
+      state.badLines = snapshot.checkpoint.counters.badLines
+      state.orphanEvents = snapshot.checkpoint.counters.orphanEvents
+      state.unsupportedVersions = snapshot.checkpoint.counters.unsupportedVersions
+      state.snapshotEvidenceCount = snapshot.checkpoint.counters.evidenceCount
+      state.idempotencyComplete = snapshot.checkpoint.idempotencyComplete === true
+      state.lastEventId = snapshot.checkpoint.lastEventId
+      const tail = this.readBoundedLines(this.eventsPath, snapshot.checkpoint.offset, touch)
+      if (tail.truncated) return this.loadEventsBounded(0, touch)
+      state.events += tail.total
+      state.replayedEvents = tail.total
+      for (const line of tail.lines) this.applyEventLine(state, line)
+      return state
     }
+    return this.loadEventsBounded(0, touch)
+  }
+
+  private loadEventsBounded(fromOffset: number, touch?: () => void): ReplayState {
+    const state = createEmptyReplayState()
+    state.replayMode = 'full'
+    const bounded = this.readBoundedLines(this.eventsPath, fromOffset, touch)
+    state.events = bounded.total
+    state.replayedEvents = bounded.lines.length
+    state.idempotencyComplete = !bounded.truncated
     for (const line of bounded.lines) this.applyEventLine(state, line)
     return state
   }
 
+  /** 无界完整回放（显式压缩 / 写路径发现截断或状态不完整时使用）。 */
+  private loadAllUnbounded(touch?: () => void): ReplayState {
+    const state = createEmptyReplayState()
+    state.replayMode = 'full'
+    state.idempotencyComplete = true
+    this.forEachLine(this.eventsPath, 0, (line) => {
+      state.events++
+      this.applyEventLine(state, line)
+    }, touch)
+    state.replayedEvents = state.events
+    this.mergeEvidenceFile(state, touch)
+    return state
+  }
+
   /** 事件流 + evidence.jsonl（两条路径都留痕，按 id 合并去重）。 */
-  private loadAll(): ReplayState {
-    const state = this.loadEvents()
-    const bounded = this.readBoundedLines(this.evidencePath)
-    state.truncated = state.truncated || bounded.truncated
-    for (const line of bounded.lines) {
+  private loadAll(touch?: () => void): ReplayState {
+    let state = this.mergeEvidenceFile(this.loadEvents(touch), touch)
+    if (state.entitiesFromSnapshot && this.hasMissingEvidenceRefs(state)) {
+      state = this.mergeEvidenceFile(this.loadEventsBounded(0, touch), touch)
+    }
+    return state
+  }
+
+  /** 写路径：状态不完整、证据疑似缺失或截断未折叠时，自动做一次完整回放。 */
+  private loadCompleteState(touch?: () => void): ReplayState {
+    let state = this.loadAll(touch)
+    const evidenceDeficit = state.entitiesFromSnapshot && state.evidence.size < state.snapshotEvidenceCount
+    const incompleteIdempotency = state.replayMode === 'snapshot+tail' && !state.idempotencyComplete
+    const skippedWithoutSnapshot = !state.entitiesFromSnapshot && state.events - state.replayedEvents > 0
+    if (evidenceDeficit || incompleteIdempotency || skippedWithoutSnapshot) {
+      state = this.loadAllUnbounded(touch)
+    }
+    return state
+  }
+
+  private hasMissingEvidenceRefs(state: ReplayState): boolean {
+    for (const lesson of state.lessons.values()) {
+      for (const id of lesson.evidenceIds) {
+        if (!state.evidence.has(id)) return true
+      }
+    }
+    return false
+  }
+
+  private mergeEvidenceFile(state: ReplayState, touch?: () => void): ReplayState {
+    this.forEachLine(this.evidencePath, 0, (line) => {
       let raw: unknown
       try {
         raw = JSON.parse(line)
       } catch {
         state.badLines++
-        continue
+        return
+      }
+      if (hasUnsupportedSchema(raw)) {
+        state.unsupportedVersions++
+        return
       }
       try {
         const evidence = validateEvidence(raw)
@@ -632,7 +1145,7 @@ export class KnowledgeStore {
       } catch {
         state.badLines++
       }
-    }
+    }, touch)
     return state
   }
 
@@ -644,24 +1157,38 @@ export class KnowledgeStore {
       state.badLines++
       return
     }
+    if (!isRecord(raw)) {
+      state.badLines++
+      return
+    }
+    if (hasUnsupportedSchema(raw)) {
+      state.unsupportedVersions++
+      return
+    }
     if (!isEventShape(raw)) {
       state.badLines++
       return
     }
     const event = raw
+    if (state.firstReplayedEventId === undefined) state.firstReplayedEventId = event.id
+    state.lastEventId = event.id
     try {
       switch (event.kind) {
         case 'lesson.create': {
           const lesson = validateLesson(event.payload)
           const stored = { ...lesson, id: event.lessonId }
           state.lessons.set(stored.id, stored)
-          if (!state.idempotency.has(event.idempotencyKey)) state.idempotency.set(event.idempotencyKey, stored)
+          if (!state.idempotency.has(event.idempotencyKey)) {
+            const record: IdempotencyRecord = { lessonId: stored.id, lesson: stored }
+            if (event.requestHash !== undefined) record.requestHash = event.requestHash
+            state.idempotency.set(event.idempotencyKey, record)
+          }
           return
         }
         case 'lesson.update': {
           const previous = state.lessons.get(event.lessonId)
           if (previous === undefined || event.revision <= previous.revision) {
-            state.badLines++
+            state.orphanEvents++
             return
           }
           const merged = validateLesson({
@@ -672,17 +1199,21 @@ export class KnowledgeStore {
             updatedAt: event.at,
           })
           if (merged.state !== previous.state && !canTransition(previous.state, merged.state)) {
-            state.badLines++
+            state.orphanEvents++
             return
           }
           state.lessons.set(merged.id, merged)
-          if (!state.idempotency.has(event.idempotencyKey)) state.idempotency.set(event.idempotencyKey, merged)
+          if (!state.idempotency.has(event.idempotencyKey)) {
+            const record: IdempotencyRecord = { lessonId: merged.id, lesson: merged }
+            if (event.requestHash !== undefined) record.requestHash = event.requestHash
+            state.idempotency.set(event.idempotencyKey, record)
+          }
           return
         }
         case 'lesson.review': {
           const previous = state.lessons.get(event.lessonId)
           if (previous === undefined || event.revision <= previous.revision) {
-            state.badLines++
+            state.orphanEvents++
             return
           }
           const review = event.payload.actor === undefined
@@ -697,11 +1228,15 @@ export class KnowledgeStore {
             updatedAt: event.at,
           })
           if (merged.state !== previous.state && !canTransition(previous.state, merged.state)) {
-            state.badLines++
+            state.orphanEvents++
             return
           }
           state.lessons.set(merged.id, merged)
-          if (!state.idempotency.has(event.idempotencyKey)) state.idempotency.set(event.idempotencyKey, merged)
+          if (!state.idempotency.has(event.idempotencyKey)) {
+            const record: IdempotencyRecord = { lessonId: merged.id, lesson: merged }
+            if (event.requestHash !== undefined) record.requestHash = event.requestHash
+            state.idempotency.set(event.idempotencyKey, record)
+          }
           return
         }
         case 'evidence.add': {
@@ -717,8 +1252,10 @@ export class KnowledgeStore {
     }
   }
 
-  private appendEvent(event: KnowledgeEvent): void {
+  private appendEvent(state: ReplayState, event: KnowledgeEvent): void {
     this.appendLine(this.eventsPath, event)
+    state.events++
+    state.lastEventId = event.id
   }
 
   private appendLine(file: string, value: unknown): void {
@@ -761,15 +1298,16 @@ export class KnowledgeStore {
     if (input.sourceHash !== undefined) raw.sourceHash = input.sourceHash
     const evidence = this.maskEvidence(validateEvidence(raw))
     const natural = evidenceNaturalKey(evidence)
-    this.appendLine(this.evidencePath, evidence)
-    this.appendEvent({
+    const event: KnowledgeEvent = {
       schemaVersion: 1,
       id: 'evt_' + randomUUID(),
       at: now,
       kind: 'evidence.add',
       idempotencyKey: 'evidence:' + (natural === undefined ? evidence.id : natural),
       payload: evidence,
-    })
+    }
+    this.appendLine(this.evidencePath, evidence)
+    this.appendEvent(state, event)
     state.evidence.set(evidence.id, evidence)
     return evidence
   }
@@ -780,9 +1318,11 @@ export class KnowledgeStore {
     previous: Lesson,
     patch: Partial<Lesson>,
     idempotencyKey: string,
+    requestHash: string,
+    touch?: () => void,
   ): Lesson {
     if (patch.state !== undefined && patch.state !== previous.state && !canTransition(previous.state, patch.state)) {
-      throw new KnowledgeError('invalid', '不允许的状态迁移：' + previous.state + ' → ' + patch.state)
+      throw new KnowledgeError('invalid', '不允许的状态迁移：' + previous.state + ' → ' + patch.state, { lessonId: previous.id })
     }
     const now = new Date().toISOString()
     const merged = this.maskLesson(validateLesson({
@@ -798,7 +1338,7 @@ export class KnowledgeStore {
       if (key === 'id' || key === 'schemaVersion' || key === 'revision' || key === 'createdAt' || key === 'updatedAt') continue
       ;(payload as Record<string, unknown>)[key] = (merged as unknown as Record<string, unknown>)[key]
     }
-    this.appendEvent({
+    const event: KnowledgeEvent = {
       schemaVersion: 1,
       id: 'evt_' + randomUUID(),
       at: now,
@@ -806,11 +1346,15 @@ export class KnowledgeStore {
       lessonId: merged.id,
       revision: merged.revision,
       idempotencyKey,
+      requestHash,
       payload,
-    })
+    }
+    this.appendEvent(state, event)
     state.lessons.set(merged.id, merged)
-    if (!state.idempotency.has(idempotencyKey)) state.idempotency.set(idempotencyKey, merged)
-    this.writeIndex(state)
+    if (!state.idempotency.has(idempotencyKey)) {
+      state.idempotency.set(idempotencyKey, { lessonId: merged.id, requestHash, lesson: merged })
+    }
+    this.writeIndex(state, touch)
     return merged
   }
 
@@ -830,6 +1374,180 @@ export class KnowledgeStore {
     return { ...evidence, summary: maskSecrets(evidence.summary) }
   }
 
+  // ---------- checkpoint / index ----------
+
+  private hashPrefix(file: string, bytes: number): string {
+    if (bytes <= 0) return createHash('sha256').digest('hex')
+    const fd = openSync(file, 'r')
+    try {
+      const buffer = Buffer.allocUnsafe(bytes)
+      let offset = 0
+      while (offset < bytes) {
+        const read = readSync(fd, buffer, offset, bytes - offset, offset)
+        if (read <= 0) break
+        offset += read
+      }
+      return createHash('sha256').update(buffer.subarray(0, offset)).digest('hex')
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  private readLastLineId(file: string, offset: number): string | undefined {
+    if (offset <= 0) return undefined
+    const start = Math.max(0, offset - LAST_LINE_WINDOW_BYTES)
+    const fd = openSync(file, 'r')
+    try {
+      const buffer = Buffer.allocUnsafe(offset - start)
+      let read = 0
+      while (read < buffer.length) {
+        const chunk = readSync(fd, buffer, read, buffer.length - read, start + read)
+        if (chunk <= 0) break
+        read += chunk
+      }
+      const text = buffer.subarray(0, read).toString('utf8').replace(/\r?\n+$/, '')
+      const index = Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r'))
+      const line = index >= 0 ? text.slice(index + 1) : text
+      try {
+        const parsed: unknown = JSON.parse(line)
+        return isRecord(parsed) && typeof parsed.id === 'string' ? parsed.id : undefined
+      } catch {
+        return undefined
+      }
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  private tryLoadCheckpoint(): CheckpointSnapshot | undefined {
+    if (!existsSync(this.indexPath)) return undefined
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(this.indexPath, 'utf8'))
+    } catch {
+      return undefined
+    }
+    if (!isRecord(raw) || raw.schemaVersion !== 1) return undefined
+    const cpRaw = raw.checkpoint
+    if (!isRecord(cpRaw)) return undefined
+    const offset = cpRaw.offset
+    const bytes = cpRaw.bytes
+    const lastEventId = cpRaw.lastEventId
+    const prefixHash = cpRaw.prefixHash
+    const prefixBytes = cpRaw.prefixBytes
+    const eventsTotal = cpRaw.eventsTotal
+    const countersRaw = cpRaw.counters
+    if (
+      typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0 ||
+      typeof bytes !== 'number' || bytes !== offset ||
+      typeof lastEventId !== 'string' ||
+      typeof prefixHash !== 'string' ||
+      typeof prefixBytes !== 'number' || !Number.isInteger(prefixBytes) || prefixBytes < 0 ||
+      typeof eventsTotal !== 'number' || !Number.isInteger(eventsTotal) || eventsTotal < 0 ||
+      !isRecord(countersRaw)
+    ) {
+      return undefined
+    }
+    const counterNumber = (key: string): number => {
+      const value = countersRaw[key]
+      return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0
+    }
+    const counters: CheckpointCounters = {
+      badLines: counterNumber('badLines'),
+      orphanEvents: counterNumber('orphanEvents'),
+      unsupportedVersions: counterNumber('unsupportedVersions'),
+      evidenceCount: counterNumber('evidenceCount'),
+    }
+
+    const lessonsRaw = raw.lessons
+    if (!isRecord(lessonsRaw)) return undefined
+    const lessons = new Map<string, Lesson>()
+    for (const [id, value] of Object.entries(lessonsRaw)) {
+      let lesson: Lesson
+      try {
+        lesson = validateLesson(value)
+      } catch {
+        return undefined
+      }
+      if (lesson.id !== id) return undefined
+      lessons.set(id, lesson)
+    }
+    if (offset === 0 && lessons.size > 0) return undefined
+
+    if (existsSync(this.eventsPath)) {
+      const size = statSync(this.eventsPath).size
+      if (size < offset) return undefined
+      if (offset > 0) {
+        if (prefixBytes !== Math.min(offset, PREFIX_HASH_BYTES)) return undefined
+        if (this.hashPrefix(this.eventsPath, prefixBytes) !== prefixHash) return undefined
+        if (this.readLastLineId(this.eventsPath, offset) !== lastEventId) return undefined
+      }
+    } else if (offset !== 0) {
+      return undefined
+    }
+
+    const idempotency = new Map<string, IdempotencyRecord>()
+    const idemRaw = raw.checkpoint !== undefined && isRecord(cpRaw.idempotency) ? cpRaw.idempotency : undefined
+    if (idemRaw !== undefined) {
+      for (const [key, value] of Object.entries(idemRaw)) {
+        if (!isRecord(value) || typeof value.lessonId !== 'string' || value.lessonId === '') return undefined
+        const record: IdempotencyRecord = { lessonId: value.lessonId }
+        if (typeof value.requestHash === 'string') record.requestHash = value.requestHash
+        idempotency.set(key, record)
+      }
+    }
+    const serialized: Record<string, { lessonId: string; requestHash?: string }> = {}
+    for (const [key, entry] of idempotency) {
+      serialized[key] = entry.requestHash === undefined
+        ? { lessonId: entry.lessonId }
+        : { lessonId: entry.lessonId, requestHash: entry.requestHash }
+    }
+    return {
+      lessons,
+      idempotency,
+      checkpoint: {
+        offset,
+        bytes,
+        lastEventId,
+        prefixHash,
+        prefixBytes,
+        eventsTotal,
+        counters,
+        idempotency: serialized,
+        idempotencyComplete: cpRaw.idempotencyComplete === true,
+      },
+    }
+  }
+
+  private buildCheckpoint(state: ReplayState): CheckpointRecord | undefined {
+    if (!existsSync(this.eventsPath)) return undefined
+    const size = statSync(this.eventsPath).size
+    if (size > 0 && (state.lastEventId === undefined || state.lastEventId === '')) return undefined
+    const prefixBytes = Math.min(size, PREFIX_HASH_BYTES)
+    const idempotency: Record<string, { lessonId: string; requestHash?: string }> = {}
+    for (const [key, entry] of state.idempotency) {
+      idempotency[key] = entry.requestHash === undefined
+        ? { lessonId: entry.lessonId }
+        : { lessonId: entry.lessonId, requestHash: entry.requestHash }
+    }
+    return {
+      offset: size,
+      bytes: size,
+      lastEventId: state.lastEventId === undefined ? '' : state.lastEventId,
+      prefixHash: this.hashPrefix(this.eventsPath, prefixBytes),
+      prefixBytes,
+      eventsTotal: state.events,
+      counters: {
+        badLines: state.badLines,
+        orphanEvents: state.orphanEvents,
+        unsupportedVersions: state.unsupportedVersions,
+        evidenceCount: state.evidence.size,
+      },
+      idempotency,
+      idempotencyComplete: state.idempotencyComplete,
+    }
+  }
+
   private buildIndexPayload(state: ReplayState): Record<string, unknown> {
     const lessons: Record<string, Lesson> = {}
     const stateCounts = emptyStateCounts()
@@ -837,30 +1555,37 @@ export class KnowledgeStore {
       lessons[lesson.id] = lesson
       stateCounts[lesson.state]++
     }
-    return {
+    const payload: Record<string, unknown> = {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
       lessons,
       stateCounts,
       byState: stateCounts,
     }
+    const checkpoint = this.buildCheckpoint(state)
+    if (checkpoint !== undefined) payload.checkpoint = checkpoint
+    return payload
   }
 
-  /** 自动更新派生索引：失败降级（权威事件已落盘），不推翻调用结果。 */
-  private writeIndex(state: ReplayState): void {
+  /** 自动更新派生索引：失败降级（权威事件已落盘），记录 lastIndexError 供 diagnose()。 */
+  private writeIndex(state: ReplayState, touch?: () => void): void {
     try {
-      this.writeIndexStrict(state)
-    } catch {
-      // index.json 只是派生加速层，丢失可 rebuildIndex() 重建。
+      this.writeIndexStrict(state, touch)
+      this.lastIndexError = undefined
+    } catch (error) {
+      this.lastIndexError = { message: maskSecrets(errorMessage(error)), at: new Date().toISOString() }
     }
   }
 
-  private writeIndexStrict(state: ReplayState): void {
+  private writeIndexStrict(state: ReplayState, touch?: () => void): void {
     this.ensureDir()
+    touch?.()
+    const payload = this.buildIndexPayload(state)
+    touch?.()
     const target = this.indexPath
     const tmp = target + '.tmp-' + process.pid + '-' + randomUUID()
     try {
-      writeFileSync(tmp, JSON.stringify(this.buildIndexPayload(state), null, 2) + '\n', 'utf8')
+      writeFileSync(tmp, JSON.stringify(payload, null, 2) + '\n', 'utf8')
       renameSync(tmp, target)
     } catch (error) {
       try {

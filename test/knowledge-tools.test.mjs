@@ -27,6 +27,11 @@ function storeOf(env) {
   return new KnowledgeStore(join(env.cfg.journalDir, 'knowledge'))
 }
 
+async function acceptLesson(env, lessonId) {
+  const current = storeOf(env).getLesson(lessonId)
+  return toolOf(env, 'dream_review').execute({ action: 'accept', lessonId, expectedRevision: current.revision })
+}
+
 /** 递归快照目录内容（相对路径 + 字节 + mtimeMs），用于证明只读调用零写入。 */
 function snapshot(root) {
   const rows = []
@@ -42,7 +47,7 @@ function snapshot(root) {
   return rows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
 }
 
-/** 按宿主 enforced schema 子集走一遍注册出的 parameters（类型单串、enum 非空、对象 openness 显式、required 有声明）。 */
+/** 按宿主 enforced schema 子集走一遍注册出的 parameters。 */
 function assertHostSubset(node, path, options = {}) {
   assert.ok(node !== null && typeof node === 'object' && !Array.isArray(node), path + ' 必须是 schema 对象')
   if (Array.isArray(node.oneOf)) {
@@ -53,9 +58,7 @@ function assertHostSubset(node, path, options = {}) {
   assert.equal(typeof node.type, 'string', path + '.type 必须是单个字符串')
   assert.ok(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'].includes(node.type), path + '.type 不受支持')
   if (node.description !== undefined) assert.equal(typeof node.description, 'string', path + '.description 必须是字符串')
-  if (node.enum !== undefined) {
-    assert.ok(Array.isArray(node.enum) && node.enum.length > 0, path + '.enum 必须非空')
-  }
+  if (node.enum !== undefined) assert.ok(Array.isArray(node.enum) && node.enum.length > 0, path + '.enum 必须非空')
   if (node.type === 'object') {
     if (node.additionalProperties !== undefined) assert.equal(typeof node.additionalProperties, 'boolean', path + '.additionalProperties 必须是布尔')
     const properties = node.properties ?? {}
@@ -76,7 +79,7 @@ const EVIDENCE_READ = {
   verification: 'read',
 }
 
-test('注册 9 个工具且既有 6 个顺序不变；对象数组与 enum schema 形状正确', () => {
+test('注册 9 个工具且既有 6 个顺序不变；对象数组与 enum schema 形状正确（R5：evidence 可选）', () => {
   const env = makeEnv()
   try {
     assert.deepEqual(env.tools.map((tool) => tool.name), [
@@ -96,7 +99,8 @@ test('注册 9 个工具且既有 6 个顺序不变；对象数组与 enum schem
     assert.deepEqual(recordSeq.oneOf.map((branch) => branch.type).sort(), ['integer', 'string'], 'recordSeq 接受数字或字符串')
     assert.ok(Array.isArray(learn.parameters.properties.kind.enum))
     assert.deepEqual([...learn.parameters.properties.kind.enum].sort(), ['fact', 'pitfall', 'preference', 'procedure'])
-    assert.deepEqual([...learn.parameters.required].sort(), ['action', 'evidence', 'kind', 'title', 'when'].sort())
+    assert.deepEqual([...learn.parameters.required].sort(), ['action', 'kind', 'title', 'when'].sort())
+    assert.equal(Object.hasOwn(learn.parameters.properties.evidence, 'required'), false, 'R5：evidence 不再是必填参数')
 
     const applicability = learn.parameters.properties.applicability
     assert.equal(applicability.items.type, 'object')
@@ -112,6 +116,8 @@ test('注册 9 个工具且既有 6 个顺序不变；对象数组与 enum schem
 
     const context = toolOf(env, 'dream_context')
     assert.deepEqual([...context.parameters.required], ['query'])
+    assert.equal(context.parameters.properties.includeCandidates.type, 'boolean', 'R1：includeCandidates 参数存在')
+    assert.equal(context.parameters.properties.packageName.type, 'string', 'R3：packageName 参数存在')
 
     const save = toolOf(env, 'dream_save')
     assert.deepEqual(save.parameters.properties.lessons.items, { type: 'string' }, '既有字符串数组形状不变')
@@ -121,7 +127,7 @@ test('注册 9 个工具且既有 6 个顺序不变；对象数组与 enum schem
   } finally { env.cleanup() }
 })
 
-test('dream_learn：无证据只能 candidate，字段与指纹齐备', async () => {
+test('dream_learn：无证据只能 candidate，且不传 evidence 参数也合法（R5 可选）', async () => {
   const env = makeEnv()
   try {
     const result = await toolOf(env, 'dream_learn').execute({
@@ -158,13 +164,49 @@ test('dream_learn：read 计入独立支持，claimed 只留证据', async () =>
         { kind: 'session', sessionId: 'sess-2', recordSeq: 3, summary: '模型声称另一个版本也如此', verification: 'claimed' },
       ],
     })
-    assert.equal(result.state, 'candidate')
+    // 初始 state 由 R2′ 决定（read→usable / claimed→candidate），本用例只验证独立支持计数
     assert.equal(result.independentSupportCount, 1)
     assert.deepEqual(result.evidence.map((item) => item.verification).sort(), ['claimed', 'read'])
     const stored = storeOf(env).getLesson(result.lessonId)
+    assert.equal(stored.state, result.state)
     assert.equal(stored.evidenceIds.length, 2)
     assert.equal(stored.independentSupportCount, 1)
     assert.match(result.notes.join('\n'), /仅声明/)
+  } finally { env.cleanup() }
+})
+
+test('R2/S5：user-correction+read 视为用户已采纳（usable/actor user），claimed 推测仍被隔离', async () => {
+  const env = makeEnv()
+  try {
+    const learn = toolOf(env, 'dream_learn')
+    const corrected = await learn.execute({
+      kind: 'preference',
+      title: 'Nodemailer 取消后不要承诺未发出',
+      action: '先验证连接关闭再回答用户',
+      when: '处理取消投递时',
+      projectId: 'proj-a',
+      evidence: [{ kind: 'user-correction', sessionId: 'sess-u1', recordSeq: 1, summary: '用户明确纠正：不能承诺没发出', verification: 'read' }],
+    })
+    assert.equal(corrected.state, 'usable', 'R2：user-correction + read 初始即 usable')
+    assert.equal(corrected.independentSupportCount, 1)
+    const storedCorrection = storeOf(env).getLesson(corrected.lessonId)
+    assert.equal(storedCorrection.review.decision, 'accepted')
+    assert.equal(storedCorrection.review.actor, 'user')
+
+    const speculation = await learn.execute({
+      kind: 'fact',
+      title: 'Nodemailer 取消后连接一定已关闭',
+      action: '直接承诺没有发出',
+      when: '处理取消投递时',
+      projectId: 'proj-a',
+      evidence: [{ kind: 'session', sessionId: 'sess-c1', recordSeq: 2, summary: '模型声称连接一定关闭', verification: 'claimed' }],
+    })
+    assert.equal(speculation.state, 'candidate')
+    assert.equal(speculation.independentSupportCount, 0)
+
+    const context = await toolOf(env, 'dream_context').execute({ query: 'Nodemailer 取消投递', projectId: 'proj-a' })
+    assert.deepEqual(context.items.map((item) => item.lessonId), [corrected.lessonId], 'S5：只注入用户纠正，不注入 claimed 推测')
+    assert.deepEqual(context.skipped, [{ lessonId: speculation.lessonId, reason: 'no-evidence' }])
   } finally { env.cleanup() }
 })
 
@@ -210,7 +252,7 @@ test('dream_learn：maskSecrets 开启时证据摘要写入前脱敏', async () 
   } finally { env.cleanup() }
 })
 
-test('dream_context：只读，不建目录、不改文件', async () => {
+test('dream_context：只读，不建目录、不改文件；默认候选不注入，includeCandidates 可见且带 revision', async () => {
   const fresh = makeEnv()
   try {
     const result = await toolOf(fresh, 'dream_context').execute({ query: 'SQLite' })
@@ -223,7 +265,9 @@ test('dream_context：只读，不建目录、不改文件', async () => {
 
   const env = makeEnv()
   try {
-    const learned = await toolOf(env, 'dream_learn').execute({
+    const learn = toolOf(env, 'dream_learn')
+    const context = toolOf(env, 'dream_context')
+    const learned = await learn.execute({
       kind: 'procedure',
       title: 'SQLite 读写并发时开启 WAL',
       action: '执行 PRAGMA journal_mode=WAL',
@@ -231,12 +275,62 @@ test('dream_context：只读，不建目录、不改文件', async () => {
       projectId: 'proj-a',
       evidence: [EVIDENCE_READ],
     })
+    const store = storeOf(env)
+    await acceptLesson(env, learned.lessonId)
     const before = snapshot(env.cfg.journalDir)
-    const result = await toolOf(env, 'dream_context').execute({ query: 'SQLite', projectId: 'proj-a' })
-    assert.deepEqual(result.items.map((item) => item.lessonId), [learned.lessonId])
-    assert.match(result.items[0].whyRelevant, /命中关键词/)
-    assert.ok(result.budget.usedChars > 0 && result.budget.usedChars <= result.budget.maxChars)
+
+    const visible = await context.execute({ query: 'SQLite', projectId: 'proj-a' })
+    assert.deepEqual(visible.items.map((item) => item.lessonId), [learned.lessonId], '可用经验默认注入')
+    assert.equal(visible.items[0].state, 'usable')
+    assert.equal(visible.items[0].revision, store.getLesson(learned.lessonId).revision, 'R5：context item 带 revision')
+    assert.match(visible.items[0].whyRelevant, /命中关键词/)
+    assert.ok(visible.budget.usedChars > 0 && visible.budget.usedChars <= visible.budget.maxChars)
+    const blocks = context.output.render({}, visible)
+    assert.match(blocks[0].text, new RegExp('rev ' + store.getLesson(learned.lessonId).revision))
+
     assert.deepEqual(snapshot(env.cfg.journalDir), before, 'dream_context 必须零写入')
+  } finally { env.cleanup() }
+})
+
+test('R1：默认 candidate-hold / no-evidence 各有原因；includeCandidates 只放有证据候选；usable 零支持仍注入', async () => {
+  const env = makeEnv()
+  try {
+    const learn = toolOf(env, 'dream_learn')
+    const context = toolOf(env, 'dream_context')
+    const claimed = await learn.execute({
+      kind: 'procedure', title: 'Xylophone 有证据候选', action: '动作', when: '条件', projectId: 'p',
+      evidence: [{ kind: 'session', sessionId: 'sess-cand', recordSeq: 5, summary: '模型声称', verification: 'claimed' }],
+    })
+    const attached = await toolOf(env, 'dream_review').execute({
+      action: 'attach-evidence',
+      lessonId: claimed.lessonId,
+      expectedRevision: 1,
+      evidence: [EVIDENCE_READ],
+    })
+    assert.equal(attached.state, 'candidate', 'attach-evidence 不改变 state，构造候选+支持夹具')
+    assert.equal(attached.lesson.independentSupportCount, 1)
+    const supported = claimed
+    const noEvidence = await learn.execute({
+      kind: 'procedure', title: 'Xylophone 无证据候选', action: '动作', when: '条件', projectId: 'p',
+    })
+
+    const held = await context.execute({ query: 'Xylophone', projectId: 'p' })
+    assert.deepEqual(held.items, [])
+    assert.deepEqual(
+      held.skipped.map((entry) => [entry.lessonId, entry.reason]).sort(),
+      [[noEvidence.lessonId, 'no-evidence'], [supported.lessonId, 'candidate-hold']].sort(),
+    )
+
+    const explicit = await context.execute({ query: 'Xylophone', projectId: 'p', includeCandidates: true })
+    assert.deepEqual(explicit.items.map((item) => item.lessonId), [supported.lessonId])
+    assert.deepEqual(explicit.skipped, [{ lessonId: noEvidence.lessonId, reason: 'no-evidence' }])
+
+    const zeroUsable = await learn.execute({
+      kind: 'procedure', title: 'Xylophone 已审阅零支持', action: '动作', when: '条件', projectId: 'p',
+    })
+    await acceptLesson(env, zeroUsable.lessonId)
+    const usableInjected = await context.execute({ query: 'Xylophone 已审阅零支持', projectId: 'p' })
+    assert.deepEqual(usableInjected.items.map((item) => item.lessonId), [zeroUsable.lessonId], 'usable 零支持不受 no-evidence 影响')
   } finally { env.cleanup() }
 })
 
@@ -251,6 +345,8 @@ test('dream_context：未知项目与其他项目都不返回非 global 经验',
     const global = await learn.execute({
       kind: 'preference', title: 'SQLite 全局偏好', action: '先备份再迁移', when: '任何 SQLite 迁移前', global: true, evidence: [EVIDENCE_READ],
     })
+    await acceptLesson(env, project.lessonId)
+    await acceptLesson(env, global.lessonId)
 
     const unknown = await context.execute({ query: 'SQLite' })
     assert.deepEqual(unknown.items.map((item) => item.lessonId), [global.lessonId])
@@ -264,7 +360,7 @@ test('dream_context：未知项目与其他项目都不返回非 global 经验',
   } finally { env.cleanup() }
 })
 
-test('dream_context：预算放不下时整条跳过，usedChars 不超上限', async () => {
+test('R4：预算放不下第一条即停，skipped:budget-stop，usedChars 不超上限', async () => {
   const env = makeEnv()
   try {
     const learned = await toolOf(env, 'dream_learn').execute({
@@ -275,10 +371,45 @@ test('dream_context：预算放不下时整条跳过，usedChars 不超上限', 
       projectId: 'proj-a',
       evidence: [EVIDENCE_READ],
     })
-    const result = await toolOf(env, 'dream_context').execute({ query: 'Xylophone', projectId: 'proj-a', maxChars: 10 })
+    const result = await toolOf(env, 'dream_context').execute({
+      query: 'Xylophone', projectId: 'proj-a', includeCandidates: true, maxChars: 10,
+    })
     assert.deepEqual(result.items, [])
-    assert.deepEqual(result.skipped, [{ lessonId: learned.lessonId, reason: 'budget' }])
+    assert.deepEqual(result.skipped, [{ lessonId: learned.lessonId, reason: 'budget-stop' }])
     assert.deepEqual(result.budget, { limit: 5, maxChars: 10, usedChars: 0 })
+  } finally { env.cleanup() }
+})
+
+test('R3：包名识别后 version-mismatch 不注入；显式 packageName 且版本满足则注入', async () => {
+  const env = makeEnv()
+  try {
+    const learn = toolOf(env, 'dream_learn')
+    const context = toolOf(env, 'dream_context')
+    const learned = await learn.execute({
+      kind: 'pitfall',
+      title: 'Nodemailer 取消投递连接处理',
+      action: '验证连接实际关闭',
+      when: '取消发送时',
+      projectId: 'proj-a',
+      applicability: [{ package: 'nodemailer', versions: '^9.0.0' }],
+      evidence: [EVIDENCE_READ],
+    })
+    await acceptLesson(env, learned.lessonId)
+
+    const mismatch = await context.execute({
+      query: 'Nodemailer 取消投递', projectId: 'proj-a', packageVersion: '10.0.0', packageName: 'nodemailer',
+    })
+    assert.deepEqual(mismatch.items, [])
+    assert.deepEqual(mismatch.skipped, [{ lessonId: learned.lessonId, reason: 'version-mismatch' }])
+
+    const ok = await context.execute({
+      query: 'Nodemailer 取消投递', projectId: 'proj-a', packageVersion: '9.0.5', packageName: 'nodemailer',
+    })
+    assert.equal(ok.items.length, 1)
+    assert.match(ok.items[0].whyRelevant, /适用版本/)
+
+    const unrelated = await context.execute({ query: 'Xylophone 数组去重', projectId: 'proj-a', packageVersion: '9.0.5' })
+    assert.deepEqual(unrelated.items, [], '包名未识别时 versions 不得单独召回')
   } finally { env.cleanup() }
 })
 
@@ -291,10 +422,11 @@ test('dream_review：actor=user 被忽略并记为 model；accept 后 usable', a
       action: '先复述需求并询问',
       when: '用户提出需求时',
       projectId: 'proj-a',
-      evidence: [{ kind: 'user-correction', sessionId: 'sess-9', recordSeq: 1, summary: '用户明确纠正了推测', verification: 'read' }],
+      evidence: [{ kind: 'session', sessionId: 'sess-9', recordSeq: 1, summary: '模型声称（未核验原记录）', verification: 'claimed' }],
     })
     const store = storeOf(env)
     const current = store.getLesson(learned.lessonId)
+    assert.equal(current.state, 'candidate')
     const reviewed = await toolOf(env, 'dream_review').execute({
       action: 'accept',
       lessonId: learned.lessonId,
@@ -312,7 +444,7 @@ test('dream_review：actor=user 被忽略并记为 model；accept 后 usable', a
   } finally { env.cleanup() }
 })
 
-test('dream_review：revision 不符抛 revision 且零写入', async () => {
+test('dream_review：revision 不符抛 revision、结构化 currentRevision 且零写入', async () => {
   const env = makeEnv()
   try {
     const learned = await toolOf(env, 'dream_learn').execute({
@@ -331,6 +463,8 @@ test('dream_review：revision 不符抛 revision 且零写入', async () => {
       (error) => {
         assert.equal(error.code, 'revision')
         assert.match(error.message, /revision/)
+        assert.equal(error.currentRevision, current.revision, 'R5：错误结构化返回 currentRevision')
+        assert.equal(error.details.currentRevision, current.revision)
         return true
       },
     )
@@ -368,13 +502,14 @@ test('dream_review：attach-evidence 追加独立支持且不自动采纳', asyn
       kind: 'pitfall', title: 'Xylophone 追加证据经验', action: '执行动作', when: '任何条件', projectId: 'proj-a',
       evidence: [EVIDENCE_READ],
     })
+    const stateBeforeAttach = storeOf(env).getLesson(learned.lessonId).state
     const attached = await toolOf(env, 'dream_review').execute({
       action: 'attach-evidence',
       lessonId: learned.lessonId,
       expectedRevision: 1,
       evidence: [{ kind: 'session', sessionId: 'sess-extra', recordSeq: 1, summary: '第二次独立复现', verification: 'read' }],
     })
-    assert.equal(attached.state, 'candidate', 'attach-evidence 不得自动采纳')
+    assert.equal(attached.state, stateBeforeAttach, 'attach-evidence 不得自动采纳或改变 state')
     assert.equal(attached.revision, 2)
     assert.equal(attached.lesson.independentSupportCount, 2)
     assert.equal(attached.lesson.evidenceIds.length, 2)
@@ -407,6 +542,9 @@ test('dream_review：resolve-conflict 解除冲突并回到 usable', async () =>
     assert.equal(resolved.state, 'usable')
     assert.deepEqual(resolved.lesson.conflictIds, [], 'resolve-conflict 原子解除冲突')
     assert.equal(resolved.revision, disputed.revision + 1, '单次写入完成状态与冲突列表更新')
+
+    const context = await toolOf(env, 'dream_context').execute({ query: 'Xylophone 冲突经验', projectId: 'proj-a' })
+    assert.deepEqual(context.items.map((item) => item.lessonId), [learned.lessonId], '解除冲突后默认路径可见')
   } finally { env.cleanup() }
 })
 

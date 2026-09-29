@@ -70,13 +70,16 @@ export interface DreamWebPayload {
   limit: number
 }
 
-/** 知识路由的统计形状（与 FREEZE §2 的 stats() 对齐）。 */
+/** 知识路由的统计形状（与 FREEZE §2 的 stats() 对齐；v1.1 R8 透传 badLines）。 */
 export interface KnowledgeWebStats {
   lessons: number
   evidence: number
   events: number
   byState: Record<string, number>
+  /** 有界回放被截断时为 true（面板据此显示提示行）。 */
   truncated?: boolean
+  /** 事件 / 证据流中被跳过的坏行数（面板据此显示提示行）。 */
+  badLines: number
 }
 
 /** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
@@ -197,7 +200,7 @@ function maskDeep<T>(value: T): T {
   return value
 }
 
-/** 统计归一化：数字字段兜底为 0，byState 五个键齐全，truncated 只在为 true 时保留。 */
+/** 统计归一化：数字字段兜底为 0，byState 五个键齐全，truncated 只在为 true 时保留，badLines 始终透传。 */
 function normalizeKnowledgeStats(value: unknown): KnowledgeWebStats {
   const source = value !== null && typeof value === 'object' ? value as Record<string, unknown> : {}
   const rawByState = source.byState !== null && typeof source.byState === 'object'
@@ -217,6 +220,7 @@ function normalizeKnowledgeStats(value: unknown): KnowledgeWebStats {
     evidence: numberAt('evidence'),
     events: numberAt('events'),
     byState,
+    badLines: Math.floor(numberAt('badLines')),
   }
   if (source.truncated === true) stats.truncated = true
   return stats

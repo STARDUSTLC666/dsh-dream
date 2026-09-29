@@ -256,7 +256,7 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   const now = new Date(2026, 8, 29, 12)
   const raw = {
     lessons: [
-      { id: 'l1', state: 'candidate', title: '候选经验', action: '做事', when: '当 X 时', scopeLabel: '项目 p1', evidenceSummary: '独立证据 0 条', lastValidatedAt: localIso(2026, 9, 28), weight: 0.9, vector: [1, 2, 3], review: { actor: 'model' } },
+      { id: 'l1', state: 'candidate', title: '候选经验', action: '做事', when: '当 X 时', scopeLabel: '项目 p1', evidenceSummary: '独立证据 0 条', lastValidatedAt: localIso(2026, 9, 28), exceptions: ['', ' 只在离线时 ', null], applicability: [{ package: 'nodemailer', versions: '9.0.5' }, { platform: 'linux' }], weight: 0.9, vector: [1, 2, 3], review: { actor: 'model' } },
       { id: 'l2', state: 'disputed', title: '冲突经验', when: '当 Y 时' },
       { id: 'l3', state: 'usable', title: '可用经验', when: '当 Z 时', action: '' },
       { id: 'bad' },
@@ -269,7 +269,7 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   assert.equal(vm.shown, 2)
   assert.deepEqual(
     Object.keys(vm.rows[0]).sort(),
-    ['candidate', 'disputed', 'evidenceSummary', 'id', 'lastText', 'lastTitle', 'lastValidatedAt', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when'].sort(),
+    ['applicability', 'candidate', 'disputed', 'evidenceSummary', 'exceptions', 'id', 'lastText', 'lastTitle', 'lastValidatedAt', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when'].sort(),
     '只投影展示字段：不把权重 / 向量 / 原始 JSON 带进视图模型',
   )
   assert.equal(vm.rows[0].weight, undefined)
@@ -287,6 +287,10 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   assert.equal(vm.rows[1].scopeLabel, '范围未标注')
   assert.equal(vm.rows[1].evidenceSummary, '暂无可展示的证据摘要')
   assert.equal(vm.rows[1].lastText, '尚未核验')
+  assert.equal(vm.rows[0].applicability, 'nodemailer 9.0.5；平台 linux', 'applicability 归类成紧凑串')
+  assert.deepEqual(Array.from(vm.rows[0].exceptions), ['只在离线时'], 'exceptions 去空去空白')
+  assert.equal(vm.rows[1].applicability, '', '没有 applicability 给空串')
+  assert.deepEqual(Array.from(vm.rows[1].exceptions), [], '没有 exceptions 给空数组')
 })
 
 test('normalizeKnowledge()：未知状态不冒充候选，坏形状不崩面板', () => {
@@ -299,7 +303,7 @@ test('normalizeKnowledge()：未知状态不冒充候选，坏形状不崩面板
   assert.equal(vm.rows[0].stateLabel, '未知状态')
   assert.deepEqual(
     toHost(normalizeKnowledge(null, new Date(2026, 8, 29, 12), 50)),
-    { rows: [], total: 0, shown: 0, stats: { lessons: 0, evidence: 0, byState: {} } },
+    { rows: [], total: 0, shown: 0, stats: { lessons: 0, evidence: 0, byState: {}, truncated: false, badLines: 0 } },
   )
 })
 
@@ -367,4 +371,45 @@ test('fetchKnowledge()：服务端错误信封会抛错并带上 code，不让�
     assert.equal(error.code, 'forbidden')
     return true
   })
+})
+
+test('applicabilityTextOf()：package+versions / platform 紧凑串；坏形状跳过、超量收口', () => {
+  const { applicabilityTextOf } = loadClient().internals
+  assert.equal(applicabilityTextOf([{ package: 'nodemailer', versions: '^9.0.5' }]), 'nodemailer ^9.0.5')
+  assert.equal(applicabilityTextOf([{ versions: '9.0.5' }]), '9.0.5', '缺 package 时仍显示原值，但不代表版本条件生效')
+  assert.equal(applicabilityTextOf([{ package: 'react', versions: '^18 || ^19' }, { platform: 'win32' }]), 'react ^18 || ^19；平台 win32')
+  assert.equal(applicabilityTextOf([]), '')
+  assert.equal(applicabilityTextOf(null), '')
+  assert.equal(applicabilityTextOf([null, 42, {}, { package: '   ' }]), '')
+  const many = Array.from({ length: 5 }, (_, index) => ({ package: 'pkg' + index, versions: '1.0.0' }))
+  assert.match(applicabilityTextOf(many), /等 5 条适用范围$/)
+})
+
+test('knowledgeNoticeText()：无截断无坏行给空串；有截断 / 坏行必须提示且注明 events.jsonl 未改动', () => {
+  const { knowledgeNoticeText } = loadClient().internals
+  assert.equal(knowledgeNoticeText({ lessons: 2, byState: {}, truncated: false, badLines: 0 }), '')
+  assert.equal(knowledgeNoticeText(null), '')
+  const truncated = knowledgeNoticeText({ truncated: true, badLines: 0 })
+  assert.match(truncated, /日志过大/)
+  assert.match(truncated, /events\.jsonl 未改动/)
+  const bad = knowledgeNoticeText({ truncated: false, badLines: 3 })
+  assert.match(bad, /3 行损坏/)
+  assert.match(bad, /events\.jsonl 未改动/)
+  const both = knowledgeNoticeText({ truncated: true, badLines: 2 })
+  assert.match(both, /日志过大/)
+  assert.match(both, /2 行损坏/)
+})
+
+test('normalizeKnowledge()：truncated / badLines 原样带进视图模型，坏形状不产生 NaN', () => {
+  const { normalizeKnowledge, knowledgeNoticeText } = loadClient().internals
+  const vm = normalizeKnowledge({
+    lessons: [{ title: '一条经验' }],
+    stats: { lessons: 1, evidence: 0, byState: { candidate: 1 }, truncated: true, badLines: 4 },
+  }, new Date(2026, 8, 29, 12), 50)
+  assert.equal(vm.stats.truncated, true)
+  assert.equal(vm.stats.badLines, 4)
+  assert.match(knowledgeNoticeText(vm.stats), /日志过大/)
+  const bogus = normalizeKnowledge({ stats: { badLines: 'x', truncated: 'yes' } }, new Date(), 50)
+  assert.equal(bogus.stats.truncated, false)
+  assert.equal(bogus.stats.badLines, 0)
 })

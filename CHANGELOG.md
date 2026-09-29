@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1（2026-09-29）
+
+- **修复两个已发布缺陷**（0.5.0 起）：① 日记文件开头有 UTF-8 BOM 时整份日记被读空；② 心境聚合用普通对象做映射，`__proto__` 键被吞、`constructor` 等键会把计数变成字符串（`"function Object()…1"`）。现在 BOM 会被剥离，聚合用无原型对象后返回普通副本，并新增 `skippedLines` 让坏行可诊断。
+- **检索策略修正（R1/R3/R4/R5）**：`dream_context` 默认不注入候选（`candidate-hold`）与无证据条目（`no-evidence`）；`applicability.versions` 只在包名被识别时参与判定，版本不满足记 `version-mismatch`；预算改为按排名整条装入、遇第一条放不下即停（`budget-stop`，`rankInversionCount` 恒 0），条件与例外永不截断；`RetrievedLesson` 增加 `revision`（`dream_review` 的 `expectedRevision` 因此可达），`dream_learn.evidence` 改为可选。
+- **证据纪律（R2′）**：任何 `verification:"read"` 的证据让经验初始即为 `usable`；其中用户明确纠正记 `review{decision:accepted, actor:user}`，其余 read 记 `unreviewed`；只有 `claimed` 证据或无证据才停在 `candidate`。SKILL.md 同时写明「只有真的读到来源才能标 read，自我判断一律 claimed」，防止模型自称 read 自我提权。
+- **存储可诊断与前向兼容（R6/R7）**：`stats()` 拆分 `orphanEvents` / `firstReplayedEventId` / `unsupportedVersions`（与 `badLines` 分开）并给出 `replayMode`；`index.json` 增加 checkpoint（偏移 + 前缀哈希 + 末事件 id，校验不符回退全量回放），截断不再静默丢实体；`validateLesson(value, options?)` 支持 `accept`/`migrate` 与 `LESSON_MIGRATIONS` 占位；事件增加 `requestHash`（同幂等键不同内容 → `duplicate` 错误而非静默返回旧快照）；新增只读 `diagnose()`；文件锁增加 `bootId` 与心跳，超限给可操作错误而不静默抢占。
+- **面板**：经验卡显示适用条件与例外；`truncated` 或存在坏行时显示提示行并注明 `events.jsonl` 未被改动。
+- **验收**：L1 七场景断言（S1/S5 命中、S2/S3/S4/S6/S7 零注入、`rankInversionCount=0`）**9/9**；证据纪律 5/5；旧行为基线 4/4（旧日记与既有六工具输出只增不减、只读零写入）；全量 **204 项 / 203 通过 / 1 默认跳过**（并发压测需 `DSH_DREAM_STRESS=1`，8 进程 × 8 次实测不丢）；`tsc`、`node --check lib/client.js`、官方加载器回归通过。
+- **已知限制（未达标，下一批修）**：读/写路径在知识库增长时仍是 O(历史)——50k 条证据时单次读操作数百毫秒、逐条追加呈二次增长。checkpoint 已能避免"截断丢实体"，但尚未把读路径变成增量。本版**不承诺大知识库下的性能**；下一批计划 `evidenceKeys` 常数时间去重与索引增量更新。
 ## 0.5.0（2026-09-29）
 
 - **从「反思」升级为「有来源的经验」**：新增 `dream_learn`（提交候选经验 + 证据，校验 / 脱敏 / 去重 / 按项目或全局范围保存）、`dream_context`（任务前取回少量适用经验，只读，默认 5 条 / 3000 字符，硬上限 20 条 / 20000 字符）、`dream_review`（采纳 / 驳回 / 标记过期 / 标记冲突 / 补充证据，强制 `expectedRevision`）。六个既有工具行为不变，输出字段只增不减。

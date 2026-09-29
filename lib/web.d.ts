@@ -24,13 +24,16 @@ export interface DreamWebPayload {
     /** 本次生效的条数上限。 */
     limit: number;
 }
-/** 知识路由的统计形状（与 FREEZE §2 的 stats() 对齐）。 */
+/** 知识路由的统计形状（与 FREEZE §2 的 stats() 对齐；v1.1 R8 透传 badLines）。 */
 export interface KnowledgeWebStats {
     lessons: number;
     evidence: number;
     events: number;
     byState: Record<string, number>;
+    /** 有界回放被截断时为 true（面板据此显示提示行）。 */
     truncated?: boolean;
+    /** 事件 / 证据流中被跳过的坏行数（面板据此显示提示行）。 */
+    badLines: number;
 }
 /** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
 export interface KnowledgeWebPayload {

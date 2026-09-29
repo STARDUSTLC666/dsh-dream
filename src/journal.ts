@@ -38,27 +38,47 @@ export function saveDream(journalDir: string, reflection: string, lessons: strin
 /** 需要读全量日记时的上限：检索与统计共用，避免两处上限漂移。 */
 const FULL_SCAN_LIMIT = 100000
 
-/** 倒序读取梦境（新梦在前）；损坏行跳过。 */
-export function readDreams(journalDir: string, limit: number): DreamEntry[] {
+/** 读取结果：梦境 + 被跳过的行数（坏 JSON 或不是梦境记录）。 */
+export interface DreamReadResult {
+  dreams: DreamEntry[]
+  skippedLines: number
+}
+
+/**
+ * 倒序读取梦境并**报告**跳过了多少行。
+ *
+ * 两个健壮性要求（评审实测发现）：
+ * - 文件开头的 UTF-8 BOM 必须剥离，否则第一行解析失败会让整份日记读空；
+ * - 坏行跳过要可计数，不能静默——调用方（dream_health / 只读路由）可以透出。
+ */
+export function readDreamsDetailed(journalDir: string, limit: number): DreamReadResult {
   const file = journalFile(journalDir)
-  if (!existsSync(file)) return []
-  const lines = readFileSync(file, 'utf8').split('\n').filter((line) => line.trim() !== '')
-  const out: DreamEntry[] = []
+  if (!existsSync(file)) return { dreams: [], skippedLines: 0 }
+  // 开头 BOM 不参与解析（Windows 记事本等工具会写入）。
+  const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '')
+  const lines = text.split('\n').filter((line) => line.trim() !== '')
+  const dreams: DreamEntry[] = []
+  let skippedLines = 0
   for (const line of lines) {
     try {
       const rec = JSON.parse(line) as Record<string, unknown>
       if (typeof rec.reflection === 'string') {
-        out.push({
+        dreams.push({
           id: String(rec.id ?? ''),
           at: String(rec.at ?? ''),
           reflection: rec.reflection,
           lessons: Array.isArray(rec.lessons) ? rec.lessons.filter((l): l is string => typeof l === 'string') : [],
           mood: typeof rec.mood === 'string' ? rec.mood : '',
         })
-      }
-    } catch { /* 损坏行跳过 */ }
+      } else skippedLines += 1
+    } catch { skippedLines += 1 }
   }
-  return out.reverse().slice(0, limit)
+  return { dreams: dreams.reverse().slice(0, limit), skippedLines }
+}
+
+/** 倒序读取梦境（新梦在前）；损坏行跳过。 */
+export function readDreams(journalDir: string, limit: number): DreamEntry[] {
+  return readDreamsDetailed(journalDir, limit).dreams
 }
 
 /** 教训榜的一行：次数与最近一次出现时间（lastAt 缺失时是空串，绝不为 null）。 */
@@ -73,6 +93,8 @@ export interface DreamStats {
   total: number
   moods: Record<string, number>
   topLessons: LessonStat[]
+  /** 解析时跳过的行数（坏 JSON 或不是梦境记录）；0 表示全部可读。 */
+  skippedLines: number
 }
 
 /**
@@ -83,8 +105,10 @@ export interface DreamStats {
  * 大小写，不再二次 flatMap（否则同一条教训的三个数值会来自不同的扫描）。
  */
 export function dreamStats(journalDir: string): DreamStats {
-  const dreams = readDreams(journalDir, FULL_SCAN_LIMIT)
-  const moods: Record<string, number> = {}
+  const { dreams, skippedLines } = readDreamsDetailed(journalDir, FULL_SCAN_LIMIT)
+  // 无原型对象：心境是用户可控文本，'__proto__' / 'constructor' 这类键
+  // 在普通对象上会被原型吞掉或把计数变成字符串（评审实测）。
+  const moods: Record<string, number> = Object.create(null) as Record<string, number>
   const lessons = new Map<string, LessonStat>()
   for (const dream of dreams) {
     const mood = dream.mood !== '' ? dream.mood : '平静'
@@ -102,7 +126,9 @@ export function dreamStats(journalDir: string): DreamStats {
   const topLessons = [...lessons.values()]
     .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
     .slice(0, 10)
-  return { total: dreams.length, moods, topLessons }
+  // 对外给普通对象副本：内部用无原型对象防键污染，但消费方（deepStrictEqual / 原型判断）
+  // 期望的是普通对象。展开赋值走 CreateDataProperty，不会触发 __proto__ setter。
+  return { total: dreams.length, moods: { ...moods }, topLessons, skippedLines }
 }
 
 /** 关键词检索梦境（不区分大小写，命中 reflection/lessons；扫描全量，上限见 FULL_SCAN_LIMIT）。 */

@@ -186,7 +186,7 @@ test('空日记 → 200 + 空数组 + 零统计 + 默认 limit=50', async () => 
   assert.match(String(res.headers['content-type']), /^application\/json/)
   const body = jsonOf(res)
   assert.deepEqual(body.dreams, [])
-  assert.deepEqual(body.stats, { total: 0, moods: {}, topLessons: [] })
+  assert.deepEqual(body.stats, { total: 0, moods: {}, topLessons: [], skippedLines: 0 })
   assert.equal(body.query, '')
   assert.equal(body.limit, DREAM_LIMIT_DEFAULT)
 })
@@ -575,8 +575,43 @@ test('知识路由：空知识目录 → 200 + 空数组 + 全零 stats，且 GE
     evidence: 0,
     events: 0,
     byState: { candidate: 0, usable: 0, disputed: 0, stale: 0, rejected: 0 },
+    badLines: 0,
   })
   assert.equal(existsSync(knowledgeDir), false, '只读路由绝不能在读的时候 mkdir')
+})
+
+test('知识路由：透传 truncated 与 badLines（R8 提示行数据），数字兜底不产生 NaN', async () => {
+  const { handler } = knowledgeHandlerFor({
+    journalDir: makeJournal([]),
+    knowledgeStoreFactory: () => fakeKnowledgeStore({
+      stats: {
+        lessons: 0,
+        evidence: 0,
+        events: 250001,
+        byState: {},
+        truncated: true,
+        badLines: 3,
+      },
+    }),
+  })
+  const body = jsonOf(await call(handler, { url: DREAM_KNOWLEDGE_ROUTE }))
+  assert.equal(body.stats.truncated, true, '有界回放被截断必须透传，面板才能提示')
+  assert.equal(body.stats.badLines, 3, 'badLines 必须透传，面板才能提示损坏行')
+  assert.equal(body.stats.events, 250001)
+  // 坏形状兜底：不出现 NaN / undefined
+  const { handler: bogus } = knowledgeHandlerFor({
+    journalDir: makeJournal([]),
+    knowledgeStoreFactory: () => fakeKnowledgeStore({
+      stats: { lessons: 'x', evidence: null, events: NaN, byState: { candidate: -1 }, truncated: 'yes', badLines: 2.9 },
+    }),
+  })
+  const bogusBody = jsonOf(await call(bogus, { url: DREAM_KNOWLEDGE_ROUTE }))
+  assert.equal(bogusBody.stats.lessons, 0)
+  assert.equal(bogusBody.stats.evidence, 0)
+  assert.equal(bogusBody.stats.events, 0)
+  assert.equal(bogusBody.stats.byState.candidate, 0)
+  assert.equal(bogusBody.stats.truncated, undefined)
+  assert.equal(bogusBody.stats.badLines, 2, 'badLines 取正数下限，不产生小数')
 })
 
 test('知识路由：候选 / 有冲突都返回，scopeLabel 与 evidenceSummary 来自检索层，原始密钥被脱敏', async () => {
@@ -596,7 +631,7 @@ test('知识路由：候选 / 有冲突都返回，scopeLabel 与 evidenceSummar
     knowledgeStoreFactory: () => fakeKnowledgeStore({
       lessons: [candidate, disputed],
       evidence,
-      stats: { lessons: 2, evidence: 1, events: 3, byState: { candidate: 1, usable: 0, disputed: 1, stale: 0, rejected: 0 } },
+      stats: { lessons: 2, evidence: 1, events: 3, byState: { candidate: 1, usable: 0, disputed: 1, stale: 0, rejected: 0 }, badLines: 0 },
     }),
   })
   const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE })
@@ -615,6 +650,7 @@ test('知识路由：候选 / 有冲突都返回，scopeLabel 与 evidenceSummar
     evidence: 1,
     events: 3,
     byState: { candidate: 1, usable: 0, disputed: 1, stale: 0, rejected: 0 },
+    badLines: 0,
   })
   assert.equal(body.evidence.length, 1)
   assert.equal(body.evidence[0].id, 'ev-1')
@@ -682,5 +718,6 @@ test('知识路由：真实 KnowledgeStore 集成 —— 落盘数据可读出�
   assert.match(body.lessons[0].evidenceSummary, /独立证据 1 条/)
   assert.equal(body.stats.lessons, 1)
   assert.equal(body.stats.byState[body.lessons[0].state], 1)
+  assert.equal(body.stats.badLines, 0, '健康 store 的坏行数为 0')
   assert.deepEqual(snapshotDir(knowledgeDir), beforeSnapshot, 'GET /knowledge 必须零写盘')
 })

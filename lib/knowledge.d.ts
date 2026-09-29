@@ -85,6 +85,7 @@ export type KnowledgeEvent = {
     kind: 'lesson.create';
     lessonId: string;
     idempotencyKey: string;
+    requestHash?: string;
     payload: Lesson;
 } | {
     schemaVersion: 1;
@@ -94,6 +95,7 @@ export type KnowledgeEvent = {
     lessonId: string;
     revision: number;
     idempotencyKey: string;
+    requestHash?: string;
     payload: Partial<Lesson>;
 } | {
     schemaVersion: 1;
@@ -103,6 +105,7 @@ export type KnowledgeEvent = {
     lessonId: string;
     revision: number;
     idempotencyKey: string;
+    requestHash?: string;
     payload: {
         decision: ReviewDecision;
         actor?: string;
@@ -114,15 +117,35 @@ export type KnowledgeEvent = {
     at: string;
     kind: 'evidence.add';
     idempotencyKey: string;
+    requestHash?: string;
     payload: Evidence;
 };
 /** 知识层错误码：invalid=数据不合法；revision=乐观锁不符；duplicate=重复；io=读写/锁失败。 */
 export declare class KnowledgeError extends Error {
     code: 'invalid' | 'revision' | 'duplicate' | 'io';
-    constructor(code: 'invalid' | 'revision' | 'duplicate' | 'io', message: string);
+    /** 可选结构化上下文（脱敏后给工具/面板用；字段不承诺长期稳定）。 */
+    details?: Record<string, unknown>;
+    constructor(code: 'invalid' | 'revision' | 'duplicate' | 'io', message: string, details?: Record<string, unknown>);
 }
-/** 校验并归一化一条经验；失败抛 KnowledgeError('invalid')。未知字段会被丢弃。 */
-export declare function validateLesson(value: unknown): Lesson;
+/** 当前内存模型 / 写盘的 lesson schemaVersion。 */
+export declare const LESSON_SCHEMA_VERSION = 1;
+/** 迁移函数：把 from 版本的原始记录纯函数地转换成 to 版本的原始记录；必须幂等、不得写盘。 */
+export type LessonSchemaMigration = (from: number, raw: unknown, to: number) => unknown;
+/** 已知迁移链占位：v2 落地时在此登记；存储层默认只识别不自动迁移。 */
+export declare const LESSON_MIGRATIONS: Record<number, LessonSchemaMigration>;
+/** validateLesson 的可选前向兼容参数；旧调用签名（单参）保持不变。 */
+export interface ValidateLessonOptions {
+    /** 允许直接按当前形状读取的 schemaVersion 列表；默认 [1]。 */
+    accept?: number[];
+    /** 显式迁移函数：对非当前版本优先生效，返回值必须能通过 v1 校验。 */
+    migrate?: LessonSchemaMigration;
+}
+/**
+ * 校验并归一化一条经验；失败抛 KnowledgeError('invalid')。未知字段会被丢弃。
+ * 前向兼容：schemaVersion 非当前版本时，先尝试 options.migrate / LESSON_MIGRATIONS；
+ * 否则仅当版本在 options.accept 内才按当前形状读取，返回内存模型 v1。
+ */
+export declare function validateLesson(value: unknown, options?: ValidateLessonOptions): Lesson;
 /** 校验并归一化一条证据；失败抛 KnowledgeError('invalid')。未知字段会被丢弃。 */
 export declare function validateEvidence(value: unknown): Evidence;
 /**

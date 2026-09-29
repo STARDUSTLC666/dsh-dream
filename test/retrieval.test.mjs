@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import {
   MAX_RETRIEVAL_LIMIT,
   MAX_RETRIEVAL_MAX_CHARS,
+  essentialLessonChars,
+  metadataLessonChars,
+  rankInversionCount,
   resolveRetrievalBudget,
   retrieveLessons,
   retrievedLessonChars,
@@ -78,7 +81,7 @@ test('范围过滤：workspaceRoot 精确匹配（容忍 Windows 路径大小写
   assert.equal(unknown.items.length, 0, '未给项目/工作区时不得返回非 global 经验')
 })
 
-test('排除 rejected / stale / disputed 并给出 skipped 原因，candidate 保留', () => {
+test('排除 rejected / stale / disputed 并给出 skipped 原因，candidate 默认仍返回（面板语义）', () => {
   const lessons = [
     makeLesson({ id: 'lsn_usable', title: 'Xylophone 可用', state: 'usable' }),
     makeLesson({ id: 'lsn_candidate', title: 'Xylophone 候选', state: 'candidate' }),
@@ -96,6 +99,27 @@ test('排除 rejected / stale / disputed 并给出 skipped 原因，candidate �
       ['lsn_stale', 'state:stale'],
     ].sort(),
   )
+})
+
+test('R1：includeCandidates / includeNoEvidence 策略与 skipped 原因', () => {
+  const noEvidence = makeLesson({ id: 'lsn_ne', title: 'Xylophone 无证据候选', state: 'candidate', independentSupportCount: 0 })
+  const supported = makeLesson({ id: 'lsn_sp', title: 'Xylophone 有证据候选', state: 'candidate', independentSupportCount: 2 })
+  const usableZero = makeLesson({ id: 'lsn_uz', title: 'Xylophone 可用零支持', state: 'usable', independentSupportCount: 0 })
+  const lessons = [noEvidence, supported, usableZero]
+
+  const panel = retrieveLessons(lessons, [], { query: 'xylophone' })
+  assert.deepEqual([...panel.items.map((item) => item.lessonId)].sort(), ['lsn_ne', 'lsn_sp', 'lsn_uz'], '默认（面板）仍返回候选')
+
+  const injected = retrieveLessons(lessons, [], { query: 'xylophone', includeCandidates: false, includeNoEvidence: false })
+  assert.deepEqual(injected.items.map((item) => item.lessonId), ['lsn_uz'])
+  assert.deepEqual(injected.skipped, [
+    { lessonId: 'lsn_ne', reason: 'no-evidence' },
+    { lessonId: 'lsn_sp', reason: 'candidate-hold' },
+  ])
+
+  const explicit = retrieveLessons(lessons, [], { query: 'xylophone', includeCandidates: true, includeNoEvidence: false })
+  assert.deepEqual([...explicit.items.map((item) => item.lessonId)].sort(), ['lsn_sp', 'lsn_uz'])
+  assert.deepEqual(explicit.skipped, [{ lessonId: 'lsn_ne', reason: 'no-evidence' }], '显式审阅候选也不能注入无证据条目')
 })
 
 test('排序：关键词命中优先于仅适用条件命中', () => {
@@ -129,7 +153,7 @@ test('排序：usable > candidate；lastValidatedAt 近者优先；id 稳定序'
   assert.deepEqual(idSorted.items.map((item) => item.lessonId), ['lsn_a', 'lsn_b'])
 })
 
-test('whyRelevant 具体化：命中关键词 / 适用包 / 版本条件 / 项目', () => {
+test('whyRelevant 具体化：命中关键词 / 适用包 / 版本条件 / 项目（R3 包名来自 query）', () => {
   const lesson = makeLesson({
     id: 'lsn_why',
     title: 'Nodemailer 池化发送取消',
@@ -150,7 +174,35 @@ test('whyRelevant 具体化：命中关键词 / 适用包 / 版本条件 / 项�
   assert.match(item.whyRelevant, /适用版本「\^9\.0\.0」（当前 9\.0\.5）/)
   assert.match(item.whyRelevant, /项目匹配（proj-a）/)
   assert.equal(item.scopeLabel, '项目 proj-a')
+  assert.equal(item.revision, 1, 'R5：RetrievedLesson 必须带 revision')
   assert.equal(item.truncated, false)
+})
+
+test('R3：versions 仅在包名被识别时参与；版本不满足 → skipped:version-mismatch', () => {
+  const nodemailer = makeLesson({
+    id: 'lsn_mail',
+    title: 'Nodemailer 取消投递连接处理',
+    when: '取消发送时',
+    action: '验证连接关闭',
+    applicability: [{ package: 'nodemailer', versions: '^9.0.0' }],
+  })
+
+  const unrelated = retrieveLessons([nodemailer], [], { query: 'lodash 数组去重', packageVersion: '9.0.5' })
+  assert.deepEqual(unrelated.items, [], '包名未被识别时 versions 不得单独命中')
+  assert.deepEqual(unrelated.skipped, [], '无关 query 不应把无关条目标成 mismatch')
+
+  const mismatch = retrieveLessons([nodemailer], [], { query: 'nodemailer 取消投递', packageVersion: '10.0.0' })
+  assert.deepEqual(mismatch.items, [])
+  assert.deepEqual(mismatch.skipped, [{ lessonId: 'lsn_mail', reason: 'version-mismatch' }], '版本不满足必须不注入')
+
+  const ok = retrieveLessons([nodemailer], [], { query: 'nodemailer 取消投递', packageVersion: '9.0.5' })
+  assert.equal(ok.items.length, 1)
+  assert.match(ok.items[0].whyRelevant, /适用包「nodemailer」/)
+  assert.match(ok.items[0].whyRelevant, /适用版本「\^9\.0\.0」（当前 9\.0\.5）/)
+
+  const explicit = retrieveLessons([nodemailer], [], { query: '取消投递', packageVersion: '9.0.5', packageName: 'nodemailer' })
+  assert.equal(explicit.items.length, 1, '显式 packageName 也能识别包名')
+  assert.match(explicit.items[0].whyRelevant, /适用包「nodemailer」/)
 })
 
 test('evidenceSummary 区分已读 / 仅声明并附脱敏摘要', () => {
@@ -176,31 +228,63 @@ test('无相关返回空数组，不返回占位话', () => {
   assert.deepEqual(result.skipped, [])
 })
 
-test('字符预算：条件与例外不可截断，放不下整条跳过（负例）', () => {
-  const longWhen = '当运行 Xylophone ' + 'x'.repeat(200) + ' 且用户要求取消投递时'
-  const longException = '例外：仅在内网 SMTP 上，且 ' + 'y'.repeat(120)
+test('R4：预算按排名整条装入，遇第一条放不下即停，rankInversionCount===0', () => {
+  const big = makeLesson({ id: 'lsn_big', title: 'Xylophone 高相关大条目', when: '当 ' + 'z'.repeat(400) + ' 时', action: '动作' })
+  const small = makeLesson({ id: 'lsn_small', title: 'Xylophone 低相关小条目', when: '短条件', action: '动作' })
+
+  const ranked = retrieveLessons([big, small], [], { query: 'xylophone', maxChars: 20000, limit: 20 })
+    .items.map((item) => item.lessonId)
+  assert.deepEqual(ranked, ['lsn_big', 'lsn_small'], 'big 排序在前')
+  assert.equal(rankInversionCount(ranked, { items: [], skipped: [] }), 0)
+
+  const smallEssential = essentialLessonChars(retrieveLessons([small], [], { query: 'xylophone', maxChars: 20000 }).items[0])
+  const stopped = retrieveLessons([big, small], [], { query: 'xylophone', maxChars: smallEssential })
+  assert.deepEqual(stopped.items, [], '第一条放不下即停，不得越过它装后面的小条目')
+  assert.deepEqual(stopped.skipped, [
+    { lessonId: 'lsn_big', reason: 'budget-stop' },
+    { lessonId: 'lsn_small', reason: 'budget-stop' },
+  ])
+  assert.equal(rankInversionCount(ranked, stopped), 0, 'R4 验收：rankInversionCount 必须为 0')
+
+  const both = retrieveLessons([big, small], [], { query: 'xylophone', maxChars: 20000 })
+  assert.equal(rankInversionCount(ranked, both), 0)
+  assert.equal(both.items.length, 2)
+})
+
+test('R4：essential 永不截断，metadata 可截断并置 truncated:true', () => {
+  const longWhen = '当 Xylophone ' + 'x'.repeat(120) + ' 时'
   const lesson = makeLesson({
-    id: 'lsn_big',
-    title: 'Xylophone 长条件经验',
-    action: '检查连接并记录回执',
+    id: 'lsn_meta',
+    title: 'Xylophone 元数据经验',
     when: longWhen,
-    exceptions: [longException],
+    exceptions: ['例外一'],
+    action: '执行动作',
+    evidenceIds: ['evd_1'],
+    independentSupportCount: 1,
   })
+  const evidence = [makeEvidence({ id: 'evd_1', summary: '很长的来源摘要 ' + 'y'.repeat(400) })]
 
-  const full = retrieveLessons([lesson], [], { query: 'xylophone', maxChars: 20000 })
-  assert.equal(full.items.length, 1)
-  assert.equal(full.items[0].when, longWhen)
-  assert.deepEqual(full.items[0].exceptions, [longException])
-  const cost = retrievedLessonChars(full.items[0])
+  const full = retrieveLessons([lesson], evidence, { query: 'xylophone', maxChars: 20000 }).items[0]
+  const fullCost = retrievedLessonChars(full)
+  const essential = essentialLessonChars(full)
+  assert.ok(fullCost > essential, '夹具必须带可截断 metadata')
+  assert.equal(full.truncated, false)
 
-  const exact = retrieveLessons([lesson], [], { query: 'xylophone', maxChars: cost })
-  assert.equal(exact.items.length, 1)
-  assert.equal(exact.items[0].when, longWhen, '代价恰好等于预算时仍完整返回')
-  assert.deepEqual(exact.items[0].exceptions, [longException])
+  const exactEssential = retrieveLessons([lesson], evidence, { query: 'xylophone', maxChars: essential })
+  assert.equal(exactEssential.items.length, 1)
+  assert.equal(exactEssential.items[0].truncated, true)
+  assert.equal(exactEssential.items[0].when, longWhen, '条件不可截断')
+  assert.deepEqual(exactEssential.items[0].exceptions, ['例外一'], '例外不可截断')
+  assert.ok(retrievedLessonChars(exactEssential.items[0]) <= essential)
 
-  const tooSmall = retrieveLessons([lesson], [], { query: 'xylophone', maxChars: cost - 1 })
-  assert.deepEqual(tooSmall.items, [], '放不下时必须整条跳过，绝不返回半条')
-  assert.deepEqual(tooSmall.skipped, [{ lessonId: 'lsn_big', reason: 'budget' }])
+  const partial = retrieveLessons([lesson], evidence, { query: 'xylophone', maxChars: essential + 30 })
+  assert.equal(partial.items[0].truncated, true)
+  assert.ok(metadataLessonChars(partial.items[0]) <= 30, 'metadata 截断不得超预算')
+  assert.equal(partial.items[0].when, longWhen)
+
+  const tooSmall = retrieveLessons([lesson], evidence, { query: 'xylophone', maxChars: essential - 1 })
+  assert.deepEqual(tooSmall.items, [])
+  assert.deepEqual(tooSmall.skipped, [{ lessonId: 'lsn_meta', reason: 'budget-stop' }])
 })
 
 test('预算与条数：默认 5 条 / 3000 字符，硬上限 20 / 20000', () => {
@@ -214,18 +298,6 @@ test('预算与条数：默认 5 条 / 3000 字符，硬上限 20 / 20000', () =
   const result = retrieveLessons(many, [], { query: 'xylophone' })
   assert.equal(result.items.length, 5)
   assert.equal(result.skipped.filter((entry) => entry.reason === 'limit').length, 25)
-})
-
-test('预算跳过一条后继续尝试后续更小条目', () => {
-  const big = makeLesson({
-    id: 'lsn_big_1',
-    title: 'Xylophone 大条目',
-    when: '当 ' + 'z'.repeat(400) + ' 时',
-  })
-  const small = makeLesson({ id: 'lsn_small_1', title: 'Xylophone 小条目', when: '短条件' })
-  const fullSmall = retrieveLessons([small], [], { query: 'xylophone', maxChars: 20000 })
-  const smallCost = retrievedLessonChars(fullSmall.items[0])
-  const result = retrieveLessons([big, small], [], { query: 'xylophone', maxChars: smallCost })
-  assert.deepEqual(result.items.map((item) => item.lessonId), ['lsn_small_1'])
-  assert.deepEqual(result.skipped, [{ lessonId: 'lsn_big_1', reason: 'budget' }])
+  const ranked = many.map((item) => item.id).sort()
+  assert.equal(rankInversionCount(ranked, result), 0)
 })

@@ -84,19 +84,22 @@ export interface EvidenceInput extends Omit<Evidence, 'schemaVersion' | 'id' | '
 
 /** 知识事件（events.jsonl 的每一行）。 */
 export type KnowledgeEvent =
-  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.create'; lessonId: string; idempotencyKey: string; payload: Lesson }
-  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.update'; lessonId: string; revision: number; idempotencyKey: string; payload: Partial<Lesson> }
-  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.review'; lessonId: string; revision: number; idempotencyKey: string; payload: { decision: ReviewDecision; actor?: string; state: LessonState } }
-  | { schemaVersion: 1; id: string; at: string; kind: 'evidence.add'; idempotencyKey: string; payload: Evidence }
+  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.create'; lessonId: string; idempotencyKey: string; requestHash?: string; payload: Lesson }
+  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.update'; lessonId: string; revision: number; idempotencyKey: string; requestHash?: string; payload: Partial<Lesson> }
+  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.review'; lessonId: string; revision: number; idempotencyKey: string; requestHash?: string; payload: { decision: ReviewDecision; actor?: string; state: LessonState } }
+  | { schemaVersion: 1; id: string; at: string; kind: 'evidence.add'; idempotencyKey: string; requestHash?: string; payload: Evidence }
 
 /** 知识层错误码：invalid=数据不合法；revision=乐观锁不符；duplicate=重复；io=读写/锁失败。 */
 export class KnowledgeError extends Error {
   code: 'invalid' | 'revision' | 'duplicate' | 'io'
+  /** 可选结构化上下文（脱敏后给工具/面板用；字段不承诺长期稳定）。 */
+  details?: Record<string, unknown>
 
-  constructor(code: 'invalid' | 'revision' | 'duplicate' | 'io', message: string) {
+  constructor(code: 'invalid' | 'revision' | 'duplicate' | 'io', message: string, details?: Record<string, unknown>) {
     super(message)
     this.name = 'KnowledgeError'
     this.code = code
+    if (details !== undefined) this.details = details
   }
 }
 
@@ -201,10 +204,50 @@ function readReview(value: unknown): Lesson['review'] {
   return review
 }
 
-/** 校验并归一化一条经验；失败抛 KnowledgeError('invalid')。未知字段会被丢弃。 */
-export function validateLesson(value: unknown): Lesson {
+/** 当前内存模型 / 写盘的 lesson schemaVersion。 */
+export const LESSON_SCHEMA_VERSION = 1
+
+/** 迁移函数：把 from 版本的原始记录纯函数地转换成 to 版本的原始记录；必须幂等、不得写盘。 */
+export type LessonSchemaMigration = (from: number, raw: unknown, to: number) => unknown
+
+/** 已知迁移链占位：v2 落地时在此登记；存储层默认只识别不自动迁移。 */
+export const LESSON_MIGRATIONS: Record<number, LessonSchemaMigration> = {}
+
+/** validateLesson 的可选前向兼容参数；旧调用签名（单参）保持不变。 */
+export interface ValidateLessonOptions {
+  /** 允许直接按当前形状读取的 schemaVersion 列表；默认 [1]。 */
+  accept?: number[]
+  /** 显式迁移函数：对非当前版本优先生效，返回值必须能通过 v1 校验。 */
+  migrate?: LessonSchemaMigration
+}
+
+/**
+ * 校验并归一化一条经验；失败抛 KnowledgeError('invalid')。未知字段会被丢弃。
+ * 前向兼容：schemaVersion 非当前版本时，先尝试 options.migrate / LESSON_MIGRATIONS；
+ * 否则仅当版本在 options.accept 内才按当前形状读取，返回内存模型 v1。
+ */
+export function validateLesson(value: unknown, options: ValidateLessonOptions = {}): Lesson {
   if (!isRecord(value)) fail('lesson', '必须是对象')
-  if (value.schemaVersion !== 1) fail('schemaVersion', '只支持 1')
+  const version = value.schemaVersion
+  if (version !== LESSON_SCHEMA_VERSION) {
+    const accept = options.accept === undefined ? [LESSON_SCHEMA_VERSION] : options.accept
+    const migration = options.migrate !== undefined
+      ? options.migrate
+      : (typeof version === 'number' ? LESSON_MIGRATIONS[version] : undefined)
+    if (migration !== undefined) {
+      let migrated: unknown
+      try {
+        migrated = migration(version as number, value, LESSON_SCHEMA_VERSION)
+      } catch (error) {
+        fail('schemaVersion', '迁移失败：' + (error instanceof Error ? error.message : String(error)))
+      }
+      return validateLesson(migrated, { accept: [LESSON_SCHEMA_VERSION] })
+    }
+    if (typeof version !== 'number' || !accept.includes(version)) {
+      fail('schemaVersion', '不支持 ' + String(version) + '（只识别 ' + accept.join(', ') + '）')
+    }
+    return validateLesson({ ...value, schemaVersion: LESSON_SCHEMA_VERSION }, { accept: [LESSON_SCHEMA_VERSION] })
+  }
   const id = readString(value.id, 'id', { required: true, nonEmpty: true }) as string
   const revision = value.revision
   if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 1) fail('revision', '必须是 >= 1 的整数')

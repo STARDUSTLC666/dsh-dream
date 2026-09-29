@@ -20,10 +20,10 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 ## 一、任务前：取回上下文（dream_context）
 
-- 任务涉及过往代码、用户偏好或踩过的坑时，先调 `dream_context`：给 `query`，能给就给 `projectId` / `workspaceRoot` / `packageVersion`。
+- 任务涉及过往代码、用户偏好或踩过的坑时，先调 `dream_context`：给 `query`，能给就给 `projectId` / `workspaceRoot`，以及 `packageName` + `packageVersion`（`applicability.versions` 只在该包名被识别时参与判定）。审阅候选时显式传 `includeCandidates: true`。
 - **预算：默认 5 条 / 3000 字符**（工具硬上限 20 条 / 20000 字符）。取回少量真正适用的即可；没有相关经验就接受空结果，不要为了「显得有记忆」硬塞。
 - `dream_context` 是只读的：不写盘，只返回标题、适用条件、行动建议、证据摘要与「为什么与当前任务相关」。
-- 未知当前项目时只会返回全局经验；不会跨项目扫描。候选（candidate）默认不作为任务建议注入。
+- 未知当前项目时只会返回全局经验；不会跨项目扫描。候选（candidate）**可被检索到**（显式 `includeCandidates: true`，用于审阅候选），但**默认不注入任务建议**（`includeCandidates: false` 时记 `skipped: candidate-hold`；`independentSupportCount === 0` 且非 `usable` 的记 `no-evidence`），且排在可用经验之后——未经审阅不得当作已证实结论。
 
 ## 二、任务中：先把真实任务做完
 
@@ -38,7 +38,9 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
   - 能定位就填 `sessionId` / `recordSeq`；
   - `summary` 只写脱敏后的一句话，不搬原文；
   - `verification`：`read` = 你或插件读到了原记录；`claimed` = 仅模型声称。**claimed 只计入证据列表，不计入独立支持数。**
+- **只有真的读到来源（会话记录 / 本地验证产物 / 用户明确纠正）才能标 read，自我判断一律 claimed**（"我记得""应该是"都算 claimed）；标错 read 等于自我提权，禁止。
 - 没有证据的观察只能是 candidate，不能写成确定事实，也不能说成「已验证」。
+- 例外：证据为 `kind: "user-correction"` 且 `verification: "read"`（读到用户纠正原文）时，该经验初始状态直接是 `usable`，`review` 记 `actor: "user"`、`decision: "accepted"`——用户决定优先于模型推测；其余证据一律从 `candidate` 起，claimed 不计独立支持、也不能覆盖用户纠正。
 - 用户明确采纳/驳回、发现经验互相冲突、依赖升级后旧经验需要复核 → 用 `dream_review`（必须带 `expectedRevision`）。
 - 用户采纳必须来自真实用户指令；模型自己不能冒充 `actor: user`。
 - 同一证据重复提交是幂等的，不会增加独立支持数。**禁止靠反复调用 `dream_save` 或 `dream_learn` 刷次数**——次数不等于正确，也不等于重要。
@@ -81,10 +83,10 @@ Dreams and **lessons** are two separate pipelines: a **first-person reflection**
 
 ## 1. Before the task: retrieve context (dream_context)
 
-- When a task touches past code, user preferences or known pitfalls, call `dream_context` first with `query`, plus `projectId` / `workspaceRoot` / `packageVersion` when available.
+- When a task touches past code, user preferences or known pitfalls, call `dream_context` first with `query`, plus `projectId` / `workspaceRoot` and `packageName` + `packageVersion` when available (`applicability.versions` only counts when that package is identified). Pass `includeCandidates: true` explicitly when reviewing candidates.
 - **Budget: 5 items / 3000 characters by default** (hard caps 20 items / 20000 characters). Take only what is relevant; an empty result is acceptable — never stuff memories in to look useful.
 - `dream_context` is read-only: it writes nothing and returns title, applicability, action, evidence summary and why it is relevant.
-- With an unknown project it returns global lessons only; it never scans across projects. Candidates are not injected as task advice by default.
+- With an unknown project it returns global lessons only and never scans across projects. Candidates **can be retrieved** (`includeCandidates: true`, for candidate review) but are **held out of default task advice** (`includeCandidates: false` reports `skipped: candidate-hold`; evidence-free non-usable items report `no-evidence`), and they rank after usable lessons — never treat one as a verified conclusion before review.
 
 ## 2. During the task: do the real work first
 
@@ -99,7 +101,9 @@ Dreams and **lessons** are two separate pipelines: a **first-person reflection**
   - fill `sessionId` / `recordSeq` when the source can be located;
   - keep `summary` to one masked sentence — never copy the raw record;
   - `verification`: `read` = the record was actually read; `claimed` = the model merely asserts it. **Claimed evidence does not count toward independent support.**
+- **Only mark read when the source was actually read (session record / local artifact / explicit user correction); anything self-asserted is claimed.** Marking read without a source is self-promotion and is forbidden.
 - An observation without evidence stays a candidate: do not present it as a fact, and never call it "verified".
+- Exception: when the evidence is `kind: "user-correction"` with `verification: "read"` (the user's correction was actually read), the lesson starts as `usable` and `review` records `actor: "user"` / `decision: "accepted"` — a user decision outranks model inference. All other evidence starts as `candidate`; claimed evidence does not count toward independent support and cannot override a user correction.
 - For explicit acceptance/rejection, conflicts between lessons, or re-validation after dependency upgrades → call `dream_review` with an `expectedRevision`.
 - User acceptance must come from a real user instruction; the model must not impersonate `actor: user`.
 - Submitting the same evidence twice is idempotent and does not increase independent support. **Never grind counts by calling `dream_save` or `dream_learn` repeatedly** — frequency is neither correctness nor importance.

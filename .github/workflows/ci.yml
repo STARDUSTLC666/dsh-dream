@@ -17,4 +17,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: git diff --exit-code -- lib
+      - run: node --check lib/client.js
       - run: pnpm test

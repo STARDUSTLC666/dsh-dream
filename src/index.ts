@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { resolveConfig, type ResolvedDreamConfig } from './config.js'
 import { buildDreamTools, type DreamToolDefinition } from './tools.js'
+import { installDreamWeb } from './web.js'
 
 /** cordis 服务注入：要用 ctx.tools 与 ctx.skills。 */
 export const name = 'dream'
@@ -18,6 +19,8 @@ export interface DreamPluginContext {
   tools: { register(definition: DreamToolDefinition): () => void }
   skills?: { register(definition: { name: string; description: string; content: string; resourceBase: { kind: 'directory'; path: string }; source?: string }): () => void }
   on?(event: string, listener: () => void): () => void
+  /** cordis 的依赖注入（宿主必给；headless 测试夹具可能没有）。 */
+  inject?(services: string[], callback: (scopedCtx: unknown) => void): void
 }
 
 /** 随包技能目录。 */
@@ -60,6 +63,10 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
     } catch (error) {
       console.warn('[dsh-dream] 做梦协议技能加载失败：' + (error instanceof Error ? error.message : String(error)))
     }
+  }
+  // 面板同源路由：宿主有 webServer 才由 web.ts 用 ctx.inject 挂上；headless 夹具没有 inject 就跳过。
+  if (typeof ctx.inject === 'function') {
+    installDreamWeb(ctx, { journalDir: cfg.journalDir })
   }
   if (typeof ctx.on === 'function') {
     ctx.on('dispose', () => {

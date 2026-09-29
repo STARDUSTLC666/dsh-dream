@@ -20,6 +20,8 @@ export interface DreamPluginContext {
         }): () => void;
     };
     on?(event: string, listener: () => void): () => void;
+    /** cordis 的依赖注入（宿主必给；headless 测试夹具可能没有）。 */
+    inject?(services: string[], callback: (scopedCtx: unknown) => void): void;
 }
 /** 随包技能目录。 */
 export declare function bundledSkillsDir(): string;

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0（2026-09-29）
+
+- **新增：只读梦境日记可视化面板**。Web profile 设置页新增「梦境日记」一节：梦境总数、心境方块序列、教训榜（按出现次数排序、同次数按最近出现时间排序，行尾 ×N 与最近一次出现时间，≥3 次标「桥接候选」并注明由 dream_bridge 决定是否写入 AGENTS.md）与卡片式时间线（时间 / 心境 / 反思 / 教训），支持关键词搜索。反思正文默认展开，超 4 行或 220 字折叠为 4 行可展开；顶部「隐私模式」可一键模糊正文与教训（仅浏览器显示层，不改变文件）。空日记与单条日记有专门呈现，不画失真图表、不显示假精度 KPI。
+- 面板数据来自新增的只读同源路由 GET /_dsh/dsh-dream/journal：仅回环地址可达，非 GET 返回 405、非本机 Host 返回 403；?limit=（1–500，默认 50）与 ?q=（走 searchDreams）可选；响应契约仍为 { dreams, stats, query, limit }，其中 stats.topLessons 新增 lastAt（最近一次出现时间，纯增量），不含桥接字段。面板不提供任何写操作，记梦/翻梦/忆梦仍走 dream_save / dream_journal / dream_recall。
+- **存储格式不变**：dreams.jsonl 仍是每行一条 DreamEntry JSON（id / at / reflection / lessons / mood），无迁移；升级后直接沿用现有日记。
+- 修复：searchDreams（dream_recall 与面板搜索共用）此前只检索最近 1000 条日记，现在覆盖全量日记，并补充回归测试。
+- 新增手写 lib/client.js（不经 tsc，随包发布）；package.json 声明 dsh.client（inject @deepseek-ai/dsh-client-ui-settings，platform: "web"）并导出 ./client；未新增任何依赖。
+- 测试：64 → 99 项（15 个测试文件）全过；新增网页只读路由、lastAt 统计与全量检索回归。
+- **后续计划**：用 sidecar 记录桥接状态（哪些教训、何时写进哪个 AGENTS.md）。v1 不读取 AGENTS.md、不新增状态文件。
 ## 0.3.5（2026-09-28）
 
 - 兼容验证更新到 Harness 0.2.0-rc.1：64 项测试与 18 插件共同加载检查通过（`dream_digest` 按 v4 会话格式读取，继续过滤推理块）。

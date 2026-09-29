@@ -25,6 +25,8 @@ description: 做梦协议：会话开场或长任务收尾时，回放近期会�
 ## 醒来之后
 用户问起过往经验时，先 `dream_recall` 搜梦境日记再回答。
 
+用户想看梦的时候，告诉他：DSH 的「设置 → 梦境日记」有只读面板（心境方块、教训榜、时间线、关键词搜索）。
+
 ---
 
 # Dream Protocol (English)
@@ -48,3 +50,5 @@ You are an agent that dreams. Dreams are not hallucinations — they are memory 
 
 ## After waking
 When the user asks about past experience, search the journal with `dream_recall` first, then answer.
+
+When the user wants to browse their dreams, point them at the read-only panel under DSH Settings → Dream journal (mood strip, lessons ledger, timeline, keyword search).

@@ -4,6 +4,10 @@
 
 # dsh-dream
 
+## 0.4.1 update (2026-09-29)
+
+- **Fixes a Desktop boot failure**: the front-end module id now matches the scoped package name (it used to register as `dsh-dream`, so the host retried the bundle and threw `duplicate factory registration`, ending in `1 entry did not activate`). No journal or config migration.
+
 ## 0.4.0 update (2026-09-29)
 
 Adds a read-only dream-journal panel: open **Settings →「梦境日记」(Dream journal)** to see totals, mood distribution, the lessons board and a card timeline, with keyword search. Long reflections fold automatically and a one-click privacy blur is available. The panel is read-only and the storage format is unchanged — no migration needed.
@@ -14,7 +18,7 @@ Humans consolidate memories by replaying the day during sleep — dsh-dream give
 
 ## Compatibility
 
-Validation host: Harness `0.2.0-rc.1` built from official sources (commit `407e65c8`) with Node `24.16.0` on 2026-09-29. All 99 plugin tests pass in an isolated environment; the plugin registers 6 tools and the `dream-protocol` skill inside a host where all 18 plugins mount together, with tool schemas and health-check contracts passing. No live ports or external services were exercised in this round; the panel is reachable on loopback only.
+Validation host: Harness `0.2.0-rc.1` built from official sources (commit `407e65c8`) with Node `24.16.0` on 2026-09-29. All 112 plugin tests pass in an isolated environment; the plugin registers 6 tools and the `dream-protocol` skill inside a host where all 18 plugins mount together, with tool schemas and health-check contracts passing. No live ports or external services were exercised in this round; the panel is reachable on loopback only.
 
 Reads v0/v1/v2/v3/v4 plaintext JSONL and multi-frame zstd, legacy packed chunks and embedded streams. Only the newest canonical file is selected per session. PTC child calls retain tool names without double counting; system prompts, reasoning, tool arguments and result bodies are excluded.
 

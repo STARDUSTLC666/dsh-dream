@@ -187,6 +187,35 @@ test('moodSlot()/toneClass()：槽位稳定、只在 0..3，tone 0 用默认色'
   assert.equal(toneClass(3), 'dshd-tone-3')
 })
 
+test('筛选：<8 场不出筛选、≥8 场出现；筛选只作用于已加载窗口且可计数清零', () => {
+  const { shouldShowFilters, applyFilters, filterCountOf, cleanupFilters, normalizeDreams } = loadClient().internals
+  assert.equal(shouldShowFilters(7), false, '7 场不出现筛选')
+  assert.equal(shouldShowFilters(8), true, '8 场开始出现筛选')
+  const dreams = normalizeDreams([
+    { id: 'a', at: localIso(2026, 9, 28), reflection: 'r1', lessons: ['x'], mood: '平静' },
+    { id: 'b', at: localIso(2026, 9, 27), reflection: 'r2', lessons: [], mood: '清醒' },
+    { id: 'c', at: localIso(2026, 9, 26), reflection: 'r3', lessons: ['y'], mood: '平静' },
+  ], 50)
+  const none = cleanupFilters({ moods: [], withLessons: false })
+  assert.equal(filterCountOf(none), 0, '未选筛选时计数为 0')
+  assert.equal(applyFilters(dreams, none).length, 3)
+  const onlyMood = cleanupFilters({ moods: ['平静'], withLessons: false })
+  assert.equal(filterCountOf(onlyMood), 1, '选了 1 个心境计数为 1')
+  assert.deepEqual(Array.from(applyFilters(dreams, onlyMood), (d) => d.id), ['a', 'c'], '按心境过滤')
+  const onlyWithLessons = cleanupFilters({ moods: [], withLessons: true })
+  assert.deepEqual(Array.from(applyFilters(dreams, onlyWithLessons), (d) => d.id), ['a', 'c'], '只看有教训的梦')
+})
+
+test('更早的梦：已加载数 < 总数 才需要按钮；上限 500', () => {
+  const { needsOlderDreams, MORE_LIMIT, DEFAULT_LIMIT } = loadClient().internals
+  assert.equal(DEFAULT_LIMIT, 50, '默认一次取 50 场')
+  assert.equal(MORE_LIMIT, 500, '「更早的梦」一次拉满路由上限 500')
+  assert.equal(needsOlderDreams(50, 120), true, '满 50 且总数更多 → 需要按钮')
+  assert.equal(needsOlderDreams(50, 50), false, '刚好取全 → 不需要')
+  assert.equal(needsOlderDreams(120, 120), false, '已取全 → 不需要')
+  assert.equal(needsOlderDreams(500, 900), false, '已达上限 → 不再提供（路由无法再翻）')
+})
+
 const privacyClient = loadClient({ window: { localStorage: fakeStorage() } })
 const privacyStorage = privacyClient.sandbox.window.localStorage
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1（2026-09-29）
+
+- **修复 Desktop 启动失败**：前端 bundle 的模块注册 ID 与 scoped 包名不一致（注册成 `dsh-dream`，而包名是 `@stardustlc/dsh-dream`），宿主会重试加载并抛 `client-modules: duplicate factory registration for "dsh-dream"`，导致 `web boot: 1 entry did not activate`。现统一为完整包身份。
+- **回归测试**：`test/client-internals.test.mjs` 新增断言——注册 ID 必须等于 `package.json` 的 `name`；并用官方 `ClientModuleSystem` 验证「冷加载 / 缓存命中 / invalidate 后重载」三条路径，改回旧 ID 能稳定复现该错误。
+- 说明：0.4.0 的面板功能本身不受影响（Web 下可用），本版只是让 Desktop（`dsh-app://`）能正常激活该入口；日记数据与配置不变，无迁移。
 ## 0.4.0（2026-09-29）
 
 - **新增：只读梦境日记可视化面板**。Web profile 设置页新增「梦境日记」一节：梦境总数、心境方块序列、教训榜（按出现次数排序、同次数按最近出现时间排序，行尾 ×N 与最近一次出现时间，≥3 次标「桥接候选」并注明由 dream_bridge 决定是否写入 AGENTS.md）与卡片式时间线（时间 / 心境 / 反思 / 教训），支持关键词搜索。反思正文默认展开，超 4 行或 220 字折叠为 4 行可展开；顶部「隐私模式」可一键模糊正文与教训（仅浏览器显示层，不改变文件）。空日记与单条日记有专门呈现，不画失真图表、不显示假精度 KPI。

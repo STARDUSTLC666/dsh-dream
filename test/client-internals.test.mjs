@@ -39,8 +39,14 @@ function loadClient(globals = {}) {
     if (name === 'react') return fakeReact
     throw new Error('意外的 require：' + name)
   })
-  return { internals: moduleExports.__internals, exports: moduleExports, sandbox, context }
+  return { internals: moduleExports.__internals, exports: moduleExports, registrationId: definition.id, sandbox, context }
 }
+
+test('client bundle registers the scoped package identity used by the host boot graph', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(loadClient().registrationId, pkg.name,
+    'a mismatched factory id makes the host retry the bundle and fail with duplicate registration')
+})
 
 function localIso(year, month, day, hour = 12) {
   return new Date(year, month - 1, day, hour).toISOString()

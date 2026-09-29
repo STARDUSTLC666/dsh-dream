@@ -7,7 +7,8 @@
 - **存储格式不变**：dreams.jsonl 仍是每行一条 DreamEntry JSON（id / at / reflection / lessons / mood），无迁移；升级后直接沿用现有日记。
 - 修复：searchDreams（dream_recall 与面板搜索共用）此前只检索最近 1000 条日记，现在覆盖全量日记，并补充回归测试。
 - 新增手写 lib/client.js（不经 tsc，随包发布）；package.json 声明 dsh.client（inject @deepseek-ai/dsh-client-ui-settings，platform: "web"）并导出 ./client；未新增任何依赖。
-- 测试：64 → 99 项（15 个测试文件）全过；新增网页只读路由、lastAt 统计与全量检索回归。
+- 面板另含：≥8 场时的「筛选 ▾」（按心境 / 只看有教训，作用于已加载窗口）与满 50 场后的「显示更早的梦」（一次拉满 500 场上限）。
+- 测试：64 → 109 项（19 个测试文件）全过；新增网页只读路由、lastAt 统计、全量检索回归与面板纯逻辑 vm 测试。
 - **后续计划**：用 sidecar 记录桥接状态（哪些教训、何时写进哪个 AGENTS.md）。v1 不读取 AGENTS.md、不新增状态文件。
 ## 0.3.5（2026-09-28）
 

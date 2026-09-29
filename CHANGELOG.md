@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0（2026-09-29）
+
+- **从「反思」升级为「有来源的经验」**：新增 `dream_learn`（提交候选经验 + 证据，校验 / 脱敏 / 去重 / 按项目或全局范围保存）、`dream_context`（任务前取回少量适用经验，只读，默认 5 条 / 3000 字符，硬上限 20 条 / 20000 字符）、`dream_review`（采纳 / 驳回 / 标记过期 / 标记冲突 / 补充证据，强制 `expectedRevision`）。六个既有工具行为不变，输出字段只增不减。
+- **新数据目录 `<journalDir>/knowledge/`**：`events.jsonl` 权威追加日志、`evidence.jsonl` 追加证据、`index.json` 可丢弃重建的派生索引；写入使用短期文件锁与幂等键。`dreams.jsonl` 永不重写，旧日记继续按原格式读取。
+- **证据纪律**：证据只保存脱敏摘要与定位信息；`verification: read` 与 `claimed` 分开，claimed 不计入独立支持数；同一证据重复提交幂等，不增加独立来源。所有新写盘路径在 `maskSecrets` 开启时先过 `mask.ts`。
+- **范围与预算**：经验按 `projectId` / `workspaceRoot` / `global` 过滤，未知当前项目时 `dream_context` 只返回全局经验；条件与例外不被截断，预算放不下就整条不返回；已驳回、已过期、冲突未解决的默认不注入任务。
+- **只读面板新增「经验」区块**：展示 title / when / state / scopeLabel / evidenceSummary / lastValidatedAt；候选与有冲突的视觉区分明确，空态独立；只读路由新增 GET /_dsh/dsh-dream/knowledge（返回脱敏后的 `{ lessons, evidence, stats }`，沿用回环 Host / 405 / 403 / 错误信封），面板仍无任何写操作。
+- **技能与文档**：`dream-protocol` 技能区分「第一人称感悟」与「技术经验」，流程改为取回上下文 → 执行真实任务 → 收尾提候选（附证据）→ 必要时 dream_review，并写清预算、禁止靠反复 `dream_save` 刷次数、禁止把主观反思升级成 AGENTS.md 指令；README 中英文新增 M1 章节。
+- **测试**：112 → 169 项全部通过（新增知识存储 / 检索 / 三个新工具的宿主 schema 契约 / 只读知识路由零写盘与脱敏 / 面板经验区块纯函数用例）；`tsc`、`node --check lib/client.js` 与官方加载器回归（冷加载 / 缓存 / invalidate 重载）均通过。真实桌面 / Web 目视验收仍待 M1 发布前完成。
+- 本版为 M1 首个发布版本。真实桌面 / Web 目视验收（经验区块配色与空态、窄窗、125%/150% 缩放、深浅色）与 18 插件同载冷启动复验**尚未完成**，完成后单独记录结论。
+
 ## 0.4.1（2026-09-29）
 
 - **修复 Desktop 启动失败**：前端 bundle 的模块注册 ID 与 scoped 包名不一致（注册成 `dsh-dream`，而包名是 `@stardustlc/dsh-dream`），宿主会重试加载并抛 `client-modules: duplicate factory registration for "dsh-dream"`，导致 `web boot: 1 entry did not activate`。现统一为完整包身份。

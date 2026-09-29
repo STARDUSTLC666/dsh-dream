@@ -6,6 +6,14 @@
 
 - **修复 Desktop 启动失败**：前端模块注册 ID 现与 scoped 包名一致（此前注册成 `dsh-dream`，宿主会重试加载并抛 `duplicate factory registration`，导致 `1 entry did not activate`）。日记数据与配置不变，无迁移。
 
+## 0.5.0 更新（2026-09-29）
+
+- **新增三个工具**：`dream_learn`（提交带证据的候选经验）、`dream_context`（任务前按项目 / 版本取回少量适用经验，只读，默认最多 5 条、3000 字符）、`dream_review`（采纳 / 驳回 / 标记过期或冲突 / 补充证据，强制携带 revision）。
+- **新数据目录 `<journalDir>/knowledge/`**：`events.jsonl` 是权威追加日志，`evidence.jsonl` 追加证据，`index.json` 是可丢弃重建的派生索引。旧日记 `dreams.jsonl` 仍只读兼容、永不重写。
+- **脱敏与范围承诺**：所有新写盘路径在 `maskSecrets` 开启时先过 `mask.ts`；证据只保存已脱敏摘要和定位信息，不保存隐藏推理、系统提示、工具参数 / 结果正文。经验按项目或全局范围保存，未知当前项目时 `dream_context` 只返回全局经验，绝不跨项目扫描。
+- **兼容性**：旧日记与六个既有工具（dream_digest / dream_save / dream_journal / dream_recall / dream_bridge / dream_health）行为不变、输出字段只增不减；升级不需要迁移，也不会改写旧数据。
+- **只读面板新增「经验」区块**：展示状态（候选 / 可用 / 有冲突 / 待复核 / 已驳回）、适用条件、范围、证据摘要与最近核验时间；候选与有冲突有明确视觉区分，没有经验时是独立空态。面板仍然没有任何写操作。
+
 ## 0.4.0 更新（2026-09-29）
 
 新增只读梦境日记可视化面板：打开「设置 → 梦境日记」即可查看梦境总数、心境分布、教训榜与卡片式时间线，并可按关键词搜索；正文超长自动折叠，可一键开启隐私模糊。面板只读，存储格式不变、无需迁移。
@@ -18,7 +26,7 @@
 
 ## 兼容性
 
-验证宿主：官方源码构建的 Harness `0.2.0-rc.1`（commit `407e65c8`）+ Node `24.16.0`（2026-09-29）。112 项插件测试在隔离环境全部通过；同一个宿主里 18 个插件共同加载，本插件注册 6 个工具与 `dream-protocol` 技能，工具 schema 与健康检查契约通过。本轮未启用真实端口与外部服务；面板仅在本机回环地址下可达。
+验证宿主：官方源码构建的 Harness `0.2.0-rc.1`（commit `407e65c8`）+ Node `24.16.0`（2026-09-29）。0.4.1 时 112 项插件测试在隔离环境全部通过，18 个插件共同加载验证通过；0.5.0 共 169 项测试全部通过（新增知识存储 / 检索 / 三个新工具的宿主 schema 契约 / 只读路由零写盘与脱敏用例），本插件注册 9 个工具（6 个既有工具 + M1 的 dream_learn / dream_context / dream_review）与 `dream-protocol` 技能，工具 schema 与健康检查契约通过。18 插件在 M1 发布前会随新版前端再复验一次。本轮未启用真实端口与外部服务；面板仅在本机回环地址下可达。
 
 支持 v0/v1/v2/v3/v4 的普通 JSONL 与多帧 zstd、旧 packed-chunk 行及内嵌 stream；升级留下多代文件时只读取每个会话的最新规范文件。PTC 子工具调用保留工具名且不重复计数，不提取系统提示、推理、工具参数或结果正文。
 
@@ -54,6 +62,7 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 - **数据文件**：面板读的就是梦境日记本身，默认 ~/.dsh/.dsh-dream/dreams.jsonl（$DSH_HOME/.dsh-dream/dreams.jsonl；配置了 journalDir 时以配置为准）。存储格式不变，仍是每行一条 JSON 的 JSONL，可直接删除或用 dream_journal 读取。
 - **隐私**：面板不做二次脱敏——脱敏只发生在入梦写盘时（maskSecrets），面板原样显示文件里已有的内容。它不上传、不导出、不发起任何网络请求；顶部「隐私模式」可一键模糊正文与教训，但它只是浏览器里的显示效果（DOM 中仍是明文），不是加密。共享屏幕或转发 dreams.jsonl 前请自行确认内容。
 - **还没有梦时**：面板显示空态，提示对 agent 说「做个梦」——它会回放最近的会话、反思之后把第一条梦写进这里；只有一场梦时按单条卡片展示，心境方块与教训榜都不留空、不画失真图表。
+- **经验区块（M1）**：面板下方的只读「经验」区块显示技术经验的状态（候选 / 可用 / 有冲突 / 待复核 / 已驳回）、适用条件、范围、证据摘要与最近核验时间，候选与冲突有独立配色和边框，空态与梦境空态分开。数据来自只读路由 GET /_dsh/dsh-dream/knowledge（仅回环地址可达；非 GET → 405，非本机 Host → 403），没有采纳 / 编辑 / 删除按钮；审阅请用 dream_review。
 - **后续计划**：用 sidecar 记录桥接状态（哪些教训、何时写进了哪个 AGENTS.md）。本轮不做——v1 不读取 AGENTS.md，也不新增任何状态文件。
 
 ## 工具一览
@@ -66,6 +75,9 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 | `dream_recall` | 忆梦：关键词检索梦境 | `query` 必填 |
 | `dream_bridge` | 渡梦：把高频教训幂等合并进 AGENTS.md，梦变成长期记忆 | `path` 必填；`maxLessons` 可选 |
 | `dream_health` | 自检：会话目录/梦境计数/配置汇总 | 无 |
+| `dream_learn` | 提交候选技术经验及证据（校验 / 脱敏 / 去重 / 按范围保存；无证据只能留在候选） | `kind`、`title`、`action`、`when`、`evidence` 必填 |
+| `dream_context` | 任务前取回少量适用经验（只读） | `query` 必填；`projectId` / `workspaceRoot` / `limit` / `maxChars` / `packageVersion` 可选 |
+| `dream_review` | 审阅与状态流转：采纳 / 驳回 / 标记过期 / 标记冲突 / 补充证据 | `action`、`lessonId`、`expectedRevision` 必填 |
 
 ### 示例
 
@@ -74,6 +86,9 @@ dream_digest { maxSessions: 5, mode: 'brief' }
 dream_save { reflection: "用户反复遇到输入法问题，偏好先自查再重启", lessons: ["先问是否重启过应用"], mood: "平静" }
 dream_recall { query: "输入法" }
 dream_bridge { path: "AGENTS.md", maxLessons: 10 }
+dream_context { query: "SMTP 取消投递", projectId: "mailer", packageVersion: "9.0.5" }
+dream_learn { kind: "pitfall", title: "池化发送中 close() 不保证终止投递", action: "取消后验证当前连接确实关闭", when: "使用 Nodemailer 9.0.5 池化发送并处理 AbortSignal 时", evidence: [{ kind: "local-artifact", summary: "本机 SMTP 复现：取消后服务器仍收到正文", verification: "read" }] }
+dream_review { action: "accept", lessonId: "lesson-…", expectedRevision: 1 }
 ```
 
 ## 渡梦：让梦变成长期记忆
@@ -83,6 +98,16 @@ dream_bridge { path: "AGENTS.md", maxLessons: 10 }
 ## 做梦协议（随包技能）
 
 插件附带 `dream-protocol` 技能，教 agent 何时做梦（开场/收尾/距上次做梦超一天）、做梦三步（入梦→解梦→记梦）与记梦纪律（只沉淀规律不复述流水账、密钥隐私不入梦、存疑要标注）。
+
+## 经验记忆（M1）
+
+梦境日记是主观感悟；真正要复用的技术经验走 `<journalDir>/knowledge/`：
+
+- **候选 → 证据 → 审阅**：`dream_learn` 把「何时 / 做什么 / 例外 / 范围」和证据一起保存为 candidate；`verification: read` 表示读到原记录，`claimed` 只表示模型声称（不计入独立支持数）。用户采纳、驳回、标记过期或冲突用 `dream_review`，所有修改都要带 `expectedRevision`，过期写入会被拒绝。
+- **取回有预算**：`dream_context` 默认最多返回 5 条、3000 字符（硬上限 20 条 / 20000 字符）；条件与例外不会被截断，放不下就整条不返回。可用经验优先于候选；已驳回、已过期和冲突未解决的默认不注入任务。
+- **频率不是可靠性**：同一条证据重复提交是幂等的；不要在同一个会话里反复 `dream_save` / `dream_learn` 刷次数。同一个会话中重复出现的教训只算一次独立来源。
+- **存储可恢复**：`events.jsonl` 是权威事件日志（追加写），`evidence.jsonl` 追加证据，`index.json` 是可丢弃重建的派生索引；重建索引不删除任何原文件。目录不存在时读取接口返回空结果，不会为了读而创建目录。
+- **删除新数据**：直接删除 `<journalDir>/knowledge/` 即清空经验记忆；这不会影响 `dreams.jsonl` 里的旧日记，旧版本插件也仍能读取旧日记。
 
 ## 配置
 
@@ -102,12 +127,12 @@ dream_bridge { path: "AGENTS.md", maxLessons: 10 }
 
 ## 隐私保护（默认开启）
 
-梦原料入梦前自动脱敏：sk 密钥、GitHub/Groq/Slack 令牌、AWS 密钥、JWT、`password/token/api_key` 赋值、超长高熵串都会被打成 `[已脱敏·类型]`。不需要时可在配置里设 `maskSecrets: false`。
+梦原料入梦前自动脱敏：sk 密钥、GitHub/Groq/Slack 令牌、AWS 密钥、JWT、`password/token/api_key` 赋值、超长高熵串都会被打成 `[已脱敏·类型]`。M1 的经验 / 证据 / 错误 / 桥接写盘路径在 `maskSecrets` 开启时同样先过 `mask.ts`，面板只读路由返回的文本也会再做一次脱敏。不需要时可在配置里设 `maskSecrets: false`。
 
 ## 权限与数据
 
 - 只读访问会话目录（`~/.dsh/sessions`），不修改任何会话文件；
-- 梦境日记以 JSONL 追加写入 `journalDir`；
+- 梦境日记以 JSONL 追加写入 `journalDir`；经验与证据追加写入 `journalDir/knowledge/`（events.jsonl / evidence.jsonl，index.json 可重建）；
 - 不发起任何网络请求；
 - 会话内容可能包含敏感信息——做梦协议明确禁止把密钥/隐私写入梦境，但梦境日记本身是明文存储，请自行评估。
 

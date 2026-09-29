@@ -1,22 +1,10 @@
-/**
- * dsh-dream 的网页端后端：给设置页里的梦境面板提供只读数据。
- *
- * 安全模型沿用 dsh-calendar / dsh-email 的设置路由：这个路由能读出用户的
- * 全部梦境日记（都是隐私文本），而宿主 webserver 有可能绑定在 0.0.0.0。
- * 三道门缺一不可 ——
- *   1. remoteAddress 若是明确的非回环地址则拒绝（局域网不可达）；
- *   2. Host 头必须是 localhost 名（挡 DNS rebinding：恶意域名解析到 127.0.0.1）；
- *   3. 只接受 GET：本路由没有任何写路径，所以不需要 CSRF 那一套。
- *
- * 这一层不做自己的状态：每次请求都从 journal.ts 现读现算，磁盘上的 JSONL
- * 就是唯一真相。
- *
- * @module dsh-dream/web
- */
 import { type ResolvedDreamConfig } from './config.js';
 import { type DreamEntry, type DreamStats } from './journal.js';
+import type { Evidence, Lesson } from './knowledge.js';
 /** 面板与浏览器说话的同源路由。 */
 export declare const DREAM_ROUTE = "/_dsh/dsh-dream/journal";
+/** M1 经验面板的只读路由。 */
+export declare const DREAM_KNOWLEDGE_ROUTE = "/_dsh/dsh-dream/knowledge";
 /** ?limit 的默认值与上下界。 */
 export declare const DREAM_LIMIT_DEFAULT = 50;
 export declare const DREAM_LIMIT_MIN = 1;
@@ -36,19 +24,56 @@ export interface DreamWebPayload {
     /** 本次生效的条数上限。 */
     limit: number;
 }
+/** 知识路由的统计形状（与 FREEZE §2 的 stats() 对齐）。 */
+export interface KnowledgeWebStats {
+    lessons: number;
+    evidence: number;
+    events: number;
+    byState: Record<string, number>;
+    truncated?: boolean;
+}
+/** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
+export interface KnowledgeWebPayload {
+    /** 每条经验额外带 scopeLabel 与 evidenceSummary（与 dream_context 同源文案）。 */
+    lessons: Array<Lesson & {
+        scopeLabel: string;
+        evidenceSummary: string;
+    }>;
+    /** 脱敏后的证据记录。 */
+    evidence: Evidence[];
+    /** 全量统计（不受条数影响）。 */
+    stats: KnowledgeWebStats;
+}
+/** 只读知识源的最小接口：方便测试注入假数据，生产默认用 KnowledgeStore。 */
+export interface KnowledgeReader {
+    listLessons(): Lesson[];
+    listEvidence(): Evidence[];
+    stats(): KnowledgeWebStats;
+}
 /** 安装参数；journalDir 缺省时从 config 解析。 */
 export interface DreamWebOptions {
     /** 梦境日记目录（优先）。 */
     journalDir?: string;
+    /** 知识目录（优先；缺省 = <journalDir>/knowledge）。 */
+    knowledgeDir?: string;
     /** 插件配置，用来兜底 journalDir（resolveConfig 的入参）。 */
     config?: Record<string, unknown> | ResolvedDreamConfig | null;
+    /** 测试注入：返回只读知识源；提供时不做目录存在性检查。 */
+    knowledgeStoreFactory?: (knowledgeDir: string) => KnowledgeReader;
 }
 /** ?limit 解析：缺省/非数字 → fallback；越界钳制到 [1, 500]。 */
 export declare function limitFromQuery(raw: unknown, fallback?: number): number;
-/** 组装路由处理器；journalDir 在这一刻定下来（与插件的配置生命周期一致）。 */
+/** 解析后的 knowledgeDir：显式路径优先，否则 = <journalDir>/knowledge。 */
+export declare function knowledgeDirOf(options: DreamWebOptions, journalDir?: string): string;
+/** 知识目录不存在（或尚未建立）时的空载荷：不写盘、不报 404。 */
+export declare function emptyKnowledgePayload(): KnowledgeWebPayload;
+/** 组装梦境日记路由处理器；journalDir 在这一刻定下来（与插件的配置生命周期一致）。 */
 export declare function createDreamWebHandler(options?: DreamWebOptions): (req: any, res: any) => Promise<void>;
+/** 组装只读经验路由处理器；零写盘：目录不存在就直接返回空结果。 */
+export declare function createKnowledgeWebHandler(options?: DreamWebOptions): (req: any, res: any) => Promise<void>;
 /**
- * 把梦境面板挂到宿主 webserver 上。
- * 与 dsh-calendar 相同：ctx.inject(['webServer']) + effect 注册，插件卸载即摘掉路由。
+ * 把只读路由挂到宿主 webserver 上。
+ * 与 dsh-calendar 相同：ctx.inject(['webServer']) + effect 注册，插件卸载即摘掉路由；
+ * 同一个 effect 里注册日记与知识两条 exact 路由，卸载时一起释放。
  */
 export declare function installDreamWeb(ctx: any, options?: DreamWebOptions): void;

@@ -24,8 +24,8 @@ const journal = tools.find((t) => t.name === 'dream_journal')
 const recall = tools.find((t) => t.name === 'dream_recall')
 const health = tools.find((t) => t.name === 'dream_health')
 
-test('构建 5 个工具且名单正确', () => {
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['dream_bridge', 'dream_digest', 'dream_health', 'dream_journal', 'dream_recall', 'dream_save'])
+test('构建 9 个工具且名单正确', () => {
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['dream_bridge', 'dream_context', 'dream_digest', 'dream_health', 'dream_journal', 'dream_learn', 'dream_recall', 'dream_review', 'dream_save'])
 })
 
 test('dream_digest：回放主会话并跳过子代理', async () => {

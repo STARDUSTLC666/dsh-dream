@@ -239,3 +239,132 @@ test('隐私开关：loadPrivacy()/savePrivacy() 往返，且存储键仍是 dsh
   assert.equal(privacyStorage.getItem('dsh-dream:privacy'), '0')
   assert.equal(loadPrivacy(), false)
 })
+
+
+// ───────────────────────── M1「经验」区块纯函数 ─────────────────────────
+
+test('knowledge 路由常量与 URL 解析：沿用同一套 baseURI / 反代语义，且与日记路由互不串路', () => {
+  const { KNOWLEDGE_ROUTE, routeUrlFor, routeUrl } = loadClient({ document: { baseURI: 'http://127.0.0.1:5141/dsh/ui/' } }).internals
+  assert.equal(KNOWLEDGE_ROUTE, '_dsh/dsh-dream/knowledge', '入口不带前导斜杠，反代前缀才不会被吃掉')
+  assert.equal(routeUrl(''), 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/journal')
+  assert.equal(routeUrlFor(KNOWLEDGE_ROUTE, ''), 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/knowledge')
+  assert.ok(!routeUrlFor(KNOWLEDGE_ROUTE, '').includes('?'), '知识路由是只读全量，不带查询参数')
+})
+
+test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byState 仍按全量统计', () => {
+  const { normalizeKnowledge, lessonStateLabel } = loadClient().internals
+  const now = new Date(2026, 8, 29, 12)
+  const raw = {
+    lessons: [
+      { id: 'l1', state: 'candidate', title: '候选经验', action: '做事', when: '当 X 时', scopeLabel: '项目 p1', evidenceSummary: '独立证据 0 条', lastValidatedAt: localIso(2026, 9, 28), weight: 0.9, vector: [1, 2, 3], review: { actor: 'model' } },
+      { id: 'l2', state: 'disputed', title: '冲突经验', when: '当 Y 时' },
+      { id: 'l3', state: 'usable', title: '可用经验', when: '当 Z 时', action: '' },
+      { id: 'bad' },
+    ],
+    stats: { lessons: 3, evidence: 5, byState: { candidate: 1, disputed: 1, usable: 1 } },
+  }
+  const vm = normalizeKnowledge(raw, now, 2)
+  assert.equal(vm.rows.length, 2, 'limit=2 只渲染前两行')
+  assert.equal(vm.total, 3)
+  assert.equal(vm.shown, 2)
+  assert.deepEqual(
+    Object.keys(vm.rows[0]).sort(),
+    ['candidate', 'disputed', 'evidenceSummary', 'id', 'lastText', 'lastTitle', 'lastValidatedAt', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when'].sort(),
+    '只投影展示字段：不把权重 / 向量 / 原始 JSON 带进视图模型',
+  )
+  assert.equal(vm.rows[0].weight, undefined)
+  assert.equal(vm.rows[0].vector, undefined)
+  assert.equal(vm.rows[0].review, undefined)
+  assert.equal(vm.rows[0].candidate, true)
+  assert.equal(vm.rows[0].disputed, false)
+  assert.equal(vm.rows[1].disputed, true)
+  assert.notEqual(vm.rows[0].stateClass, vm.rows[1].stateClass, '候选与有冲突必须视觉可区分')
+  assert.equal(vm.rows[0].stateLabel, lessonStateLabel('candidate'))
+  assert.equal(vm.stats.byState.candidate, 1)
+  assert.equal(vm.stats.byState.disputed, 1)
+  assert.equal(vm.stats.byState.usable, 1, '被 limit 截掉的行仍要计数')
+  assert.equal(vm.rows[1].when, '当 Y 时')
+  assert.equal(vm.rows[1].scopeLabel, '范围未标注')
+  assert.equal(vm.rows[1].evidenceSummary, '暂无可展示的证据摘要')
+  assert.equal(vm.rows[1].lastText, '尚未核验')
+})
+
+test('normalizeKnowledge()：未知状态不冒充候选，坏形状不崩面板', () => {
+  const { normalizeKnowledge, normalizeLessonState, lessonStateClass } = loadClient().internals
+  assert.equal(normalizeLessonState('weird'), 'unknown')
+  assert.equal(lessonStateClass('weird'), 'dshd-kstate-unknown')
+  const vm = normalizeKnowledge({ lessons: [null, 42, { state: 'weird', title: '状态未知的经验' }] }, new Date(2026, 8, 29, 12), 50)
+  assert.equal(vm.rows.length, 1)
+  assert.equal(vm.rows[0].state, 'unknown')
+  assert.equal(vm.rows[0].stateLabel, '未知状态')
+  assert.deepEqual(
+    toHost(normalizeKnowledge(null, new Date(2026, 8, 29, 12), 50)),
+    { rows: [], total: 0, shown: 0, stats: { lessons: 0, evidence: 0, byState: {} } },
+  )
+})
+
+test('knowledgeCountText() / knowledgeEmptyState()：独立空态、按状态计数、不包装可靠度', () => {
+  const { knowledgeCountText, knowledgeEmptyState, lessonStateLabel } = loadClient().internals
+  assert.equal(knowledgeCountText({ lessons: 0, byState: {} }), '还没有经验')
+  assert.equal(
+    knowledgeCountText({ lessons: 3, byState: { candidate: 2, usable: 1 } }),
+    lessonStateLabel('candidate') + ' 2 · ' + lessonStateLabel('usable') + ' 1',
+  )
+  const empty = knowledgeEmptyState()
+  assert.equal(empty.title, '还没有经验记录')
+  assert.notEqual(empty.title, '还没有梦境日记', '经验空态必须与梦境空态分开')
+  assert.match(empty.body, /dream_learn/)
+  assert.match(empty.hint, /dream_review/)
+})
+
+test('经验行的相对时间：lastValidatedAt 走相对文案，缺省明确写「尚未核验」', () => {
+  const { normalizeKnowledge } = loadClient().internals
+  const now = new Date(2026, 8, 29, 12)
+  const vm = normalizeKnowledge({ lessons: [
+    { title: '昨天核验过', lastValidatedAt: localIso(2026, 9, 28) },
+    { title: '从没核验过' },
+  ] }, now, 50)
+  assert.equal(vm.rows[0].lastText, '1 天前')
+  assert.match(vm.rows[0].lastTitle, /^2026-09-28/)
+  assert.equal(vm.rows[1].lastText, '尚未核验')
+  assert.match(vm.rows[1].lastTitle, /没有 lastValidatedAt/)
+})
+
+test('fetchKnowledge()：只发 GET、只带 same-origin、命中知识路由并兼容信封', async () => {
+  const seen = []
+  const { fetchKnowledge } = loadClient({
+    document: { baseURI: 'http://127.0.0.1:5141/dsh/ui/' },
+    fetch: async (url, init) => {
+      seen.push({ url, init })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, value: { lessons: [{ title: '一条经验' }], evidence: [], stats: { lessons: 1 } } }),
+      }
+    },
+  }).internals
+  const payload = await fetchKnowledge()
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].url, 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/knowledge')
+  assert.equal(seen[0].init.method, undefined, '只读路由不得带 method')
+  assert.equal(seen[0].init.body, undefined, '只读路由不得带 body')
+  assert.equal(seen[0].init.credentials, 'same-origin')
+  assert.deepEqual(Array.from(payload.lessons, (lesson) => lesson.title), ['一条经验'])
+  assert.equal(payload.stats.lessons, 1)
+})
+
+test('fetchKnowledge()：服务端错误信封会抛错并带上 code，不让面板误当空数据', async () => {
+  const { fetchKnowledge } = loadClient({
+    fetch: async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ ok: false, error: { code: 'forbidden', message: 'host denied' } }),
+    }),
+  }).internals
+  await assert.rejects(fetchKnowledge(), (error) => {
+    assert.equal(error.message, 'host denied')
+    assert.equal(error.status, 403)
+    assert.equal(error.code, 'forbidden')
+    return true
+  })
+})

@@ -8,6 +8,14 @@
 
 - **Fixes a Desktop boot failure**: the front-end module id now matches the scoped package name (it used to register as `dsh-dream`, so the host retried the bundle and threw `duplicate factory registration`, ending in `1 entry did not activate`). No journal or config migration.
 
+## 0.5.0 update (2026-09-29)
+
+- **Three new tools**: `dream_learn` (submit an evidence-backed candidate lesson), `dream_context` (retrieve a few applicable lessons before a task; read-only; 5 items / 3000 characters by default) and `dream_review` (accept / reject / mark stale or disputed / attach evidence; every mutation requires a revision).
+- **New data directory `<journalDir>/knowledge/`**: `events.jsonl` is the authoritative append-only log, `evidence.jsonl` appends evidence, and `index.json` is a disposable derived index. The old `dreams.jsonl` stays read-compatible and is never rewritten.
+- **Masking and scope guarantees**: every new write path runs through `mask.ts` when `maskSecrets` is on; evidence stores only masked one-line summaries plus locators — never hidden reasoning, system prompts, tool arguments or result bodies. Lessons are scoped to a project or global; with an unknown project `dream_context` returns global lessons only and never scans across projects.
+- **Compatibility**: the old journal and the six existing tools (dream_digest / dream_save / dream_journal / dream_recall / dream_bridge / dream_health) keep their behaviour and output fields only grow. No migration is required and no old data is rewritten.
+- **New read-only "Lessons" block** in the panel: state (candidate / usable / disputed / stale / rejected), applicability, scope, evidence summary and last-validated time. Candidates and disputed lessons are visually distinct, and an empty knowledge store has its own empty state. The panel still has no write actions.
+
 ## 0.4.0 update (2026-09-29)
 
 Adds a read-only dream-journal panel: open **Settings →「梦境日记」(Dream journal)** to see totals, mood distribution, the lessons board and a card timeline, with keyword search. Long reflections fold automatically and a one-click privacy blur is available. The panel is read-only and the storage format is unchanged — no migration needed.
@@ -18,7 +26,7 @@ Humans consolidate memories by replaying the day during sleep — dsh-dream give
 
 ## Compatibility
 
-Validation host: Harness `0.2.0-rc.1` built from official sources (commit `407e65c8`) with Node `24.16.0` on 2026-09-29. All 112 plugin tests pass in an isolated environment; the plugin registers 6 tools and the `dream-protocol` skill inside a host where all 18 plugins mount together, with tool schemas and health-check contracts passing. No live ports or external services were exercised in this round; the panel is reachable on loopback only.
+Validation host: Harness `0.2.0-rc.1` built from official sources (commit `407e65c8`) with Node `24.16.0` on 2026-09-29. At 0.4.1 all 112 plugin tests passed in an isolated environment and all 18 plugins mounted together; M1 currently has 169 tests passing (knowledge store / retrieval / host schema contracts for the three new tools / zero-write and masking cases for the read-only route). The plugin registers 9 tools (the 6 original tools plus M1's dream_learn / dream_context / dream_review) and the `dream-protocol` skill, with tool schemas and health-check contracts passing. The 18-plugin joint load will be re-run with the new front end before the M1 release. No live ports or external services were exercised in this round; the panel is reachable on loopback only.
 
 Reads v0/v1/v2/v3/v4 plaintext JSONL and multi-frame zstd, legacy packed chunks and embedded streams. Only the newest canonical file is selected per session. PTC child calls retain tool names without double counting; system prompts, reasoning, tool arguments and result bodies are excluded.
 
@@ -47,6 +55,7 @@ Once installed, DSH's **Settings →「梦境日记」(Dream journal)** grows a 
 - **Data file**: the panel renders the journal itself — ~/.dsh/.dsh-dream/dreams.jsonl by default ($DSH_HOME/.dsh-dream/dreams.jsonl; an explicit journalDir wins). The storage format is unchanged: one JSON object per line, safe to remove or read with dream_journal.
 - **Privacy**: the panel performs no second-pass masking — masking only happens when a dream is written (maskSecrets), and the panel shows exactly what is already in the file. It does not upload, export or make any network request. The privacy mode at the top blurs reflections and lessons in one click, but it is a display-layer effect only (the DOM still holds plaintext), not encryption. Review the journal before sharing your screen or the JSONL.
 - **Before the first dream**: the panel shows an empty state pointing you to ask the agent to「做个梦」; a single dream renders as one card, with neither the mood strip nor the lessons board left empty and no misleading charts.
+- **Lessons block (M1)**: a read-only "Lessons" block shows each technical lesson's state (candidate / usable / disputed / stale / rejected), applicability, scope, evidence summary and last-validated time. Candidates and disputed lessons get distinct colours and borders, and the empty state is separate from the dream empty state. Data comes from the read-only GET /_dsh/dsh-dream/knowledge route (loopback only; non-GET → 405, non-local Host → 403). There are no accept / edit / delete buttons — use `dream_review` to review.
 - **Roadmap**: record bridge status via a sidecar (which lessons were written into which AGENTS.md, and when). Not in this release — v1 reads no AGENTS.md and adds no state file.
 
 ## Tools
@@ -59,18 +68,31 @@ Once installed, DSH's **Settings →「梦境日记」(Dream journal)** grows a 
 | `dream_recall` | Keyword search across the journal | `query` required |
 | `dream_bridge` | Merge top lessons into AGENTS.md (idempotent marker block) — dreams become long-term memory | `path` required |
 | `dream_health` | Self-check: sessions dir / dream count / config summary | — |
+| `dream_learn` | Submit a candidate technical lesson with evidence (validate / mask / dedupe / scope; evidence-free input stays a candidate) | `kind`, `title`, `action`, `when`, `evidence` required |
+| `dream_context` | Retrieve a few applicable lessons before a task (read-only) | `query` required; `projectId` / `workspaceRoot` / `limit` / `maxChars` / `packageVersion` optional |
+| `dream_review` | Review and transition state: accept / reject / mark stale / mark disputed / attach evidence | `action`, `lessonId`, `expectedRevision` required |
 
 `dream_bridge` merges the most frequent dream lessons into a target `AGENTS.md` behind idempotent marker blocks; `dream_journal` also reports mood distribution and top lessons.
 
 The bundled `dream-protocol` skill teaches the agent when and how to dream (and the journaling discipline: patterns only, never secrets).
 
+## Lesson memory (M1)
+
+The dream journal holds subjective reflections; technical lessons that should be reused go to `<journalDir>/knowledge/`:
+
+- **Candidate → evidence → review**: `dream_learn` stores "when / action / exceptions / scope" together with evidence as a candidate. `verification: read` means the original record was actually read; `claimed` only means the model asserts it (it does not count toward independent support). Use `dream_review` to accept, reject, mark stale or disputed, or attach new evidence — every mutation carries `expectedRevision` and stale writes are rejected.
+- **Budgeted retrieval**: `dream_context` returns at most 5 items / 3000 characters by default (hard caps 20 items / 20000 characters). Conditions and exceptions are never truncated: if an item does not fit, it is omitted whole. Usable lessons outrank candidates; rejected, stale and unresolved disputed lessons are not injected into tasks by default.
+- **Frequency is not reliability**: resubmitting the same evidence is idempotent; never grind counts by calling `dream_save` / `dream_learn` repeatedly. Repeated occurrences within one session count as a single independent source.
+- **Recoverable storage**: `events.jsonl` is the authoritative append-only event log, `evidence.jsonl` appends evidence and `index.json` is a disposable derived index. Rebuilding the index deletes no source files. When the directory does not exist, the read route returns an empty result and never creates anything.
+- **Removing it**: delete `<journalDir>/knowledge/` to clear lesson memory. The old `dreams.jsonl` journal is unaffected, and older plugin versions can still read it.
+
 ## Privacy (on by default)
 
-Dream material is masked before journaling: sk keys, GitHub/Groq/Slack tokens, AWS keys, JWTs, `password/token/api_key` assignments and long high-entropy strings become `[masked·type]`. Disable with `maskSecrets: false`.
+Dream material is masked before journaling: sk keys, GitHub/Groq/Slack tokens, AWS keys, JWTs, `password/token/api_key` assignments and long high-entropy strings become `[masked·type]`. In M1 the lesson / evidence / error / bridge write paths also run through `mask.ts` when `maskSecrets` is on, and text returned by the read-only panel route is masked again. Disable with `maskSecrets: false`.
 
 ## Permissions & data
 
-Read-only access to the sessions directory; appends JSONL to the journal directory; no network calls. Session content may be sensitive — the protocol forbids secrets in dreams, but the journal is plaintext: review before sharing.
+Read-only access to the sessions directory; appends JSONL to the journal directory plus lessons/evidence under `journalDir/knowledge/`; no network calls. Session content may be sensitive — the protocol forbids secrets in dreams, but the journal is plaintext: review before sharing.
 
 ## Development
 

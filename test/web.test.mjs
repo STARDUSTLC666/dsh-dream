@@ -3,7 +3,8 @@
  *
  * 假 ctx + 假 webServer 捕获 handler，直接验证 HTTP 语义与 JSON 契约：
  * 空日记 / 新梦在前 / 正文与教训不丢 / q 真过滤 / limit 边界 /
- * 非 GET 405 / 非本机 Host 403 / 可 JSON 序列化。
+ * 非 GET 405 / 非本机 Host 403 / 可 JSON 序列化；M1 只读知识路由
+ * （空目录零写盘 / 投影字段 / 脱敏 / 405+403 / 500 信封 / 真实 store 集成）。
  *
  * src/web.ts 内部按 NodeNext 规范用 './journal.js' 指向同目录源文件；
  * 直接 node --test 时没有 tsc，所以这里注册一个同步 resolve 钩子，
@@ -11,7 +12,7 @@
  */
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerHooks } from 'node:module'
@@ -31,6 +32,7 @@ registerHooks({
 })
 
 const {
+  DREAM_KNOWLEDGE_ROUTE,
   DREAM_LIMIT_DEFAULT,
   DREAM_LIMIT_MAX,
   DREAM_ROUTE,
@@ -92,12 +94,34 @@ function mount(options) {
   return { injected, routes, effects }
 }
 
-/** 挂载并取出 handler。 */
+/** 挂载并取出梦境路由 handler。 */
 function handlerFor(options) {
   const mounted = mount(options)
   assert.equal(mounted.injected.length, 1)
-  assert.equal(mounted.routes.length, 1)
-  return { ...mounted, handler: mounted.routes[0].route.handler }
+  const route = mounted.routes.find((item) => item.route.path === DREAM_ROUTE)
+  assert.ok(route, '梦境日记路由应已注册')
+  return { ...mounted, handler: route.route.handler }
+}
+
+/** 挂载并取出知识路由 handler。 */
+function knowledgeHandlerFor(options) {
+  const mounted = mount(options)
+  assert.equal(mounted.injected.length, 1)
+  const route = mounted.routes.find((item) => item.route.path === DREAM_KNOWLEDGE_ROUTE)
+  assert.ok(route, '知识路由应已注册')
+  return { ...mounted, handler: route.route.handler }
+}
+
+/** 递归快照目录里的所有文件内容，用于验证只读路由不写盘。 */
+function snapshotDir(dir) {
+  const out = {}
+  if (!existsSync(dir)) return out
+  for (const name of readdirSync(dir).sort()) {
+    const full = join(dir, name)
+    const stat = statSync(full)
+    out[name] = stat.isDirectory() ? snapshotDir(full) : readFileSync(full, 'utf8')
+  }
+  return out
 }
 
 function makeRes() {
@@ -127,22 +151,30 @@ function call(handler, overrides = {}) {
 
 const jsonOf = (res) => JSON.parse(res.body)
 
-test('DREAM_ROUTE 与安装方式：ctx.inject(["webServer"]) + effect 注册 exact 路由', () => {
+test('两条只读路由：ctx.inject(["webServer"]) + 一个 effect 注册 journal 与 knowledge', () => {
   assert.equal(DREAM_ROUTE, '/_dsh/dsh-dream/journal')
+  assert.equal(DREAM_KNOWLEDGE_ROUTE, '/_dsh/dsh-dream/knowledge')
   const mounted = mount({ journalDir: makeJournal([]) })
   assert.deepEqual(mounted.injected, [['webServer']])
   assert.equal(mounted.effects.length, 1)
   assert.equal(mounted.effects[0].label, 'dsh-dream: web routes')
-  const { route, description } = mounted.routes[0]
-  assert.equal(route.kind, 'exact')
-  assert.equal(route.path, DREAM_ROUTE)
-  assert.equal(typeof route.handler, 'function')
-  assert.equal(description, 'dsh-dream: dream journal route')
+  assert.deepEqual(
+    mounted.routes.map((item) => item.route.path).sort(),
+    [DREAM_KNOWLEDGE_ROUTE, DREAM_ROUTE].sort(),
+  )
+  for (const item of mounted.routes) {
+    assert.equal(item.route.kind, 'exact')
+    assert.equal(typeof item.route.handler, 'function')
+  }
+  const journal = mounted.routes.find((item) => item.route.path === DREAM_ROUTE)
+  const knowledge = mounted.routes.find((item) => item.route.path === DREAM_KNOWLEDGE_ROUTE)
+  assert.equal(journal.description, 'dsh-dream: dream journal route')
+  assert.equal(knowledge.description, 'dsh-dream: knowledge route')
 })
 
-test('effect 的 disposer 触发后路由被摘掉', () => {
+test('effect 的 disposer 触发后两条路由一起被摘掉', () => {
   const mounted = mount({ journalDir: makeJournal([]) })
-  assert.equal(mounted.routes.length, 1)
+  assert.equal(mounted.routes.length, 2)
   mounted.effects[0].disposer()
   assert.equal(mounted.routes.length, 0)
 })
@@ -423,10 +455,13 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
   }
   apply(ctx, { journalDir: dir })
   assert.deepEqual(injected, [['webServer']])
-  assert.equal(routes.length, 1)
-  assert.equal(routes[0].kind, 'exact')
-  assert.equal(routes[0].path, DREAM_ROUTE)
-  const body = jsonOf(await call(routes[0].handler))
+  assert.equal(routes.length, 2)
+  const journalRoute = routes.find((route) => route.path === DREAM_ROUTE)
+  const knowledgeRoute = routes.find((route) => route.path === DREAM_KNOWLEDGE_ROUTE)
+  assert.ok(journalRoute, 'journal 路由应已注册')
+  assert.ok(knowledgeRoute, 'knowledge 路由应已注册')
+  assert.equal(journalRoute.kind, 'exact')
+  const body = jsonOf(await call(journalRoute.handler))
   assert.equal(body.dreams[0].reflection, '集成梦')
 })
 
@@ -485,4 +520,167 @@ test('dream_journal 工具输出纯增量：老字段照旧，topLessons 多一�
   assert.deepEqual(Object.keys(value.stats.topLessons[0]).sort(), ['count', 'lastAt', 'lesson'])
   assert.equal(value.stats.topLessons[0].lastAt, '2026-05-05T00:00:00.000Z')
   assert.match(journalTool.output.render({}, value)[0].text, /接口梦/)
+})
+
+
+// ───────────────────────── M1 只读知识路由 ─────────────────────────
+
+/** 假知识源：只实现 FREEZE §2 的只读三方法。 */
+function fakeKnowledgeStore(data) {
+  return {
+    listLessons: () => data.lessons ?? [],
+    listEvidence: () => data.evidence ?? [],
+    stats: () => data.stats ?? { lessons: 0, evidence: 0, events: 0, byState: {} },
+  }
+}
+
+function makeLesson(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: 'lesson-1',
+    revision: 1,
+    kind: 'pitfall',
+    title: '取消后要验证连接关闭',
+    action: '检查当前连接状态',
+    when: '使用 Nodemailer 9.0.5 池化发送时',
+    exceptions: ['流式发送例外'],
+    scope: { projectId: 'mailer', global: false },
+    applicability: [{ package: 'nodemailer', versions: '9.0.5' }],
+    state: 'candidate',
+    evidenceIds: [],
+    independentSupportCount: 0,
+    review: { decision: 'unreviewed' },
+    createdAt: '2026-09-20T00:00:00.000Z',
+    updatedAt: '2026-09-28T00:00:00.000Z',
+    lastValidatedAt: '2026-09-28T00:00:00.000Z',
+    conflictIds: [],
+    ...overrides,
+  }
+}
+
+test('知识路由：空知识目录 → 200 + 空数组 + 全零 stats，且 GET 不创建目录（零写盘）', async () => {
+  const dir = makeJournal([])
+  const knowledgeDir = join(dir, 'knowledge')
+  assert.equal(existsSync(knowledgeDir), false, '前置：目录不存在')
+  const { handler } = knowledgeHandlerFor({ journalDir: dir })
+  const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE })
+  assert.equal(res.status, 200)
+  assert.match(String(res.headers['content-type']), /^application\/json/)
+  const body = jsonOf(res)
+  assert.deepEqual(Object.keys(body).sort(), ['evidence', 'lessons', 'stats'])
+  assert.deepEqual(body.lessons, [])
+  assert.deepEqual(body.evidence, [])
+  assert.deepEqual(body.stats, {
+    lessons: 0,
+    evidence: 0,
+    events: 0,
+    byState: { candidate: 0, usable: 0, disputed: 0, stale: 0, rejected: 0 },
+  })
+  assert.equal(existsSync(knowledgeDir), false, '只读路由绝不能在读的时候 mkdir')
+})
+
+test('知识路由：候选 / 有冲突都返回，scopeLabel 与 evidenceSummary 来自检索层，原始密钥被脱敏', async () => {
+  const secret = 'sk-abcdefghijklmnopqrstuvwxyz012345'
+  const evidence = [{
+    schemaVersion: 1,
+    id: 'ev-1',
+    kind: 'local-artifact',
+    observedAt: '2026-09-28T00:00:00.000Z',
+    summary: '本机 SMTP 复现：取消后服务器仍收到正文 ' + secret,
+    verification: 'read',
+  }]
+  const candidate = makeLesson({ id: 'lesson-candidate', title: '取消后要验证连接关闭 ' + secret, evidenceIds: ['ev-1'], independentSupportCount: 1 })
+  const disputed = makeLesson({ id: 'lesson-disputed', title: '两条建议互相冲突', state: 'disputed', scope: { global: true } })
+  const { handler } = knowledgeHandlerFor({
+    journalDir: makeJournal([]),
+    knowledgeStoreFactory: () => fakeKnowledgeStore({
+      lessons: [candidate, disputed],
+      evidence,
+      stats: { lessons: 2, evidence: 1, events: 3, byState: { candidate: 1, usable: 0, disputed: 1, stale: 0, rejected: 0 } },
+    }),
+  })
+  const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE })
+  assert.equal(res.status, 200)
+  const body = jsonOf(res)
+  assert.equal(res.body.includes(secret), false, '原始密钥绝不能出现在响应里')
+  assert.ok(res.body.includes('[已脱敏'), '应出现脱敏标记')
+  assert.deepEqual(body.lessons.map((lesson) => lesson.id), ['lesson-candidate', 'lesson-disputed'])
+  assert.equal(body.lessons[0].scopeLabel, '项目 mailer')
+  assert.equal(body.lessons[1].scopeLabel, '全局')
+  assert.match(body.lessons[0].evidenceSummary, /^独立证据 1 条（已读 1 \/ 仅声明 0）：/)
+  assert.equal(body.lessons[0].state, 'candidate')
+  assert.equal(body.lessons[1].state, 'disputed')
+  assert.deepEqual(body.stats, {
+    lessons: 2,
+    evidence: 1,
+    events: 3,
+    byState: { candidate: 1, usable: 0, disputed: 1, stale: 0, rejected: 0 },
+  })
+  assert.equal(body.evidence.length, 1)
+  assert.equal(body.evidence[0].id, 'ev-1')
+  assert.equal(body.evidence[0].summary.includes(secret), false, '证据摘要同样必须脱敏')
+})
+
+test('知识路由：非 GET → 405 + Allow: GET；非本机 Host / 非回环 → 403，语义与日记路由一致', async () => {
+  const { handler } = knowledgeHandlerFor({ journalDir: makeJournal([]), knowledgeStoreFactory: () => fakeKnowledgeStore({}) })
+  for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD']) {
+    const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE, method })
+    assert.equal(res.status, 405, method + ' 应被拒绝')
+    assert.equal(res.headers.allow, 'GET')
+    assert.equal(jsonOf(res).error.code, 'method-not-allowed')
+  }
+  for (const host of ['evil.example', 'evil.example:4455', '192.168.1.9']) {
+    const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE, headers: { host } })
+    assert.equal(res.status, 403, host + ' 应被拒绝')
+    assert.equal(jsonOf(res).error.code, 'forbidden')
+  }
+  assert.equal((await call(handler, { url: DREAM_KNOWLEDGE_ROUTE, socket: { remoteAddress: '10.0.0.8' } })).status, 403)
+})
+
+test('知识路由：知识源抛错 → 500 + { ok:false, error.code:"internal" } 信封', async () => {
+  const { handler } = knowledgeHandlerFor({
+    journalDir: makeJournal([]),
+    knowledgeStoreFactory: () => ({
+      listLessons() { throw new Error('disk exploded') },
+      listEvidence: () => [],
+      stats: () => ({ lessons: 0, evidence: 0, events: 0, byState: {} }),
+    }),
+  })
+  const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE })
+  assert.equal(res.status, 500)
+  const body = jsonOf(res)
+  assert.equal(body.ok, false)
+  assert.equal(body.error.code, 'internal')
+  assert.match(body.error.message, /disk exploded/)
+})
+
+test('知识路由：真实 KnowledgeStore 集成 —— 落盘数据可读出，GET 不改动任何文件', async () => {
+  const { KnowledgeStore } = await import('../src/knowledge-store.ts')
+  const journalDir = makeJournal([])
+  const knowledgeDir = join(journalDir, 'knowledge')
+  const store = new KnowledgeStore(knowledgeDir)
+  store.createLesson({
+    kind: 'pitfall',
+    title: '池化发送中 close() 不保证终止投递',
+    action: '取消后验证连接确实关闭',
+    when: '使用 Nodemailer 9.0.5 池化发送并处理 AbortSignal 时',
+    exceptions: ['流式发送不受影响'],
+    global: true,
+    evidence: [{ kind: 'local-artifact', summary: '本机 SMTP 复现：取消后服务器仍收到正文', verification: 'read' }],
+  }, 'web-knowledge-integration')
+  const beforeSnapshot = snapshotDir(knowledgeDir)
+  assert.ok(Object.keys(beforeSnapshot).length > 0, '前置：store 应已落盘')
+  const { handler } = knowledgeHandlerFor({ journalDir })
+  const res = await call(handler, { url: DREAM_KNOWLEDGE_ROUTE })
+  assert.equal(res.status, 200)
+  const body = jsonOf(res)
+  assert.equal(body.lessons.length, 1)
+  assert.ok(['candidate', 'usable'].includes(body.lessons[0].state), 'state 应是合法状态')
+  assert.equal(body.lessons[0].scopeLabel, '全局')
+  assert.equal(body.lessons[0].title, '池化发送中 close() 不保证终止投递')
+  assert.equal(body.lessons[0].when, '使用 Nodemailer 9.0.5 池化发送并处理 AbortSignal 时')
+  assert.match(body.lessons[0].evidenceSummary, /独立证据 1 条/)
+  assert.equal(body.stats.lessons, 1)
+  assert.equal(body.stats.byState[body.lessons[0].state], 1)
+  assert.deepEqual(snapshotDir(knowledgeDir), beforeSnapshot, 'GET /knowledge 必须零写盘')
 })

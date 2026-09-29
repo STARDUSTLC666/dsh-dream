@@ -1,14 +1,34 @@
 /**
- * 五个面向模型的做梦工具：dream_digest / dream_save / dream_journal / dream_recall / dream_health。
+ * 面向模型的做梦工具：dream_digest / dream_save / dream_journal / dream_recall / dream_bridge / dream_health
+ * 与 M1 新增的 dream_learn / dream_context / dream_review。
  *
  * @module dsh-dream/tools
  */
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { type ResolvedDreamConfig } from './config.js'
 import { maskSecrets } from './mask.js'
 import { dreamStats, readDreams, saveDream, searchDreams } from './journal.js'
 import { bridgeDreams } from './bridge.js'
 import { digestSessionFile, listSessionFiles, type SessionDigest } from './sessions.js'
+import {
+  KnowledgeError,
+  lessonFingerprint,
+  type Evidence,
+  type EvidenceInput,
+  type Lesson,
+  type LessonInput,
+  type LessonKind,
+} from './knowledge.js'
+import { KnowledgeStore } from './knowledge-store.js'
+import {
+  queryScopeLabel,
+  resolveRetrievalBudget,
+  retrieveLessons,
+  retrievedLessonChars,
+  type RetrievalQuery,
+} from './retrieval.js'
 
 /** 模型可见的内容块。 */
 export interface ContentBlock {
@@ -29,18 +49,81 @@ export interface DreamToolDefinition {
   timeoutMs?: number
 }
 
-function compileParameters(spec: Record<string, any>): { type: 'object'; properties: Record<string, unknown>; required?: string[] } {
+/** 编译一个值 schema 节点；支持 enum、对象数组 items 与嵌套对象（宿主 schema 子集要求对象显式 additionalProperties）。 */
+function compileValueNode(prop: Record<string, any>): Record<string, unknown> {
+  const node: Record<string, unknown> = {}
+  if (typeof prop.description === 'string') node.description = prop.description
+  if (Array.isArray(prop.oneOf) && prop.oneOf.length >= 2) {
+    node.oneOf = prop.oneOf.map((branch: Record<string, any>) => compileValueNode(branch))
+    return node
+  }
+  if (typeof prop.type === 'string') node.type = prop.type
+  if (Array.isArray(prop.enum) && prop.enum.length > 0) node.enum = prop.enum.slice()
+  if (prop.type === 'array') {
+    node.items = typeof prop.items === 'object' && prop.items !== null ? compileItemsNode(prop.items) : { type: 'string' }
+  } else if (prop.type === 'object') {
+    const nested = compilePropertyMap(typeof prop.properties === 'object' && prop.properties !== null ? prop.properties : {})
+    node.properties = nested.properties
+    node.additionalProperties = prop.additionalProperties === false ? false : true
+    const required = mergeRequired(nested.properties, nested.required, prop.required)
+    if (required !== undefined) node.required = required
+  }
+  return node
+}
+
+/** 编译数组 items；对象元素展开为 properties/required/additionalProperties。 */
+function compileItemsNode(items: Record<string, any>): Record<string, unknown> {
+  if (items.type === 'object') {
+    const nested = compilePropertyMap(typeof items.properties === 'object' && items.properties !== null ? items.properties : {})
+    const required = mergeRequired(nested.properties, nested.required, items.required)
+    return {
+      type: 'object',
+      properties: nested.properties,
+      additionalProperties: items.additionalProperties === false ? false : true,
+      ...(required !== undefined ? { required } : {}),
+    }
+  }
+  const node: Record<string, unknown> = { type: typeof items.type === 'string' ? items.type : 'string' }
+  if (typeof items.description === 'string') node.description = items.description
+  if (Array.isArray(items.enum) && items.enum.length > 0) node.enum = items.enum.slice()
+  return node
+}
+
+/** 合并嵌套对象 required：既接受 properties 里的 required: true，也接受节点上的 required: string[]。 */
+function mergeRequired(properties: Record<string, unknown>, fromProperties: string[] | undefined, explicit: unknown): string[] | undefined {
+  const required = fromProperties === undefined ? [] : [...fromProperties]
+  if (Array.isArray(explicit)) {
+    for (const key of explicit) {
+      if (typeof key === 'string' && Object.hasOwn(properties, key) && !required.includes(key)) required.push(key)
+    }
+  }
+  return required.length > 0 ? required : undefined
+}
+
+/** 编译属性表；支持 per-property required: true 与顶层 required: string[] 两种写法。 */
+function compilePropertyMap(spec: Record<string, any>): { properties: Record<string, unknown>; required?: string[] } {
   const properties: Record<string, unknown> = {}
   const required: string[] = []
+  const structural = new Set(['type', 'properties', 'additionalProperties', 'required', 'items', 'enum', 'description', 'oneOf'])
+  const explicitRequired = Array.isArray(spec.required)
+    ? spec.required.filter((key: unknown): key is string => typeof key === 'string')
+    : []
   for (const [key, prop] of Object.entries(spec)) {
-    if (prop?.required === true) required.push(key)
-    const node: Record<string, unknown> = {}
-    if (typeof prop?.type === 'string') node.type = prop.type
-    if (typeof prop?.description === 'string') node.description = prop.description
-    if (prop?.type === 'array' && typeof prop.items === 'object') node.items = { type: 'string' }
-    properties[key] = node
+    if (structural.has(key)) continue
+    if (typeof prop !== 'object' || prop === null) continue
+    if (prop.required === true && !required.includes(key)) required.push(key)
+    properties[key] = compileValueNode(prop)
   }
-  return { type: 'object', properties, ...(required.length > 0 ? { required } : {}) }
+  for (const key of explicitRequired) {
+    if (key in properties && !required.includes(key)) required.push(key)
+  }
+  return required.length > 0 ? { properties, required } : { properties }
+}
+
+/** 编译工具 parameters；根类型固定为对象。 */
+function compileParameters(spec: Record<string, any>): { type: 'object'; properties: Record<string, unknown>; required?: string[] } {
+  const compiled = compilePropertyMap(spec)
+  return { type: 'object', properties: compiled.properties, ...(compiled.required !== undefined ? { required: compiled.required } : {}) }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -66,6 +149,97 @@ function stringArray(args: Record<string, unknown>, key: string): string[] {
 
 function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '…（已截断）' : text
+}
+
+function maskIfNeeded(cfg: ResolvedDreamConfig, text: string): string {
+  return cfg.maskSecrets ? maskSecrets(text) : text
+}
+
+function knowledgeDirOf(cfg: ResolvedDreamConfig): string {
+  return join(cfg.journalDir, 'knowledge')
+}
+
+function knowledgeStoreOf(cfg: ResolvedDreamConfig): KnowledgeStore {
+  return new KnowledgeStore(knowledgeDirOf(cfg), { maskSecrets: cfg.maskSecrets })
+}
+
+function sha256Short(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32)
+}
+
+const LESSON_KINDS: readonly LessonKind[] = ['preference', 'procedure', 'pitfall', 'fact']
+
+function parseLessonKind(args: Record<string, unknown>): LessonKind {
+  const value = optionalString(args, 'kind')
+  if (value === undefined || !(LESSON_KINDS as readonly string[]).includes(value)) {
+    throw new Error('kind 必须是 ' + LESSON_KINDS.join(' / ') + '。')
+  }
+  return value as LessonKind
+}
+
+/** 解析模型传入的证据数组；projectId 由经验范围补齐，便于以后按项目核对。 */
+function parseEvidenceArgs(args: Record<string, unknown>, key: string, projectId: string | undefined): EvidenceInput[] {
+  const raw = args[key]
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) throw new Error('参数 ' + key + ' 必须是对象数组。')
+  const out: EvidenceInput[] = []
+  raw.forEach((value, index) => {
+    const item = asRecord(value)
+    const kind = optionalString(item, 'kind')
+    if (kind !== 'session' && kind !== 'user-correction' && kind !== 'local-artifact') {
+      throw new Error(key + '[' + index + '].kind 必须是 session / user-correction / local-artifact。')
+    }
+    const summary = requiredString(item, 'summary', key + '[' + index + '].summary')
+    const verification = optionalString(item, 'verification')
+    if (verification !== 'read' && verification !== 'claimed') {
+      throw new Error(key + '[' + index + '].verification 必须是 read / claimed。')
+    }
+    const sessionId = optionalString(item, 'sessionId')
+    const recordSeqRaw = item.recordSeq
+    let recordSeq: number | string | undefined
+    if (typeof recordSeqRaw === 'number' && Number.isInteger(recordSeqRaw) && recordSeqRaw >= 0) recordSeq = recordSeqRaw
+    else if (typeof recordSeqRaw === 'string' && recordSeqRaw.trim() !== '') recordSeq = recordSeqRaw.trim()
+    const entry: EvidenceInput = { kind, summary, verification }
+    if (sessionId !== undefined) entry.sessionId = sessionId
+    if (recordSeq !== undefined) entry.recordSeq = recordSeq
+    if (projectId !== undefined) entry.projectId = projectId
+    out.push(entry)
+  })
+  return out
+}
+
+function parseApplicability(args: Record<string, unknown>, key: string): Lesson['applicability'] | undefined {
+  const raw = args[key]
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw)) throw new Error('参数 ' + key + ' 必须是对象数组。')
+  const out: Lesson['applicability'] = []
+  raw.forEach((value) => {
+    const item = asRecord(value)
+    const entry: Lesson['applicability'][number] = {}
+    const pkg = optionalString(item, 'package')
+    const versions = optionalString(item, 'versions')
+    const platform = optionalString(item, 'platform')
+    if (pkg !== undefined) entry.package = pkg
+    if (versions !== undefined) entry.versions = versions
+    if (platform !== undefined) entry.platform = platform
+    if (Object.keys(entry).length > 0) out.push(entry)
+  })
+  return out
+}
+
+/** 证据对象数组的 schema 片段（dream_learn / dream_review 共用形状，各自新建避免引用共享）。 */
+function evidenceItemsSpec(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      kind: { type: 'string', enum: ['session', 'user-correction', 'local-artifact'], description: '证据来源类型。' },
+      sessionId: { type: 'string', description: '会话 ID（session 证据建议提供）。' },
+      recordSeq: { oneOf: [{ type: 'string' }, { type: 'integer' }], description: '记录序号（数字或字符串）。' },
+      summary: { type: 'string', description: '已脱敏的一句话摘要。' },
+      verification: { type: 'string', enum: ['read', 'claimed'], description: 'read=插件读到原记录；claimed=仅模型声称。' },
+    },
+    required: ['kind', 'summary', 'verification'],
+  }
 }
 
 const baseSchema = { type: 'object', additionalProperties: true } as const
@@ -286,7 +460,298 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
     timeoutMs: 15000,
   }
 
-  return [dreamDigest, dreamSave, dreamJournal, dreamRecall, dreamBridge, dreamHealth]
+  const dreamLearn: DreamToolDefinition = {
+    name: 'dream_learn',
+    description: '学梦：把一条可复用经验连同证据提交为候选。必须写清 title（一句话结论）、action（可执行动作）、when（适用条件）与 exceptions（例外）；evidence 用 sessionId+recordSeq 或 sourceHash 定位来源，verification=read 表示插件读到原记录、claimed 表示仅模型声称（不计入独立支持）。无证据的经验只以 candidate 保存，不会当作已证实结论注入。模型不得伪造用户采纳。',
+    parameters: compileParameters({
+      kind: { type: 'string', required: true, enum: ['preference', 'procedure', 'pitfall', 'fact'], description: '经验类别。' },
+      title: { type: 'string', required: true, description: '一句话结论；脱离 when 不得单独使用。' },
+      action: { type: 'string', required: true, description: '可执行动作（动词开头）。' },
+      when: { type: 'string', required: true, description: '适用条件（何时该用）；检索时不可截断。' },
+      exceptions: { type: 'array', items: { type: 'string' }, description: '例外情形（可选）。' },
+      projectId: { type: 'string', description: '项目 ID（可选）。' },
+      workspaceRoot: { type: 'string', description: '项目工作区根目录（可选）。' },
+      global: { type: 'boolean', description: '是否为显式全局经验（可选，默认 false）。' },
+      applicability: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            package: { type: 'string', description: '依赖 / 工具名。' },
+            versions: { type: 'string', description: '适用版本范围（如 ^9.0.5）。' },
+            platform: { type: 'string', description: '平台。' },
+          },
+        },
+        description: '适用范围（可选）。',
+      },
+      evidence: { type: 'array', required: true, items: evidenceItemsSpec(), description: '证据数组，必填；可为空数组（此时只能保存为 candidate）。' },
+    }),
+    output: {
+      schema: baseSchema,
+      render: (_args, value) => {
+        const rec = asRecord(value)
+        const lines = ['经验已提交：' + rec.lessonId + '（' + rec.state + '）']
+        lines.push(rec.created === true ? '· 新候选经验已保存。' : '· 已合并到既有经验，未新增记录。')
+        lines.push('· 独立支持数：' + rec.independentSupportCount)
+        const notes = Array.isArray(rec.notes) ? rec.notes : []
+        for (const note of notes) lines.push('· ' + note)
+        return [{ type: 'text', text: lines.join('\n') }]
+      },
+    },
+    async execute(rawArgs: unknown) {
+      const args = asRecord(rawArgs)
+      const kind = parseLessonKind(args)
+      const title = maskIfNeeded(cfg, requiredString(args, 'title', '经验结论'))
+      const action = maskIfNeeded(cfg, requiredString(args, 'action', '可执行动作'))
+      const when = maskIfNeeded(cfg, requiredString(args, 'when', '适用条件'))
+      const exceptions = stringArray(args, 'exceptions').map((item) => maskIfNeeded(cfg, item))
+      const projectId = optionalString(args, 'projectId')
+      const workspaceRoot = optionalString(args, 'workspaceRoot')
+      const isGlobal = args.global === true
+      const applicability = parseApplicability(args, 'applicability')
+      const maskedApplicability = applicability?.map((entry) => ({
+        ...(entry.package !== undefined ? { package: maskIfNeeded(cfg, entry.package) } : {}),
+        ...(entry.versions !== undefined ? { versions: maskIfNeeded(cfg, entry.versions) } : {}),
+        ...(entry.platform !== undefined ? { platform: maskIfNeeded(cfg, entry.platform) } : {}),
+      }))
+      const evidenceInputs = parseEvidenceArgs(args, 'evidence', projectId)
+        .map((entry) => ({ ...entry, summary: maskIfNeeded(cfg, entry.summary) }))
+      const scope = {
+        global: isGlobal,
+        ...(projectId !== undefined ? { projectId } : {}),
+        ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
+      }
+      const lessonInput: LessonInput = {
+        kind,
+        title,
+        action,
+        when,
+        ...(exceptions.length > 0 ? { exceptions } : {}),
+        ...(projectId !== undefined ? { projectId } : {}),
+        ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
+        global: isGlobal,
+        ...(maskedApplicability !== undefined ? { applicability: maskedApplicability } : {}),
+        evidence: evidenceInputs,
+      }
+      const idempotencyKey = 'dream_learn:' + sha256Short(JSON.stringify({
+        kind, title, action, when, exceptions,
+        projectId: projectId ?? null,
+        workspaceRoot: workspaceRoot ?? null,
+        global: isGlobal,
+        applicability: maskedApplicability ?? null,
+        evidence: evidenceInputs.map((entry) => ({
+          kind: entry.kind,
+          sessionId: entry.sessionId ?? null,
+          recordSeq: entry.recordSeq ?? null,
+          summary: entry.summary,
+          verification: entry.verification,
+        })),
+      }))
+      const store = knowledgeStoreOf(cfg)
+      const { lesson, created } = store.createLesson(lessonInput, idempotencyKey)
+      const byId = new Map(store.listEvidence().map((item) => [item.id, item]))
+      const evidence = lesson.evidenceIds
+        .map((id) => byId.get(id))
+        .filter((item): item is Evidence => item !== undefined)
+        .map((item) => ({ id: item.id, verification: item.verification }))
+      const notes: string[] = []
+      if (evidenceInputs.length === 0) {
+        notes.push('无证据：仅保存为 candidate，不会作为已证实结论注入任务建议。')
+      } else {
+        const readCount = evidence.filter((item) => item.verification === 'read').length
+        const claimedCount = evidence.filter((item) => item.verification === 'claimed').length
+        notes.push('证据：' + readCount + ' 条已读（计入独立支持），' + claimedCount + ' 条仅声明（不计入独立支持）。')
+      }
+      if (!created) notes.push('已存在同指纹经验（' + lesson.id + '）：复用既有记录并合并新证据，未新增经验。')
+      if (!isGlobal && projectId === undefined && workspaceRoot === undefined) {
+        notes.push('未提供 projectId/workspaceRoot 且未声明 global：该经验不会自动注入任何项目。')
+      }
+      if (cfg.maskSecrets) notes.push('写入前已按 maskSecrets 脱敏。')
+      const fingerprint = lessonFingerprint({ kind, title, action, when, scope })
+      return {
+        ok: true,
+        lessonId: lesson.id,
+        state: lesson.state,
+        created,
+        independentSupportCount: lesson.independentSupportCount,
+        evidence,
+        dedup: { ...(created ? {} : { merged: lesson.id }), fingerprint },
+        notes,
+      }
+    },
+    timeoutMs: 15000,
+  }
+
+  const dreamContext: DreamToolDefinition = {
+    name: 'dream_context',
+    description: '取梦：按当前任务返回少量真正适用的经验（只读，默认最多 5 条 / 3000 字符）。只返回 global 或与 projectId/workspaceRoot 精确匹配的经验；未知项目只返回 global，绝不跨项目扫描。rejected/stale/disputed 默认排除并在 skipped 说明原因；条件与例外完整返回，放不下整条跳过；没有相关经验时返回空数组。',
+    parameters: compileParameters({
+      query: { type: 'string', required: true, description: '当前任务描述或检索关键词。' },
+      projectId: { type: 'string', description: '当前项目 ID（可选；未知时只返回 global）。' },
+      workspaceRoot: { type: 'string', description: '当前工作区根目录（可选）。' },
+      limit: { type: 'integer', description: '条数上限 1-20（默认 5）。' },
+      maxChars: { type: 'integer', description: '字符预算 1-20000（默认 3000）。' },
+      packageVersion: { type: 'string', description: '当前相关依赖版本（可选）。' },
+    }),
+    output: {
+      schema: baseSchema,
+      render: (_args, value) => {
+        const rec = asRecord(value)
+        const items = Array.isArray(rec.items) ? rec.items : []
+        const budget = asRecord(rec.budget)
+        if (items.length === 0) {
+          return [{ type: 'text', text: '没有与当前任务相关的经验（范围：' + rec.scopeLabel + '）。' }]
+        }
+        const lines = ['适用经验 ' + items.length + ' 条（范围：' + rec.scopeLabel + '，字符 ' + budget.usedChars + '/' + budget.maxChars + '）：']
+        for (const item of items) {
+          const lesson = asRecord(item)
+          lines.push('- [' + lesson.state + '｜' + lesson.scopeLabel + '] ' + lesson.title)
+          lines.push('  何时：' + lesson.when)
+          lines.push('  行动：' + lesson.action)
+          const exceptions = Array.isArray(lesson.exceptions) ? lesson.exceptions : []
+          if (exceptions.length > 0) lines.push('  例外：' + exceptions.join('；'))
+          lines.push('  为何相关：' + lesson.whyRelevant)
+          lines.push('  证据：' + lesson.evidenceSummary)
+        }
+        return [{ type: 'text', text: lines.join('\n') }]
+      },
+    },
+    async execute(rawArgs: unknown) {
+      const args = asRecord(rawArgs)
+      const query = requiredString(args, 'query', '检索关键词')
+      const projectId = optionalString(args, 'projectId')
+      const workspaceRoot = optionalString(args, 'workspaceRoot')
+      const packageVersion = optionalString(args, 'packageVersion')
+      const { limit, maxChars } = resolveRetrievalBudget({
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+        maxChars: typeof args.maxChars === 'number' ? args.maxChars : undefined,
+      })
+      const retrievalQuery: RetrievalQuery = {
+        query,
+        limit,
+        maxChars,
+        ...(projectId !== undefined ? { projectId } : {}),
+        ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
+        ...(packageVersion !== undefined ? { packageVersion } : {}),
+      }
+      const scopeLabel = queryScopeLabel(retrievalQuery)
+      const dir = knowledgeDirOf(cfg)
+      if (!existsSync(dir)) {
+        return { items: [], skipped: [], scopeLabel, budget: { limit, maxChars, usedChars: 0 } }
+      }
+      const store = knowledgeStoreOf(cfg)
+      const result = retrieveLessons(store.listLessons(), store.listEvidence(), retrievalQuery)
+      const usedChars = result.items.reduce((total, item) => total + retrievedLessonChars(item), 0)
+      return { items: result.items, skipped: result.skipped, scopeLabel, budget: { limit, maxChars, usedChars } }
+    },
+    timeoutMs: 15000,
+  }
+
+  const REVIEW_ACTIONS = ['accept', 'reject', 'mark-stale', 'mark-disputed', 'resolve-conflict', 'attach-evidence'] as const
+
+  const dreamReview: DreamToolDefinition = {
+    name: 'dream_review',
+    description: '审梦：采纳/驳回/标记冲突或过期/追加验证证据，必须带 expectedRevision（revision 不符会拒绝且不写入）。模型调用 actor 一律记为 model，不得冒充用户采纳；attach-evidence 只追加证据，不自动改变 state。',
+    parameters: compileParameters({
+      action: { type: 'string', required: true, enum: [...REVIEW_ACTIONS], description: '审阅动作。' },
+      lessonId: { type: 'string', required: true, description: '经验 ID。' },
+      expectedRevision: { type: 'integer', required: true, description: '期望 revision（乐观锁，必须与当前一致）。' },
+      evidence: { type: 'array', items: evidenceItemsSpec(), description: 'attach-evidence 时使用的证据数组。' },
+      conflictWith: { type: 'array', items: { type: 'string' }, description: 'mark-disputed 记录冲突对象；resolve-conflict 时解除这些冲突 ID。' },
+      note: { type: 'string', description: '备注（仅用于幂等键，不落盘为正文）。' },
+    }),
+    output: {
+      schema: baseSchema,
+      render: (_args, value) => {
+        const rec = asRecord(value)
+        return [{
+          type: 'text',
+          text: '经验 ' + asRecord(rec.lesson).id + '：' + rec.previousState + ' → ' + rec.state + '（revision ' + rec.revision + '）。',
+        }]
+      },
+    },
+    async execute(rawArgs: unknown) {
+      const args = asRecord(rawArgs)
+      const action = optionalString(args, 'action')
+      if (action === undefined || !(REVIEW_ACTIONS as readonly string[]).includes(action)) {
+        throw new Error('action 必须是 ' + REVIEW_ACTIONS.join(' / ') + '。')
+      }
+      const lessonId = requiredString(args, 'lessonId', '经验 ID')
+      const revisionRaw = args.expectedRevision
+      if (typeof revisionRaw !== 'number' || !Number.isInteger(revisionRaw) || revisionRaw < 1) {
+        throw new Error('expectedRevision 必须是 >= 1 的整数。')
+      }
+      const expectedRevision = revisionRaw
+      const store = knowledgeStoreOf(cfg)
+      const before = store.getLesson(lessonId)
+      if (before === undefined) throw new KnowledgeError('invalid', '经验不存在：' + lessonId)
+      if (before.revision !== expectedRevision) {
+        throw new KnowledgeError('revision', '经验 ' + lessonId + ' 期望 revision ' + expectedRevision + '，实际 ' + before.revision)
+      }
+      const conflictWith = stringArray(args, 'conflictWith')
+      const note = optionalString(args, 'note')
+      const idempotencyKey = 'dream_review:' + sha256Short(JSON.stringify({
+        action, lessonId, expectedRevision, conflictWith, note: note ?? null,
+      }))
+      // 模型调用永远记为 model；入参里的 actor 一律忽略（用户采纳只能来自宿主授权的真实用户指令）。
+      const actor = 'model'
+      let lesson: Lesson
+      switch (action) {
+        case 'accept':
+          lesson = store.reviewLesson(lessonId, 'accepted', expectedRevision, idempotencyKey, actor)
+          break
+        case 'reject':
+          lesson = store.reviewLesson(lessonId, 'rejected', expectedRevision, idempotencyKey, actor)
+          break
+        case 'mark-stale':
+          lesson = store.applyTransition(lessonId, 'stale', expectedRevision, idempotencyKey)
+          break
+        case 'mark-disputed': {
+          if (conflictWith.length === 0) {
+            lesson = store.applyTransition(lessonId, 'disputed', expectedRevision, idempotencyKey)
+          } else {
+            const conflictIds = [...before.conflictIds]
+            for (const id of conflictWith) {
+              if (!conflictIds.includes(id)) conflictIds.push(id)
+            }
+            lesson = store.updateLesson(lessonId, { state: 'disputed', conflictIds }, expectedRevision, idempotencyKey)
+          }
+          break
+        }
+        case 'resolve-conflict': {
+          if (conflictWith.length === 0) {
+            lesson = store.applyTransition(lessonId, 'usable', expectedRevision, idempotencyKey)
+          } else {
+            const conflictIds = before.conflictIds.filter((id) => !conflictWith.includes(id))
+            lesson = store.updateLesson(lessonId, { state: 'usable', conflictIds }, expectedRevision, idempotencyKey)
+          }
+          break
+        }
+        case 'attach-evidence': {
+          const inputs = parseEvidenceArgs(args, 'evidence', before.scope.projectId)
+          if (inputs.length === 0) throw new Error('attach-evidence 需要至少一条 evidence。')
+          const masked = inputs.map((entry) => ({ ...entry, summary: maskIfNeeded(cfg, entry.summary) }))
+          const appended = masked.map((entry) => store.appendEvidence(entry))
+          const evidenceIds = [...before.evidenceIds]
+          for (const item of appended) {
+            if (!evidenceIds.includes(item.evidence.id)) evidenceIds.push(item.evidence.id)
+          }
+          if (evidenceIds.length === before.evidenceIds.length) {
+            lesson = before
+          } else {
+            lesson = store.updateLesson(lessonId, { evidenceIds }, expectedRevision, idempotencyKey)
+          }
+          break
+        }
+        default:
+          throw new Error('不支持的动作：' + action)
+      }
+      return { ok: true, lesson, previousState: before.state, state: lesson.state, revision: lesson.revision }
+    },
+    timeoutMs: 15000,
+  }
+
+  return [dreamDigest, dreamSave, dreamJournal, dreamRecall, dreamBridge, dreamHealth, dreamLearn, dreamContext, dreamReview]
 }
 
 /** 把会话摘要拼成一段可读文本（供模型一次性阅读）。 */

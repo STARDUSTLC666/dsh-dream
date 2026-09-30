@@ -15,7 +15,7 @@
  * @module dsh-dream/web
  */
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, win32 } from 'node:path'
 import * as bridgeModule from './bridge.js'
 import { resolveConfig, type ResolvedDreamConfig } from './config.js'
 import { dreamStats, readDreams, searchDreams, type DreamEntry, type DreamStats } from './journal.js'
@@ -237,12 +237,16 @@ function requestGate(req: any, res: any, readOnlyMessage: string): boolean {
 /** 哈希字段不做二次脱敏：它们是校验值，不是密钥（面板要展示前 12 位）。 */
 const HASH_KEY_RE = /^(?:sourceHash|beforeSha256|afterSha256|afterBlockSha256|afterFileSha256|sha256)$/
 const REFERENCE_KEYS = new Set(['id', 'lessonId', 'lessonIds', 'evidenceIds', 'conflictIds', 'supersedes', 'targetId', 'affectedIds', 'backupId', 'previewId'])
+const PATH_KEYS = new Set(['target', 'path', 'resolvedPath', 'workspaceRoot'])
 
-/** 递归脱敏所有字符串叶子；数字 / 布尔 / null 原样保留，*Sha256 / *Hash 字段除外。 */
+/** 递归脱敏；结构化绝对路径按目录分段，避免 Unix 分隔符把正常路径连成长令牌。 */
 function maskDeep<T>(value: T, key?: string): T {
   if (typeof value === 'string') {
     if (key !== undefined && HASH_KEY_RE.test(key) && /^[0-9a-f]{64}$/i.test(value)) return value
     if (key !== undefined && REFERENCE_KEYS.has(key) && isDreamReference(value)) return value
+    if (key !== undefined && PATH_KEYS.has(key) && (isAbsolute(value) || win32.isAbsolute(value)) && !/[\x00-\x1f]/.test(value)) {
+      return value.split(/([\\/]+)/).map((part) => maskSecrets(part)).join('') as unknown as T
+    }
     return maskSecrets(value) as unknown as T
   }
   if (Array.isArray(value)) return value.map((item) => maskDeep(item, key)) as unknown as T

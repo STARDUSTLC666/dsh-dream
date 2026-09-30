@@ -85,6 +85,37 @@ test('公开工具完整走通新文件 preview(null) → apply → web backupId
   } finally { e.close() }
 })
 
+test('Unix 目标路径可原样生成回滚命令，路径内的真实密钥仍脱敏', async () => {
+  const targets = [
+    '/tmp/dsh-dream-web-zNlxk6/journal-38/AGENTS.md',
+    'E:\\workspace\\dream-fixture-zNlxk6\\AGENTS.md',
+    '/tmp/sk-' + 'aB12'.repeat(12) + '/AGENTS.md',
+    '/tmp/' + 'aB12'.repeat(12) + '/AGENTS.md',
+  ]
+  const body = await request(createBridgeWebHandler({
+    journalDir: '/tmp/dream-review-fixture',
+    bridgeStoreFactory: () => ({ listApplications: () => targets.map((target, index) => ({
+      backupId: 'brg_00000000-0000-0000-0000-' + String(index).padStart(12, '0'),
+      at: '2026-09-30T10:00:00.000Z', target, action: 'append', lessons: [],
+      beforeSha256: '0'.repeat(64), afterSha256: '1'.repeat(64), rollbackable: true,
+    })) }),
+  }))
+  const ui = client()
+  const rows = ui.normalizeBridgeRecords(body, new Date(), 50).rows
+  for (const index of [0, 1]) {
+    const record = body.records.find(item => item.backupId.endsWith(String(index).padStart(12, '0')))
+    assert.equal(record.target, targets[index])
+    const row = rows.find(item => item.id === record.backupId)
+    const args = JSON.parse(ui.bridgeRollbackCommandOf(row).slice('dream_bridge '.length))
+    assert.equal(args.path, targets[index])
+  }
+  for (const index of [2, 3]) {
+    const record = body.records.find(item => item.backupId.endsWith(String(index).padStart(12, '0')))
+    assert.ok(record.target.includes('[已脱敏·'))
+    assert.ok(!record.target.includes('aB12'.repeat(12)))
+  }
+})
+
 test('伪造 read 与不存在的用户纠正不得得到支持、采纳或注入', async () => {
   const e = env()
   try {

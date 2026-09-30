@@ -17,6 +17,17 @@ export type LessonState = 'candidate' | 'usable' | 'disputed' | 'stale' | 'rejec
 /** 审阅结论。 */
 export type ReviewDecision = 'unreviewed' | 'accepted' | 'rejected'
 
+/** 解析 / 冲突处理的可选痕迹（事件与经验都带得下；旧数据没有也合法）。 */
+export interface LessonReviewResolution {
+  /** prefer | drop | merge 等；不强制枚举，由 tools 层约定。 */
+  kind: string
+  targetId?: string
+  affectedIds?: string[]
+}
+
+/** 审阅备注最大长度；超出截断而不是报错。 */
+export const REVIEW_NOTE_MAX_LENGTH = 500
+
 /** 一条可复用经验。 */
 export interface Lesson {
   schemaVersion: 1
@@ -37,7 +48,7 @@ export interface Lesson {
   evidenceIds: string[]
   /** 独立证据数（同证据复述不增加）。 */
   independentSupportCount: number
-  review: { decision: ReviewDecision; actor?: string; at?: string }
+  review: { decision: ReviewDecision; actor?: string; at?: string; note?: string; resolution?: LessonReviewResolution }
   createdAt: string
   updatedAt: string
   lastValidatedAt?: string
@@ -60,6 +71,8 @@ export interface Evidence {
   /** read=插件读到原记录；claimed=仅模型声称。 */
   verification: 'read' | 'claimed'
   sourceHash?: string
+  /** 插件生成的核验结果；不是模型给出的保证。 */
+  verificationReason?: string
 }
 
 /** dream_learn / 迁移的输入。 */
@@ -86,8 +99,9 @@ export interface EvidenceInput extends Omit<Evidence, 'schemaVersion' | 'id' | '
 export type KnowledgeEvent =
   | { schemaVersion: 1; id: string; at: string; kind: 'lesson.create'; lessonId: string; idempotencyKey: string; requestHash?: string; payload: Lesson }
   | { schemaVersion: 1; id: string; at: string; kind: 'lesson.update'; lessonId: string; revision: number; idempotencyKey: string; requestHash?: string; payload: Partial<Lesson> }
-  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.review'; lessonId: string; revision: number; idempotencyKey: string; requestHash?: string; payload: { decision: ReviewDecision; actor?: string; state: LessonState } }
+  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.review'; lessonId: string; revision: number; idempotencyKey: string; requestHash?: string; payload: { decision: ReviewDecision; actor?: string; state: LessonState; note?: string; resolution?: LessonReviewResolution } }
   | { schemaVersion: 1; id: string; at: string; kind: 'evidence.add'; idempotencyKey: string; requestHash?: string; payload: Evidence }
+  | { schemaVersion: 1; id: string; at: string; kind: 'lesson.batch'; idempotencyKey: string; requestHash?: string; payload: { updates: Array<{ lessonId: string; revision: number; patch: Partial<Lesson> }> } }
 
 /** 知识层错误码：invalid=数据不合法；revision=乐观锁不符；duplicate=重复；io=读写/锁失败。 */
 export class KnowledgeError extends Error {
@@ -191,6 +205,18 @@ function readApplicability(value: unknown): Lesson['applicability'] {
   return out
 }
 
+function readResolution(value: unknown): LessonReviewResolution | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isRecord(value)) fail('review.resolution', '必须是对象')
+  const kind = readString(value.kind, 'review.resolution.kind', { required: true, nonEmpty: true }) as string
+  const targetId = readString(value.targetId, 'review.resolution.targetId', { nonEmpty: true })
+  const affectedIds = readStringArray(value.affectedIds, 'review.resolution.affectedIds')
+  const resolution: LessonReviewResolution = { kind }
+  if (targetId !== undefined) resolution.targetId = targetId
+  if (affectedIds !== undefined) resolution.affectedIds = affectedIds
+  return resolution
+}
+
 function readReview(value: unknown): Lesson['review'] {
   if (value === undefined || value === null) return { decision: 'unreviewed' }
   if (!isRecord(value)) fail('review', '必须是对象')
@@ -201,6 +227,13 @@ function readReview(value: unknown): Lesson['review'] {
   const at = readIsoDate(value.at, 'review.at')
   if (actor !== undefined) review.actor = actor
   if (at !== undefined) review.at = at
+  const noteRaw = readString(value.note, 'review.note')
+  if (noteRaw !== undefined) {
+    const trimmed = noteRaw.trim()
+    if (trimmed !== '') review.note = trimmed.length > REVIEW_NOTE_MAX_LENGTH ? trimmed.slice(0, REVIEW_NOTE_MAX_LENGTH) : trimmed
+  }
+  const resolution = readResolution(value.resolution)
+  if (resolution !== undefined) review.resolution = resolution
   return review
 }
 
@@ -313,6 +346,7 @@ export function validateEvidence(value: unknown): Evidence {
   const sessionId = readString(value.sessionId, 'evidence.sessionId', { nonEmpty: true })
   const projectId = readString(value.projectId, 'evidence.projectId', { nonEmpty: true })
   const sourceHash = readString(value.sourceHash, 'evidence.sourceHash', { nonEmpty: true })
+  const verificationReason = readString(value.verificationReason, 'evidence.verificationReason', { nonEmpty: true })
   const recordSeqRaw = value.recordSeq
   let recordSeq: number | string | undefined
   if (recordSeqRaw !== undefined && recordSeqRaw !== null) {
@@ -331,6 +365,7 @@ export function validateEvidence(value: unknown): Evidence {
   if (recordSeq !== undefined) evidence.recordSeq = recordSeq
   if (projectId !== undefined) evidence.projectId = projectId
   if (sourceHash !== undefined) evidence.sourceHash = sourceHash
+  if (verificationReason !== undefined) evidence.verificationReason = verificationReason
   return evidence
 }
 

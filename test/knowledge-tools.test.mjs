@@ -5,14 +5,25 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { buildDreamTools, resolveConfig } from '../lib/index.js'
 import { KnowledgeStore } from '../lib/knowledge-store.js'
+import { seedSessionEvidence } from './fixtures/session-evidence.mjs'
 
 function makeEnv() {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-dream-knowledge-'))
   const cfg = resolveConfig({ sessionsRoot: join(dir, 'sessions'), journalDir: join(dir, 'dreams') })
+  const tools = buildDreamTools(cfg)
+  // 这些用例测试知识操作；真实来源核验的负例单独在 review-regressions 中覆盖。
+  for (const tool of tools.filter(item => item.name === 'dream_learn' || item.name === 'dream_review')) {
+    const execute = tool.execute
+    tool.execute = (args, exec) => {
+      const scope = tool.name === 'dream_learn' ? args : new KnowledgeStore(join(cfg.journalDir, 'knowledge')).getLesson(args.lessonId)?.scope
+      seedSessionEvidence(cfg, args.evidence, scope)
+      return execute(args, exec)
+    }
+  }
   return {
     dir,
     cfg,
-    tools: buildDreamTools(cfg),
+    tools,
     cleanup() { rmSync(dir, { recursive: true, force: true }) },
   }
 }
@@ -30,6 +41,36 @@ function storeOf(env) {
 async function acceptLesson(env, lessonId) {
   const current = storeOf(env).getLesson(lessonId)
   return toolOf(env, 'dream_review').execute({ action: 'accept', lessonId, expectedRevision: current.revision })
+}
+
+async function learnAccepted(env, title, sessionId) {
+  const learned = await toolOf(env, 'dream_learn').execute({
+    kind: 'procedure',
+    title,
+    action: '执行动作',
+    when: '冲突条件',
+    projectId: 'proj-c',
+    evidence: [{ kind: 'session', sessionId, recordSeq: 1, summary: '证据 ' + sessionId, verification: 'read' }],
+  })
+  await acceptLesson(env, learned.lessonId)
+  return learned.lessonId
+}
+
+async function markDisputed(env, lessonId, conflictWith) {
+  const current = storeOf(env).getLesson(lessonId)
+  return toolOf(env, 'dream_review').execute({ action: 'mark-disputed', lessonId, expectedRevision: current.revision, conflictWith })
+}
+
+async function resolveConflict(env, lessonId, conflictWith, resolution, note) {
+  const current = storeOf(env).getLesson(lessonId)
+  return toolOf(env, 'dream_review').execute({
+    action: 'resolve-conflict',
+    lessonId,
+    expectedRevision: current.revision,
+    conflictWith,
+    resolution,
+    note,
+  })
 }
 
 /** 递归快照目录内容（相对路径 + 字节 + mtimeMs），用于证明只读调用零写入。 */
@@ -110,7 +151,7 @@ test('注册 9 个工具且既有 6 个顺序不变；对象数组与 enum schem
     assert.equal(review.parameters.properties.evidence.items.type, 'object', 'review.evidence 也必须是对象数组')
     assert.ok(Array.isArray(review.parameters.properties.action.enum))
     assert.deepEqual([...review.parameters.properties.action.enum].sort(), [
-      'accept', 'attach-evidence', 'mark-disputed', 'mark-stale', 'reject', 'resolve-conflict',
+      'accept', 'attach-evidence', 'mark-disputed', 'mark-stale', 'reject', 'reopen', 'resolve-conflict',
     ].sort())
     assert.ok(review.parameters.required.includes('expectedRevision'))
 
@@ -175,7 +216,7 @@ test('dream_learn：read 计入独立支持，claimed 只留证据', async () =>
   } finally { env.cleanup() }
 })
 
-test('R2/S5：user-correction+read 视为用户已采纳（usable/actor user），claimed 推测仍被隔离', async () => {
+test('用户纠正的真实来源仍需审阅，不能自动记成用户采纳', async () => {
   const env = makeEnv()
   try {
     const learn = toolOf(env, 'dream_learn')
@@ -187,11 +228,11 @@ test('R2/S5：user-correction+read 视为用户已采纳（usable/actor user）�
       projectId: 'proj-a',
       evidence: [{ kind: 'user-correction', sessionId: 'sess-u1', recordSeq: 1, summary: '用户明确纠正：不能承诺没发出', verification: 'read' }],
     })
-    assert.equal(corrected.state, 'usable', 'R2：user-correction + read 初始即 usable')
+    assert.equal(corrected.state, 'candidate', '读到纠正不等于结论已采纳')
     assert.equal(corrected.independentSupportCount, 1)
     const storedCorrection = storeOf(env).getLesson(corrected.lessonId)
-    assert.equal(storedCorrection.review.decision, 'accepted')
-    assert.equal(storedCorrection.review.actor, 'user')
+    assert.equal(storedCorrection.review.decision, 'unreviewed')
+    assert.equal(storedCorrection.review.actor, undefined)
 
     const speculation = await learn.execute({
       kind: 'fact',
@@ -204,6 +245,10 @@ test('R2/S5：user-correction+read 视为用户已采纳（usable/actor user）�
     assert.equal(speculation.state, 'candidate')
     assert.equal(speculation.independentSupportCount, 0)
 
+    const beforeReview = await toolOf(env, 'dream_context').execute({ query: 'Nodemailer 取消投递', projectId: 'proj-a' })
+    assert.deepEqual(beforeReview.items, [])
+    await acceptLesson(env, corrected.lessonId)
+    assert.equal(storeOf(env).getLesson(corrected.lessonId).review.actor, 'model')
     const context = await toolOf(env, 'dream_context').execute({ query: 'Nodemailer 取消投递', projectId: 'proj-a' })
     assert.deepEqual(context.items.map((item) => item.lessonId), [corrected.lessonId], 'S5：只注入用户纠正，不注入 claimed 推测')
     assert.deepEqual(context.skipped, [{ lessonId: speculation.lessonId, reason: 'no-evidence' }])
@@ -516,37 +561,129 @@ test('dream_review：attach-evidence 追加独立支持且不自动采纳', asyn
   } finally { env.cleanup() }
 })
 
-test('dream_review：resolve-conflict 解除冲突并回到 usable', async () => {
+test('M2 mark-disputed：双方互登 conflictIds、去重幂等，且任一方都不再注入', async () => {
   const env = makeEnv()
   try {
-    const learned = await toolOf(env, 'dream_learn').execute({
-      kind: 'procedure', title: 'Xylophone 冲突经验', action: '执行动作', when: '冲突场景', projectId: 'proj-a', evidence: [EVIDENCE_READ],
-    })
-    const review = toolOf(env, 'dream_review')
-    const accepted = await review.execute({ action: 'accept', lessonId: learned.lessonId, expectedRevision: 1 })
-    const disputed = await review.execute({
-      action: 'mark-disputed',
-      lessonId: learned.lessonId,
-      expectedRevision: accepted.revision,
-      conflictWith: ['lsn_rival'],
-    })
-    assert.equal(disputed.state, 'disputed')
-    assert.deepEqual(disputed.lesson.conflictIds, ['lsn_rival'], 'mark-disputed 记录冲突对象')
-    const resolved = await review.execute({
-      action: 'resolve-conflict',
-      lessonId: learned.lessonId,
-      expectedRevision: disputed.revision,
-      conflictWith: ['lsn_rival'],
-    })
+    const a = await learnAccepted(env, 'Xylophone 冲突 A', 'conf-a')
+    const b = await learnAccepted(env, 'Xylophone 冲突 B', 'conf-b')
+    const store = storeOf(env)
+
+    const marked = await markDisputed(env, a, [b])
+    assert.equal(marked.previousState, 'usable')
+    assert.equal(marked.state, 'disputed')
+    const lessonA = store.getLesson(a)
+    const lessonB = store.getLesson(b)
+    assert.equal(lessonA.state, 'disputed')
+    assert.equal(lessonB.state, 'disputed', 'M2：冲突对方也必须 disputed')
+    assert.deepEqual(lessonA.conflictIds, [b], 'A 登记 B')
+    assert.deepEqual(lessonB.conflictIds, [a], 'B 反向登记 A')
+
+    const revisionA = lessonA.revision
+    const revisionB = lessonB.revision
+    await markDisputed(env, a, [b])
+    assert.equal(store.getLesson(a).revision, revisionA, '重复 mark-disputed 幂等不写')
+    assert.equal(store.getLesson(b).revision, revisionB)
+    assert.deepEqual(store.getLesson(a).conflictIds, [b], 'conflictIds 去重')
+    assert.deepEqual(store.getLesson(b).conflictIds, [a])
+
+    const context = await toolOf(env, 'dream_context').execute({ query: 'Xylophone 冲突', projectId: 'proj-c' })
+    assert.deepEqual(context.items, [], '冲突未处理任一方都不注入')
+    assert.deepEqual(context.skipped.map((entry) => entry.reason).sort(), ['state:disputed', 'state:disputed'])
+  } finally { env.cleanup() }
+});
+
+test('M2 resolve-conflict(prefer)：胜者 usable、败者 rejected+review rejected、conflictIds 互清', async () => {
+  const env = makeEnv()
+  try {
+    const a = await learnAccepted(env, 'Xylophone 冲突 A', 'conf-a')
+    const b = await learnAccepted(env, 'Xylophone 冲突 B', 'conf-b')
+    await markDisputed(env, a, [b])
+
+    const resolved = await resolveConflict(env, a, [b], 'prefer', '复现结果支持 A')
     assert.equal(resolved.previousState, 'disputed')
     assert.equal(resolved.state, 'usable')
-    assert.deepEqual(resolved.lesson.conflictIds, [], 'resolve-conflict 原子解除冲突')
-    assert.equal(resolved.revision, disputed.revision + 1, '单次写入完成状态与冲突列表更新')
-
-    const context = await toolOf(env, 'dream_context').execute({ query: 'Xylophone 冲突经验', projectId: 'proj-a' })
-    assert.deepEqual(context.items.map((item) => item.lessonId), [learned.lessonId], '解除冲突后默认路径可见')
+    assert.deepEqual(resolved.lesson.conflictIds, [])
+    const loser = storeOf(env).getLesson(b)
+    assert.equal(loser.state, 'rejected')
+    assert.equal(loser.review.decision, 'rejected', 'prefer 败方必须留 review.rejected 痕迹')
+    assert.deepEqual(loser.conflictIds, [])
+    const context = await toolOf(env, 'dream_context').execute({ query: 'Xylophone 冲突', projectId: 'proj-c' })
+    assert.deepEqual(context.items.map((item) => item.lessonId), [a])
   } finally { env.cleanup() }
-})
+});
+
+test('M2 resolve-conflict(drop)：主条 rejected；对手方移出冲突后恢复 usable', async () => {
+  const env = makeEnv()
+  try {
+    const a = await learnAccepted(env, 'Xylophone 冲突 A', 'conf-a')
+    const b = await learnAccepted(env, 'Xylophone 冲突 B', 'conf-b')
+    await markDisputed(env, a, [b])
+
+    const resolved = await resolveConflict(env, a, [b], 'drop', 'A 的前提不成立')
+    assert.equal(resolved.state, 'rejected')
+    assert.equal(resolved.lesson.review.decision, 'rejected')
+    assert.deepEqual(resolved.lesson.conflictIds, [])
+    const other = storeOf(env).getLesson(b)
+    assert.equal(other.state, 'usable', 'drop 后对手方冲突清空恢复 usable')
+    assert.deepEqual(other.conflictIds, [])
+    const context = await toolOf(env, 'dream_context').execute({ query: 'Xylophone 冲突', projectId: 'proj-c' })
+    assert.deepEqual(context.items.map((item) => item.lessonId), [b])
+  } finally { env.cleanup() }
+});
+
+test('M2 resolve-conflict(merge)：主条 usable+supersedes+证据并集，被并入方 stale', async () => {
+  const env = makeEnv()
+  try {
+    const a = await learnAccepted(env, 'Xylophone 冲突 A', 'conf-a')
+    const b = await learnAccepted(env, 'Xylophone 冲突 B', 'conf-b')
+    await markDisputed(env, a, [b])
+
+    const resolved = await resolveConflict(env, a, [b], 'merge', '两条讲的是同一件事')
+    assert.equal(resolved.state, 'usable')
+    assert.deepEqual(resolved.lesson.conflictIds, [])
+    assert.ok(resolved.lesson.supersedes.includes(b), 'merge 主条 supersedes 并入对方 id')
+    assert.equal(resolved.lesson.evidenceIds.length, 2, 'merge 主条取证据并集')
+    assert.equal(resolved.lesson.independentSupportCount, 2, 'store 重算独立支持数')
+    const merged = storeOf(env).getLesson(b)
+    assert.equal(merged.state, 'stale', '被并入方 stale 保留历史')
+    assert.deepEqual(merged.conflictIds, [])
+    const context = await toolOf(env, 'dream_context').execute({ query: 'Xylophone 冲突', projectId: 'proj-c' })
+    assert.deepEqual(context.items.map((item) => item.lessonId), [a])
+  } finally { env.cleanup() }
+});
+
+test('M2 resolve-conflict 前置校验：缺 note/resolution、未 disputed、未互登记、目标不存在 → invalid 零写入', async () => {
+  const env = makeEnv()
+  try {
+    const a = await learnAccepted(env, 'Xylophone 冲突 A', 'conf-a')
+    const b = await learnAccepted(env, 'Xylophone 冲突 B', 'conf-b')
+    const before = snapshot(env.cfg.journalDir)
+
+    await assert.rejects(
+      resolveConflict(env, a, [b], 'prefer', undefined),
+      (error) => error.code === 'invalid' && /note/.test(error.message),
+      '缺 note 必须拒绝',
+    )
+    await assert.rejects(
+      resolveConflict(env, a, [b], undefined, '解析'),
+      (error) => error.code === 'invalid' && /resolution/.test(error.message),
+      '缺 resolution 必须拒绝',
+    )
+    await assert.rejects(
+      resolveConflict(env, a, [b], 'prefer', '解析'),
+      (error) => error.code === 'invalid',
+      '未 disputed 未互登记必须拒绝',
+    )
+    await assert.rejects(
+      markDisputed(env, a, ['lsn_missing']),
+      (error) => error.code === 'invalid' && /不存在/.test(error.message),
+      '冲突对象不存在必须拒绝',
+    )
+    assert.deepEqual(snapshot(env.cfg.journalDir), before, '前置校验失败必须零写入')
+    assert.equal(storeOf(env).getLesson(a).state, 'usable')
+    assert.equal(storeOf(env).getLesson(b).state, 'usable')
+  } finally { env.cleanup() }
+});
 
 test('compileParameters 负例：对象数组不是字符串数组，enum 不被丢弃', () => {
   const env = makeEnv()

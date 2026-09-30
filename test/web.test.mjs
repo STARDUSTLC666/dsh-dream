@@ -13,6 +13,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerHooks } from 'node:module'
@@ -32,6 +33,7 @@ registerHooks({
 })
 
 const {
+  DREAM_BRIDGE_ROUTE,
   DREAM_KNOWLEDGE_ROUTE,
   DREAM_LIMIT_DEFAULT,
   DREAM_LIMIT_MAX,
@@ -112,6 +114,15 @@ function knowledgeHandlerFor(options) {
   return { ...mounted, handler: route.route.handler }
 }
 
+/** 挂载并取出写入记录路由 handler。 */
+function bridgeHandlerFor(options) {
+  const mounted = mount(options)
+  assert.equal(mounted.injected.length, 1)
+  const route = mounted.routes.find((item) => item.route.path === DREAM_BRIDGE_ROUTE)
+  assert.ok(route, '写入记录路由应已注册')
+  return { ...mounted, handler: route.route.handler }
+}
+
 /** 递归快照目录里的所有文件内容，用于验证只读路由不写盘。 */
 function snapshotDir(dir) {
   const out = {}
@@ -151,16 +162,17 @@ function call(handler, overrides = {}) {
 
 const jsonOf = (res) => JSON.parse(res.body)
 
-test('两条只读路由：ctx.inject(["webServer"]) + 一个 effect 注册 journal 与 knowledge', () => {
+test('三条只读路由：ctx.inject(["webServer"]) + 一个 effect 注册 journal / knowledge / bridge', () => {
   assert.equal(DREAM_ROUTE, '/_dsh/dsh-dream/journal')
   assert.equal(DREAM_KNOWLEDGE_ROUTE, '/_dsh/dsh-dream/knowledge')
+  assert.equal(DREAM_BRIDGE_ROUTE, '/_dsh/dsh-dream/bridge')
   const mounted = mount({ journalDir: makeJournal([]) })
   assert.deepEqual(mounted.injected, [['webServer']])
   assert.equal(mounted.effects.length, 1)
   assert.equal(mounted.effects[0].label, 'dsh-dream: web routes')
   assert.deepEqual(
     mounted.routes.map((item) => item.route.path).sort(),
-    [DREAM_KNOWLEDGE_ROUTE, DREAM_ROUTE].sort(),
+    [DREAM_BRIDGE_ROUTE, DREAM_KNOWLEDGE_ROUTE, DREAM_ROUTE].sort(),
   )
   for (const item of mounted.routes) {
     assert.equal(item.route.kind, 'exact')
@@ -168,13 +180,15 @@ test('两条只读路由：ctx.inject(["webServer"]) + 一个 effect 注册 jour
   }
   const journal = mounted.routes.find((item) => item.route.path === DREAM_ROUTE)
   const knowledge = mounted.routes.find((item) => item.route.path === DREAM_KNOWLEDGE_ROUTE)
+  const bridge = mounted.routes.find((item) => item.route.path === DREAM_BRIDGE_ROUTE)
   assert.equal(journal.description, 'dsh-dream: dream journal route')
   assert.equal(knowledge.description, 'dsh-dream: knowledge route')
+  assert.equal(bridge.description, 'dsh-dream: bridge log route')
 })
 
-test('effect 的 disposer 触发后两条路由一起被摘掉', () => {
+test('effect 的 disposer 触发后三条路由一起被摘掉', () => {
   const mounted = mount({ journalDir: makeJournal([]) })
-  assert.equal(mounted.routes.length, 2)
+  assert.equal(mounted.routes.length, 3)
   mounted.effects[0].disposer()
   assert.equal(mounted.routes.length, 0)
 })
@@ -455,11 +469,13 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
   }
   apply(ctx, { journalDir: dir })
   assert.deepEqual(injected, [['webServer']])
-  assert.equal(routes.length, 2)
+  assert.equal(routes.length, 3)
   const journalRoute = routes.find((route) => route.path === DREAM_ROUTE)
   const knowledgeRoute = routes.find((route) => route.path === DREAM_KNOWLEDGE_ROUTE)
+  const bridgeRoute = routes.find((route) => route.path === DREAM_BRIDGE_ROUTE)
   assert.ok(journalRoute, 'journal 路由应已注册')
   assert.ok(knowledgeRoute, 'knowledge 路由应已注册')
+  assert.ok(bridgeRoute, 'bridge 路由应已注册')
   assert.equal(journalRoute.kind, 'exact')
   const body = jsonOf(await call(journalRoute.handler))
   assert.equal(body.dreams[0].reflection, '集成梦')
@@ -720,4 +736,157 @@ test('知识路由：真实 KnowledgeStore 集成 —— 落盘数据可读出�
   assert.equal(body.stats.byState[body.lessons[0].state], 1)
   assert.equal(body.stats.badLines, 0, '健康 store 的坏行数为 0')
   assert.deepEqual(snapshotDir(knowledgeDir), beforeSnapshot, 'GET /knowledge 必须零写盘')
+})
+
+
+// ───────────────────────── M2 只读写入记录路由 ─────────────────────────
+
+/** 假写入记录源：只实现 FREEZE-M2 的只读接口。 */
+function fakeBridgeReader(records) {
+  return { listApplications: () => records ?? [] }
+}
+
+test('写入记录路由：bridge 目录不存在 → 200 空记录 + 全零 stats，且 GET 不创建目录（零写盘）', async () => {
+  const dir = makeJournal([])
+  const bridgeDir = join(dir, 'bridge')
+  assert.equal(existsSync(bridgeDir), false, '前置：bridge 目录不存在')
+  const { handler } = bridgeHandlerFor({ journalDir: dir })
+  const res = await call(handler, { url: DREAM_BRIDGE_ROUTE })
+  assert.equal(res.status, 200)
+  assert.match(String(res.headers['content-type']), /^application\/json/)
+  const body = jsonOf(res)
+  assert.deepEqual(Object.keys(body).sort(), ['records', 'stats'])
+  assert.deepEqual(body.records, [])
+  assert.deepEqual(body.stats, { total: 0, rollbackable: 0 })
+  assert.equal(existsSync(bridgeDir), false, '只读路由绝不能在读的时候 mkdir')
+})
+
+test('写入记录路由：投影目标 / 时间 / lessonId@revision / 前后哈希 / 可否回滚，敏感串脱敏', async () => {
+  const secret = 'sk-abcdefghijklmnopqrstuvwxyz012345'
+  const records = [
+    {
+      backupId: 'brg_1',
+      at: '2026-09-29T10:00:00.000Z',
+      target: 'E:/proj/AGENTS.md ' + secret,
+      action: 'replace',
+      lessons: [{ lessonId: 'l1', revision: 3 }, { lessonId: 'l2', revision: 0 }],
+      beforeSha256: 'a'.repeat(64),
+      afterSha256: 'b'.repeat(64),
+      rollbackable: true,
+    },
+    {
+      backupId: 'brg_2',
+      at: '2026-09-28T10:00:00.000Z',
+      target: 'E:/proj/docs/AGENTS.md',
+      action: 'create',
+      lessons: [],
+      beforeSha256: '',
+      afterSha256: 'c'.repeat(64),
+      rollbackable: false,
+      rollbackReason: '管理块已被外部修改',
+    },
+  ]
+  const { handler } = bridgeHandlerFor({ journalDir: makeJournal([]), bridgeStoreFactory: () => fakeBridgeReader(records) })
+  const res = await call(handler, { url: DREAM_BRIDGE_ROUTE })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.includes(secret), false, '原始密钥不得出现在响应里')
+  assert.ok(res.body.includes('[已脱敏'), '应出现脱敏标记')
+  const body = jsonOf(res)
+  assert.deepEqual(body.records.map((record) => record.backupId), ['brg_1', 'brg_2'])
+  assert.equal(body.records[0].action, 'replace')
+  assert.deepEqual(body.records[0].lessons, [{ lessonId: 'l1', revision: 3 }, { lessonId: 'l2', revision: 0 }])
+  assert.equal(body.records[0].beforeSha256, 'a'.repeat(64))
+  assert.equal(body.records[0].afterSha256, 'b'.repeat(64))
+  assert.equal(body.records[0].rollbackable, true)
+  assert.equal(body.records[0].rollbackReason, undefined)
+  assert.equal(body.records[1].rollbackable, false)
+  assert.equal(body.records[1].rollbackReason, '管理块已被外部修改')
+  assert.deepEqual(body.stats, { total: 2, rollbackable: 1 })
+})
+
+test('写入记录路由：legacy 字符串 lesson 引用安全归一，坏行 / 空记录跳过', async () => {
+  const records = [
+    { backupId: 'brg_legacy', at: '', target: 'AGENTS.md', action: 'append', lessons: ['l1@2', 'l2'], beforeSha256: '', afterSha256: 'd'.repeat(64), rollbackable: false },
+    null,
+    42,
+    { backupId: '', target: '' },
+  ]
+  const { handler } = bridgeHandlerFor({ journalDir: makeJournal([]), bridgeStoreFactory: () => fakeBridgeReader(records) })
+  const body = jsonOf(await call(handler, { url: DREAM_BRIDGE_ROUTE }))
+  assert.equal(body.records.length, 1)
+  assert.deepEqual(body.records[0].lessons, [{ lessonId: 'l1', revision: 2 }, { lessonId: 'l2', revision: 0 }])
+  assert.equal(body.records[0].at, '')
+  assert.equal(body.records[0].action, 'append')
+  assert.deepEqual(body.stats, { total: 1, rollbackable: 0 })
+})
+
+test('写入记录路由：非 GET → 405 + Allow；非本机 Host / 非回环 → 403；reader 抛错 → 500 信封', async () => {
+  const { handler } = bridgeHandlerFor({ journalDir: makeJournal([]), bridgeStoreFactory: () => fakeBridgeReader([]) })
+  for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'HEAD']) {
+    const res = await call(handler, { url: DREAM_BRIDGE_ROUTE, method })
+    assert.equal(res.status, 405, method + ' 应被拒绝')
+    assert.equal(res.headers.allow, 'GET')
+    assert.equal(jsonOf(res).error.code, 'method-not-allowed')
+  }
+  assert.equal((await call(handler, { url: DREAM_BRIDGE_ROUTE, headers: { host: 'evil.example' } })).status, 403)
+  assert.equal((await call(handler, { url: DREAM_BRIDGE_ROUTE, socket: { remoteAddress: '10.0.0.9' } })).status, 403)
+  const { handler: broken } = bridgeHandlerFor({
+    journalDir: makeJournal([]),
+    bridgeStoreFactory: () => ({ listApplications() { throw new Error('records exploded') } }),
+  })
+  const res = await call(broken, { url: DREAM_BRIDGE_ROUTE })
+  assert.equal(res.status, 500)
+  const body = jsonOf(res)
+  assert.equal(body.ok, false)
+  assert.equal(body.error.code, 'internal')
+  assert.match(body.error.message, /records exploded/)
+})
+
+
+test('写入记录路由：真实 listBridgeApplications 集成 —— records.jsonl + AGENTS.md 管理块可读，GET 零写盘', async () => {
+  const journalDir = makeJournal([])
+  const bridgeDir = join(journalDir, 'bridge')
+  mkdirSync(bridgeDir, { recursive: true })
+  const blockText = '<!-- dsh-dream:start -->\n\n## 梦境沉淀（dsh-dream 自动生成）\n\n- l1@0 的经验（0.6.0）\n\n<!-- dsh-dream:end -->'
+  const target = join(journalDir, 'AGENTS.md')
+  const fileText = '# 项目约定\n\n人工内容保留\n\n' + blockText + '\n'
+  writeFileSync(target, fileText, 'utf8')
+  const sha = (text) => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex')
+  const record = {
+    schemaVersion: 1,
+    backupId: 'brg_test_1',
+    at: '2026-09-29T12:00:00.000Z',
+    target,
+    projectRoot: journalDir,
+    action: 'replace',
+    before: { exists: true, sha256: sha('old'), size: 3 },
+    beforeBlock: '<!-- dsh-dream:start -->旧块<!-- dsh-dream:end -->',
+    separator: '\n',
+    afterBlockSha256: sha(blockText),
+    afterFileSha256: sha(fileText),
+    lessons: [{ lessonId: 'l1', revision: 0 }],
+    previewId: 'pv_test_1',
+  }
+  writeFileSync(join(bridgeDir, 'records.jsonl'), JSON.stringify(record) + '\n', 'utf8')
+  const beforeSnapshot = snapshotDir(bridgeDir)
+  const { handler } = bridgeHandlerFor({ journalDir })
+  const res = await call(handler, { url: DREAM_BRIDGE_ROUTE })
+  assert.equal(res.status, 200)
+  const body = jsonOf(res)
+  assert.equal(body.records.length, 1)
+  assert.equal(body.records[0].backupId, 'brg_test_1')
+  assert.equal(body.records[0].action, 'replace')
+  assert.equal(body.records[0].target, target)
+  assert.deepEqual(body.records[0].lessons, [{ lessonId: 'l1', revision: 0 }])
+  assert.equal(body.records[0].rollbackable, true, '管理块与 afterBlockSha256 一致 → 可回滚')
+  assert.equal(body.records[0].afterSha256, sha(fileText))
+  assert.deepEqual(body.stats, { total: 1, rollbackable: 1 })
+  assert.deepEqual(snapshotDir(bridgeDir), beforeSnapshot, 'GET /bridge 必须零写盘')
+
+  // 外部改动管理块 → 同一记录变为不可回滚且给原因
+  writeFileSync(target, fileText.replace('l1@0 的经验（0.6.0）', '被人工改过的经验'), 'utf8')
+  const changed = jsonOf(await call(handler, { url: DREAM_BRIDGE_ROUTE }))
+  assert.equal(changed.records[0].rollbackable, false)
+  assert.equal(changed.records[0].rollbackReason, '管理块已被外部修改')
+  assert.deepEqual(changed.stats, { total: 1, rollbackable: 0 })
 })

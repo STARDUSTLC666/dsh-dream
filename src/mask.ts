@@ -27,12 +27,19 @@ function looksHighEntropy(text: string): boolean {
 }
 
 /** 对文本做脱敏；无命中时原样返回。 */
-export function maskSecrets(text: string): string {
+export function maskSecrets(text: string, publicReferences: readonly string[] = []): string {
   let out = text
   for (const { re, label } of SECRET_PATTERNS) {
     out = out.replace(re, '[已脱敏·' + label + ']')
   }
   out = out.replace(CRED_ASSIGN, (_m, key, sep) => key + sep + '[已脱敏·凭据]')
-  out = out.replace(LONG_TOKEN, (m) => (looksHighEntropy(m) ? '[已脱敏·长令牌]' : m))
+  const references = new Set(publicReferences.filter(isDreamReference))
+  out = out.replace(LONG_TOKEN, (m) => (references.has(m) || !looksHighEntropy(m) ? m : '[已脱敏·长令牌]'))
   return out
+}
+
+/** 只认可插件生成的引用形状；不得把任意 *Id / *Hash 字段当作脱敏豁免。 */
+export function isDreamReference(value: string): boolean {
+  return /^(?:lsn|evd|evt|brg)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    || /^pvw_[0-9a-f]{24}$/i.test(value)
 }

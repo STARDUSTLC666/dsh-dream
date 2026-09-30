@@ -544,7 +544,7 @@ test('R6：checkpoint 让 maxReplayEvents=3 不再丢实体；index 丢失时全
     assert.equal(fast.truncated, true, '事件量超过有界上限仍要显式标记')
     assert.equal(fast.replayMode, 'snapshot+tail')
     assert.equal(fast.lessons, 5, 'checkpoint 折叠的实体不得丢失')
-    assert.equal(fast.skippedEvents, 5)
+    assert.equal(fast.unreplayedEvents, 5)
     assert.equal(fast.orphanEvents, 0)
     assert.equal(fast.unsupportedVersions, 0)
     assert.equal(store.listLessons().length, 5)
@@ -557,7 +557,7 @@ test('R6：checkpoint 让 maxReplayEvents=3 不再丢实体；index 丢失时全
     assert.equal(slow.truncated, true)
     assert.equal(slow.events, 5)
     assert.equal(slow.replayedEvents, 3)
-    assert.equal(slow.skippedEvents, 2)
+    assert.equal(slow.unreplayedEvents, 2)
     assert.equal(slow.lessons, 3)
     const eventLines = readFileSync(join(dir, 'events.jsonl'), 'utf8').split('\n').filter((line) => line.trim() !== '')
     assert.equal(slow.firstReplayedEventId, JSON.parse(eventLines[2]).id, 'firstReplayedEventId 指向第一条真正回放的事件')
@@ -608,8 +608,8 @@ test('R2′：read 证据初始 usable，claimed/无证据保持 candidate，合
       evidence: [{ kind: 'user-correction', sessionId: 'r2', recordSeq: 2, observedAt: ISO, summary: '用户明确纠正', verification: 'read' }],
     }), 'r2-2')
     assert.equal(uc.lesson.state, 'usable')
-    assert.equal(uc.lesson.review.decision, 'accepted')
-    assert.equal(uc.lesson.review.actor, 'user')
+    assert.equal(uc.lesson.review.decision, 'unreviewed', '已读用户纠正不是用户采纳事件')
+    assert.equal(uc.lesson.review.actor, undefined)
 
     const claimed = store.createLesson(lessonInput({
       title: '仅声明经验',
@@ -669,7 +669,7 @@ test('R6：孤儿 update 与 JSON 坏行分开计数；rebuildIndex 完整折叠
     assert.equal(healed.orphanEvents, 0)
     assert.equal(healed.replayMode, 'snapshot+tail')
     assert.equal(healed.truncated, true, '日志规模仍超上限，但不丢实体且可解释')
-    assert.equal(healed.skippedEvents, 7)
+    assert.equal(healed.unreplayedEvents, 7)
     assert.equal(healed.replayedEvents, 0)
   } finally {
     cleanup(root)
@@ -815,6 +815,128 @@ test('R6：checkpoint 被篡改/前缀哈希不符时回退全量回放，不信
     assert.equal(fallback2.listLessons().length, 1)
     assert.equal(fallback2.getLesson(created.lesson.id).state, 'candidate')
     assert.equal(fallback2.stats().replayMode, 'full', '前缀哈希不符必须回退全量回放')
+  } finally {
+    cleanup(root)
+  }
+})
+
+
+test('M2·A：review.note/resolution 过脱敏、可 replay 恢复；旧事件缺字段正常', () => {
+  const root = freshRoot()
+  const dir = join(root, 'knowledge')
+  try {
+    const store = new KnowledgeStore(dir)
+    const a = store.createLesson(lessonInput({ title: '备注甲', action: '动作', when: '条件', evidence: [] }), 'note-1').lesson.id
+    const b = store.createLesson(lessonInput({ title: '备注乙', action: '动作', when: '条件', evidence: [] }), 'note-2').lesson.id
+    const secret = 'sk-abcdefghijklmnop123456'
+    const withNote = store.reviewLesson(
+      a, 'accepted', 1, 'note-3', 'user',
+      '用户明确要求优先复用现有资产 ' + secret,
+      { kind: 'prefer', targetId: b, affectedIds: [b] },
+    )
+    assert.equal(withNote.review.decision, 'accepted')
+    assert.ok(!withNote.review.note.includes(secret), 'note 写盘前必须过 mask.ts')
+    assert.ok(withNote.review.note.includes('已脱敏'))
+    assert.equal(withNote.review.resolution.kind, 'prefer')
+    assert.deepEqual(withNote.review.resolution.affectedIds, [b])
+
+    rmSync(join(dir, 'index.json'))
+    const replayed = new KnowledgeStore(dir).getLesson(a)
+    assert.equal(replayed.review.note, withNote.review.note, 'replay 后 note 必须仍在')
+    assert.equal(replayed.review.resolution.targetId, b, 'replay 后 resolution 必须仍在')
+
+    const plain = store.reviewLesson(b, 'rejected', 1, 'note-4', 'model')
+    assert.equal(plain.review.note, undefined)
+    assert.equal(new KnowledgeStore(dir).getLesson(b).review.note, undefined, '旧/无 note 记录不报错')
+
+    const c = store.createLesson(lessonInput({ title: '备注丙', action: '动作', when: '条件', evidence: [] }), 'note-5').lesson.id
+    const emptyNote = store.reviewLesson(c, 'accepted', 1, 'note-6', 'user', '   ')
+    assert.equal(emptyNote.review.note, undefined, '空串归一为 undefined')
+
+    const d = store.createLesson(lessonInput({ title: '备注丁', action: '动作', when: '条件', evidence: [] }), 'note-7').lesson.id
+    const longNote = store.reviewLesson(d, 'accepted', 1, 'note-8', 'user', '备注'.repeat(300))
+    assert.equal(longNote.review.note.length, 500, '超长 note 截断到 500 而不是报错')
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('M2·B：updateLessonsBatch 原子、可 replay、幂等、可与单条交错', () => {
+  const root = freshRoot()
+  const dir = join(root, 'knowledge')
+  try {
+    const store = new KnowledgeStore(dir)
+    const a = store.createLesson(lessonInput({ title: '批量甲', action: '动作', when: '条件', evidence: [] }), 'batch-1').lesson.id
+    const b = store.createLesson(lessonInput({ title: '批量乙', action: '动作', when: '条件', evidence: [] }), 'batch-2').lesson.id
+    const c = store.createLesson(lessonInput({ title: '批量丙', action: '动作', when: '条件', evidence: [] }), 'batch-3').lesson.id
+
+    const beforeLines = eventsLines(dir)
+    assert.throws(
+      () => store.updateLessonsBatch([
+        { id: a, patch: { title: '批量甲改' }, expectedRevision: 1 },
+        { id: b, patch: { title: '批量乙改' }, expectedRevision: 99 },
+      ], 'batch-bad'),
+      (error) => error instanceof KnowledgeError && error.code === 'revision'
+        && error.details !== undefined && error.details.failedId === b,
+    )
+    assert.equal(eventsLines(dir), beforeLines, '任一条 revision 不符 → 全部未生效')
+    assert.equal(store.getLesson(a).title, '批量甲')
+    assert.equal(store.getLesson(a).revision, 1)
+
+    const applied = store.updateLessonsBatch([
+      { id: a, patch: { title: '批量甲改', state: 'disputed' }, expectedRevision: 1 },
+      { id: b, patch: { title: '批量乙改', state: 'disputed' }, expectedRevision: 1 },
+    ], 'batch-good')
+    assert.equal(applied.length, 2)
+    assert.equal(applied[0].title, '批量甲改')
+    assert.equal(applied[0].state, 'disputed')
+    assert.equal(applied[1].state, 'disputed')
+    assert.equal(eventsLines(dir), beforeLines + 1, '整批只追加一个事件')
+
+    rmSync(join(dir, 'index.json'))
+    const replayed = new KnowledgeStore(dir)
+    assert.equal(replayed.getLesson(a).title, '批量甲改')
+    assert.equal(replayed.getLesson(b).state, 'disputed')
+
+    const afterApply = eventsLines(dir)
+    const repeated = store.updateLessonsBatch([
+      { id: a, patch: { title: '批量甲改', state: 'disputed' }, expectedRevision: 1 },
+      { id: b, patch: { title: '批量乙改', state: 'disputed' }, expectedRevision: 1 },
+    ], 'batch-good')
+    assert.equal(repeated.length, 2)
+    assert.equal(repeated[0].revision, applied[0].revision, '同 key 重放返回首次结果')
+    assert.equal(eventsLines(dir), afterApply, '同 key 重放不得追加事件')
+
+    const cUpdated = store.updateLesson(c, { title: '批量丙单改' }, 1, 'batch-4')
+    assert.equal(cUpdated.revision, 2)
+    const aAgain = store.applyTransition(a, 'usable', applied[0].revision, 'batch-5')
+    assert.equal(aAgain.state, 'usable')
+    assert.equal(aAgain.revision, applied[0].revision + 1)
+
+    rmSync(join(dir, 'index.json'))
+    const finalStore = new KnowledgeStore(dir)
+    assert.equal(finalStore.getLesson(a).state, 'usable')
+    assert.equal(finalStore.getLesson(b).state, 'disputed')
+    assert.equal(finalStore.getLesson(c).title, '批量丙单改')
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('M2·B：未知事件 kind 计 skippedEvents，不混进 badLines、不炸整体', () => {
+  const root = freshRoot()
+  const dir = join(root, 'knowledge')
+  try {
+    const store = new KnowledgeStore(dir)
+    store.createLesson(lessonInput({ evidence: [] }), 'unknown-1')
+    const badBefore = store.stats().badLines
+    const futureLine = JSON.stringify({ schemaVersion: 1, id: 'evt_future', at: ISO, kind: 'lesson.future', idempotencyKey: 'future-1', payload: { x: 1 } })
+    writeFileSync(join(dir, 'events.jsonl'), futureLine + '\n', { flag: 'a' })
+    const stats = store.stats()
+    assert.equal(stats.skippedEvents, 1, '未知 kind 独立计 skippedEvents')
+    assert.equal(stats.badLines, badBefore, '未知 kind 不得混进 badLines')
+    assert.equal(stats.orphanEvents, 0)
+    assert.equal(stats.lessons, 1)
   } finally {
     cleanup(root)
   }

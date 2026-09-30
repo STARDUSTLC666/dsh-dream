@@ -6,21 +6,22 @@
  * 三道门缺一不可 ——
  *   1. remoteAddress 若是明确的非回环地址则拒绝（局域网不可达）；
  *   2. Host 头必须是 localhost 名（挡 DNS rebinding：恶意域名解析到 127.0.0.1）；
- *   3. 只接受 GET：两条路由都没有任何写路径，所以不需要 CSRF 那一套。
+ *   3. 只接受 GET：三条路由都没有任何写路径，所以不需要 CSRF 那一套。
  *
- * 零写盘纪律（M1）：知识路由只读 <journalDir>/knowledge/。目录不存在时直接返回
- * 空 lessons/evidence + 全零 stats，绝不为了读去 mkdir 或 rebuildIndex；重建索引
- * 只发生在写路径或显式维护操作里。
+ * 零写盘纪律（M1/M2）：知识路由只读 <journalDir>/knowledge/，写入记录路由只读
+ * <journalDir>/bridge/。目录不存在时直接返回空结果，绝不为了读去 mkdir 或 rebuildIndex；
+ * 重建索引只发生在写路径或显式维护操作里。
  *
  * @module dsh-dream/web
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import * as bridgeModule from './bridge.js'
 import { resolveConfig, type ResolvedDreamConfig } from './config.js'
 import { dreamStats, readDreams, searchDreams, type DreamEntry, type DreamStats } from './journal.js'
 import type { Evidence, Lesson } from './knowledge.js'
 import { KnowledgeStore } from './knowledge-store.js'
-import { maskSecrets } from './mask.js'
+import { isDreamReference, maskSecrets } from './mask.js'
 import { buildEvidenceSummary, lessonScopeLabel } from './retrieval.js'
 
 /** 面板与浏览器说话的同源路由。 */
@@ -28,6 +29,9 @@ export const DREAM_ROUTE = '/_dsh/dsh-dream/journal'
 
 /** M1 经验面板的只读路由。 */
 export const DREAM_KNOWLEDGE_ROUTE = '/_dsh/dsh-dream/knowledge'
+
+/** M2 写入记录面板的只读路由。 */
+export const DREAM_BRIDGE_ROUTE = '/_dsh/dsh-dream/bridge'
 
 /** ?limit 的默认值与上下界。 */
 export const DREAM_LIMIT_DEFAULT = 50
@@ -99,16 +103,52 @@ export interface KnowledgeReader {
   stats(): KnowledgeWebStats
 }
 
+/** 写入记录的单条视图（展示用；字段缺失时按空字符串 / false 归一化）。 */
+export interface BridgeWebLessonRef {
+  lessonId: string
+  revision: number
+}
+
+export interface BridgeWebRecord {
+  backupId: string
+  at: string
+  target: string
+  action: string
+  lessons: BridgeWebLessonRef[]
+  beforeSha256: string
+  afterSha256: string
+  rollbackable: boolean
+  rollbackReason?: string
+}
+
+/** 写入记录路由的 JSON 形状：脱敏后的应用记录 + 汇总。 */
+export interface BridgeWebPayload {
+  records: BridgeWebRecord[]
+  stats: { total: number; rollbackable: number }
+}
+
+/** 桥接存储层返回的原始记录形状（字段由 src/bridge.ts 负责）。 */
+export type BridgeApplicationView = Record<string, unknown>
+
+/** 只读桥接记录源的最小接口：方便测试注入假数据。 */
+export interface BridgeReader {
+  listApplications(): BridgeApplicationView[]
+}
+
 /** 安装参数；journalDir 缺省时从 config 解析。 */
 export interface DreamWebOptions {
   /** 梦境日记目录（优先）。 */
   journalDir?: string
   /** 知识目录（优先；缺省 = <journalDir>/knowledge）。 */
   knowledgeDir?: string
+  /** 桥接记录目录（优先；缺省 = <journalDir>/bridge）。 */
+  bridgeDir?: string
   /** 插件配置，用来兜底 journalDir（resolveConfig 的入参）。 */
   config?: Record<string, unknown> | ResolvedDreamConfig | null
   /** 测试注入：返回只读知识源；提供时不做目录存在性检查。 */
   knowledgeStoreFactory?: (knowledgeDir: string) => KnowledgeReader
+  /** 测试注入：返回只读桥接记录源；提供时不做目录存在性检查。 */
+  bridgeStoreFactory?: (bridgeDir: string) => BridgeReader
 }
 
 /** ?limit 解析：缺省/非数字 → fallback；越界钳制到 [1, 500]。 */
@@ -129,6 +169,12 @@ function journalDirOf(options: DreamWebOptions): string {
 export function knowledgeDirOf(options: DreamWebOptions, journalDir: string = journalDirOf(options)): string {
   if (typeof options.knowledgeDir === 'string' && options.knowledgeDir.trim() !== '') return options.knowledgeDir
   return join(journalDir, 'knowledge')
+}
+
+/** 解析后的 bridgeDir：显式路径优先，否则 = <journalDir>/bridge。 */
+export function bridgeDirOf(options: DreamWebOptions, journalDir: string = journalDirOf(options)): string {
+  if (typeof options.bridgeDir === 'string' && options.bridgeDir.trim() !== '') return options.bridgeDir
+  return join(journalDir, 'bridge')
 }
 
 /** 解析请求 URL；非法或缺失时退回路由本身（等价于没有查询参数）。 */
@@ -188,13 +234,21 @@ function requestGate(req: any, res: any, readOnlyMessage: string): boolean {
   return false
 }
 
-/** 递归脱敏所有字符串叶子；数字 / 布尔 / null 原样保留。 */
-function maskDeep<T>(value: T): T {
-  if (typeof value === 'string') return maskSecrets(value) as unknown as T
-  if (Array.isArray(value)) return value.map((item) => maskDeep(item)) as unknown as T
+/** 哈希字段不做二次脱敏：它们是校验值，不是密钥（面板要展示前 12 位）。 */
+const HASH_KEY_RE = /^(?:sourceHash|beforeSha256|afterSha256|afterBlockSha256|afterFileSha256|sha256)$/
+const REFERENCE_KEYS = new Set(['id', 'lessonId', 'lessonIds', 'evidenceIds', 'conflictIds', 'supersedes', 'targetId', 'affectedIds', 'backupId', 'previewId'])
+
+/** 递归脱敏所有字符串叶子；数字 / 布尔 / null 原样保留，*Sha256 / *Hash 字段除外。 */
+function maskDeep<T>(value: T, key?: string): T {
+  if (typeof value === 'string') {
+    if (key !== undefined && HASH_KEY_RE.test(key) && /^[0-9a-f]{64}$/i.test(value)) return value
+    if (key !== undefined && REFERENCE_KEYS.has(key) && isDreamReference(value)) return value
+    return maskSecrets(value) as unknown as T
+  }
+  if (Array.isArray(value)) return value.map((item) => maskDeep(item, key)) as unknown as T
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) out[key] = maskDeep(item)
+    for (const [entryKey, item] of Object.entries(value as Record<string, unknown>)) out[entryKey] = maskDeep(item, entryKey)
     return out as unknown as T
   }
   return value
@@ -235,6 +289,81 @@ export function emptyKnowledgePayload(): KnowledgeWebPayload {
   }
 }
 
+function asDisplayString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function asDisplayRevision(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+}
+
+/**
+ * 归一化桥接应用记录：只保留展示需要的字段，坏形状跳过。
+ * 数据源由 src/bridge.ts 负责（本层不做 IO、不重算可否回滚）。
+ */
+export function normalizeBridgeApplications(value: unknown): BridgeWebRecord[] {
+  if (!Array.isArray(value)) return []
+  const records: BridgeWebRecord[] = []
+  for (const raw of value) {
+    if (raw === null || typeof raw !== 'object') continue
+    const item = raw as Record<string, unknown>
+    const backupId = asDisplayString(item.backupId)
+    const target = asDisplayString(item.target)
+    if (backupId === '' && target === '') continue
+    const lessons: BridgeWebLessonRef[] = []
+    if (Array.isArray(item.lessons)) {
+      for (const entry of item.lessons) {
+        if (entry !== null && typeof entry === 'object') {
+          const ref = entry as Record<string, unknown>
+          const lessonId = asDisplayString(ref.lessonId)
+          if (lessonId === '') continue
+          lessons.push({ lessonId, revision: asDisplayRevision(ref.revision) })
+        } else {
+          const text = asDisplayString(entry)
+          if (text === '') continue
+          const match = /^(.*)@(\d+)$/.exec(text)
+          if (match !== null) lessons.push({ lessonId: match[1]!, revision: Number(match[2]) })
+          else lessons.push({ lessonId: text, revision: 0 })
+        }
+      }
+    }
+    const record: BridgeWebRecord = {
+      backupId,
+      at: asDisplayString(item.at),
+      target,
+      action: asDisplayString(item.action),
+      lessons,
+      beforeSha256: asDisplayString(item.beforeSha256),
+      afterSha256: asDisplayString(item.afterSha256),
+      rollbackable: item.rollbackable === true,
+    }
+    const reason = asDisplayString(item.rollbackReason)
+    if (reason !== '') record.rollbackReason = reason
+    records.push(record)
+  }
+  return records
+}
+
+/** 写入记录目录不存在时的空载荷。 */
+export function emptyBridgePayload(): BridgeWebPayload {
+  return {
+    records: [],
+    stats: { total: 0, rollbackable: 0 },
+  }
+}
+
+/**
+ * 从桥接存储层取原始记录（按 at 降序，只读零写盘）。
+ * 契约来源：M2-A，`listBridgeApplications(journalDir): BridgeApplicationView[]`；
+ * 未落地 / 未导出时安全返回空，路由不受影响。
+ */
+function readBridgeApplicationsFromStore(journalDir: string): BridgeApplicationView[] {
+  const candidate = (bridgeModule as unknown as Record<string, unknown>).listBridgeApplications
+  if (typeof candidate !== 'function') return []
+  const result = (candidate as (dir: string) => unknown)(journalDir)
+  return Array.isArray(result) ? (result as BridgeApplicationView[]) : []
+}
+
 /** 组装梦境日记路由处理器；journalDir 在这一刻定下来（与插件的配置生命周期一致）。 */
 export function createDreamWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
   const journalDir = journalDirOf(options)
@@ -247,6 +376,36 @@ export function createDreamWebHandler(options: DreamWebOptions = {}): (req: any,
       const dreams = query === '' ? readDreams(journalDir, limit) : searchDreams(journalDir, query, limit)
       const stats = dreamStats(journalDir)
       responseJson(res, 200, { dreams, stats, query, limit } satisfies DreamWebPayload)
+    } catch (error) {
+      internalError(res, error)
+    }
+  }
+}
+
+/** 组装只读写入记录路由处理器；零写盘：目录不存在就直接返回空结果。 */
+export function createBridgeWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
+  const journalDir = journalDirOf(options)
+  const bridgeDir = bridgeDirOf(options, journalDir)
+  return async (req: any, res: any): Promise<void> => {
+    if (requestGate(req, res, 'dsh-dream bridge route is read-only; use GET')) return
+    try {
+      let raw: unknown
+      if (options.bridgeStoreFactory !== undefined) {
+        raw = options.bridgeStoreFactory(bridgeDir).listApplications()
+      } else if (existsSync(bridgeDir)) {
+        raw = readBridgeApplicationsFromStore(journalDir)
+      } else {
+        raw = []
+      }
+      const records = normalizeBridgeApplications(raw).map((record) => maskDeep(record))
+      const payload: BridgeWebPayload = {
+        records,
+        stats: {
+          total: records.length,
+          rollbackable: records.filter((record) => record.rollbackable).length,
+        },
+      }
+      responseJson(res, 200, payload)
     } catch (error) {
       internalError(res, error)
     }
@@ -288,7 +447,7 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
 /**
  * 把只读路由挂到宿主 webserver 上。
  * 与 dsh-calendar 相同：ctx.inject(['webServer']) + effect 注册，插件卸载即摘掉路由；
- * 同一个 effect 里注册日记与知识两条 exact 路由，卸载时一起释放。
+ * 同一个 effect 里注册日记 / 知识 / 写入记录三条 exact 路由，卸载时一起释放。
  */
 export function installDreamWeb(ctx: any, options: DreamWebOptions = {}): void {
   if (ctx === null || ctx === undefined || typeof ctx.inject !== 'function') {
@@ -296,6 +455,7 @@ export function installDreamWeb(ctx: any, options: DreamWebOptions = {}): void {
   }
   const journalHandler = createDreamWebHandler(options)
   const knowledgeHandler = createKnowledgeWebHandler(options)
+  const bridgeHandler = createBridgeWebHandler(options)
   ctx.inject(['webServer'], (webCtx: any) => {
     webCtx.effect(() => {
       const disposers: Array<() => void> = [
@@ -309,6 +469,11 @@ export function installDreamWeb(ctx: any, options: DreamWebOptions = {}): void {
           path: DREAM_KNOWLEDGE_ROUTE,
           handler: (req: any, res: any) => knowledgeHandler(req, res),
         }, 'dsh-dream: knowledge route'),
+        webCtx.webServer.register({
+          kind: 'exact',
+          path: DREAM_BRIDGE_ROUTE,
+          handler: (req: any, res: any) => bridgeHandler(req, res),
+        }, 'dsh-dream: bridge log route'),
       ]
       return () => {
         for (const dispose of disposers) {

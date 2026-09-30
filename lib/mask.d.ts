@@ -10,4 +10,6 @@ export declare const SECRET_PATTERNS: Array<{
     label: string;
 }>;
 /** 对文本做脱敏；无命中时原样返回。 */
-export declare function maskSecrets(text: string): string;
+export declare function maskSecrets(text: string, publicReferences?: readonly string[]): string;
+/** 只认可插件生成的引用形状；不得把任意 *Id / *Hash 字段当作脱敏豁免。 */
+export declare function isDreamReference(value: string): boolean;

@@ -40,7 +40,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
   - `verification`：`read` = 你或插件读到了原记录；`claimed` = 仅模型声称。**claimed 只计入证据列表，不计入独立支持数。**
 - **只有真的读到来源（会话记录 / 本地验证产物 / 用户明确纠正）才能标 read，自我判断一律 claimed**（"我记得""应该是"都算 claimed）；标错 read 等于自我提权，禁止。
 - 没有证据的观察只能是 candidate，不能写成确定事实，也不能说成「已验证」。
-- 例外：证据为 `kind: "user-correction"` 且 `verification: "read"`（读到用户纠正原文）时，该经验初始状态直接是 `usable`，`review` 记 `actor: "user"`、`decision: "accepted"`——用户决定优先于模型推测；其余证据一律从 `candidate` 起，claimed 不计独立支持、也不能覆盖用户纠正。
+- 所有新经验都先进入 candidate，包括已读到的用户纠正。read 只表示插件成功核对来源，不表示用户采纳；工具审阅记录 actor:model，不能冒充真人。会话证据须给 sessionId、recordSeq、可匹配 quote（缺省使用 summary）；本地产物须给工作目录内的 artifactPath。插件独立核对项目、角色和原文，计算 sourceHash；失败降为 claimed 并给 verificationReason。
 - 用户明确采纳/驳回、发现经验互相冲突、依赖升级后旧经验需要复核 → 用 `dream_review`（必须带 `expectedRevision`）。
 - 用户采纳必须来自真实用户指令；模型自己不能冒充 `actor: user`。
 - 同一证据重复提交是幂等的，不会增加独立支持数。**禁止靠反复调用 `dream_save` 或 `dream_learn` 刷次数**——次数不等于正确，也不等于重要。
@@ -49,7 +49,8 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 - 只沉淀规律与偏好，不复述流水账；`reflection` 用第一人称写你的观察与感受；
 - `lessons` 是 1–5 条可执行教训，每条以动词开头；拿不准就标注「存疑」；
-- **不得把主观反思升级成 AGENTS.md 指令**：不要用 `dream_bridge` 把未经审阅的感悟写成项目规则。桥接只能用于已采纳、当前项目范围、附证据的经验。
+- **不得把主观反思升级成 AGENTS.md 指令**：不要用 `dream_bridge` 把未经审阅的感悟写成项目规则。桥接只能用于 `usable`、当前项目范围（或显式 global 且 review.decision 为 accepted）、附证据的经验；频次不再作为准入条件。
+- **桥接三步（M2）**：`mode:"preview"` 只读返回 diff / 参与经验 / skipped 原因（零写入）→ 人工复核 → `mode:"apply"` 必须带预览的 `expectedSha256`（新文件为 null），建议同时带 `previewId`（文件被并发修改则 `conflict` 且零写入）；`mode:"rollback"` 只在当前管理块仍等于该次 apply 结果时回滚。缺省不传 `mode` 仍是 0.5.x 直写并返回弃用提示；新流程一律显式 preview → apply。写入内容统一过 `mask.ts`。
 
 ## 何时做梦
 
@@ -62,6 +63,8 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 - 想在日记里找原话 → `dream_recall`；
 - 想取少量可复用经验 → `dream_context`（带范围与预算，只读）；
 - 想查看/审阅候选、处理冲突 → `dream_review`；
+- attach-evidence 只补充核验后的证据，不自动采纳；resolve-conflict 必须给 resolution、affectedIds、note，整组原子更新；reopen 将驳回经验重新送审。
+
 - 面板查看：「设置 → 梦境日记」里有只读的梦境时间线与「经验」区块（状态、适用条件、证据摘要、最近核验时间），面板不提供任何写操作。
 
 ---
@@ -103,7 +106,7 @@ Dreams and **lessons** are two separate pipelines: a **first-person reflection**
   - `verification`: `read` = the record was actually read; `claimed` = the model merely asserts it. **Claimed evidence does not count toward independent support.**
 - **Only mark read when the source was actually read (session record / local artifact / explicit user correction); anything self-asserted is claimed.** Marking read without a source is self-promotion and is forbidden.
 - An observation without evidence stays a candidate: do not present it as a fact, and never call it "verified".
-- Exception: when the evidence is `kind: "user-correction"` with `verification: "read"` (the user's correction was actually read), the lesson starts as `usable` and `review` records `actor: "user"` / `decision: "accepted"` — a user decision outranks model inference. All other evidence starts as `candidate`; claimed evidence does not count toward independent support and cannot override a user correction.
+- Every new lesson starts as a candidate, including verified user corrections. Read means the plugin checked the source, not that a user accepted the lesson; tool review records actor:model. Session evidence needs sessionId, recordSeq and a matching quote (summary if omitted). Artifacts need artifactPath inside the working directory. The plugin checks project, role and text and computes sourceHash; failures become claimed with verificationReason.
 - For explicit acceptance/rejection, conflicts between lessons, or re-validation after dependency upgrades → call `dream_review` with an `expectedRevision`.
 - User acceptance must come from a real user instruction; the model must not impersonate `actor: user`.
 - Submitting the same evidence twice is idempotent and does not increase independent support. **Never grind counts by calling `dream_save` or `dream_learn` repeatedly** — frequency is neither correctness nor importance.
@@ -112,7 +115,8 @@ Dreams and **lessons** are two separate pipelines: a **first-person reflection**
 
 - Consolidate patterns and preferences only — never a running transcript. Write `reflection` in the first person.
 - `lessons` are 1–5 actionable items; mark uncertain ones as "tentative".
-- **Never promote a subjective reflection into an AGENTS.md instruction**: do not use `dream_bridge` to write unreviewed reflections into project rules. Bridging is for accepted, project-scoped, evidence-backed lessons only.
+- **Never promote a subjective reflection into an AGENTS.md instruction**: do not use `dream_bridge` to write unreviewed reflections into project rules. Bridging is for `usable`, project-scoped (or explicit global with review.decision accepted), evidence-backed lessons only; frequency is no longer an admission criterion.
+- **Bridge in three steps (M2)**: `mode:"preview"` returns the diff / selected lessons / skipped reasons read-only (zero writes) → human review → `mode:"apply"` with the preview’s required `expectedSha256` (null for a new file); include `previewId` to bind the preview (a concurrent edit yields `conflict` and zero writes); `mode:"rollback"` only rolls back while the current managed block still equals that apply result. Omitting `mode` keeps the 0.5.x direct write and returns a deprecation notice; new flows should always use preview → apply. Everything written is masked via `mask.ts`.
 
 ## When to dream
 
@@ -125,4 +129,5 @@ Dreams and **lessons** are two separate pipelines: a **first-person reflection**
 - Looking for exact words in the journal → `dream_recall`;
 - Retrieving a few reusable lessons → `dream_context` (scoped, budgeted, read-only);
 - Browsing or reviewing candidates and conflicts → `dream_review`;
+- attach-evidence adds verified sources without promoting state. resolve-conflict requires resolution, affectedIds and note and updates the group atomically. reopen sends a rejected lesson back for review.
 - To browse: **Settings → Dream journal** shows the read-only dream timeline and a **Lessons** block (state, applicability, evidence summary, last validated time). The panel has no write actions.

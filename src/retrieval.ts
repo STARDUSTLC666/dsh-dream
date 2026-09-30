@@ -24,6 +24,8 @@ export interface RetrievalQuery {
   packageVersion?: string
   /** 显式包名上下文；与 query 文本一起用于识别 applicability[].package（R3）。 */
   packageName?: string
+  /** 任务目标平台；宿主工具缺省使用当前系统，跨平台任务可显式指定。 */
+  platform?: string
   /** 是否返回 candidate；默认 true（面板/审计需要）。dream_context 默认传 false（R1）。 */
   includeCandidates?: boolean
   /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
@@ -67,6 +69,7 @@ interface ApplicabilityMatch {
   platforms: string[]
   /** 包名已识别但所有版本条件都不满足（R3）。 */
   versionMismatch: boolean
+  platformMismatch: boolean
 }
 
 interface Candidate {
@@ -201,6 +204,36 @@ export function rankInversionCount(
   return inversions
 }
 
+const SKIPPED_REASON_LABELS: Record<string, string> = {
+  'state:rejected': '已驳回',
+  'state:stale': '已过期（待复核）',
+  'state:disputed': '冲突未解决',
+  'candidate-hold': '候选未审阅（默认不注入）',
+  'no-evidence': '无独立证据',
+  'version-mismatch': '版本条件不匹配',
+  'platform-mismatch': '平台条件不匹配',
+  limit: '超出条数上限',
+  'budget-stop': '预算放不下',
+  budget: '预算放不下（旧值）',
+}
+
+/** skipped.reason 的中文标签（面板与工具共用；未知 reason 原样返回）。 */
+export function skippedReasonLabel(reason: string): string {
+  return SKIPPED_REASON_LABELS[reason] ?? reason
+}
+
+/**
+ * 浏览态（无 query 上下文）下一条经验的确定性扣留原因；usable 返回 undefined。
+ * 与 retrieveLessons 的优先级一致：no-evidence 先于 candidate-hold；version-mismatch 需 query/包名，不适用。
+ */
+export function deterministicHoldReason(lesson: Pick<Lesson, 'state' | 'independentSupportCount'>): string | undefined {
+  if (lesson.state === 'rejected') return 'state:rejected'
+  if (lesson.state === 'stale') return 'state:stale'
+  if (lesson.state === 'disputed') return 'state:disputed'
+  if (lesson.state !== 'usable') return lesson.independentSupportCount === 0 ? 'no-evidence' : 'candidate-hold'
+  return undefined
+}
+
 /** 解析 limit/maxChars，套用默认值与硬上限。 */
 export function resolveRetrievalBudget(q: Pick<RetrievalQuery, 'limit' | 'maxChars'>): { limit: number; maxChars: number } {
   const rawLimit = q.limit
@@ -310,9 +343,29 @@ function packageIdentified(pkg: string, q: RetrievalQuery, queryText: string): b
   return queryText.includes(normalizedPkg)
 }
 
+export function normalizePlatform(value: string): string {
+  const key = value.trim().toLowerCase()
+  if (['win32', 'win64', 'windows', 'win', '微软windows'].includes(key)) return 'windows'
+  if (['darwin', 'macos', 'mac', 'osx', 'os x'].includes(key)) return 'macos'
+  if (['linux', 'gnu/linux'].includes(key)) return 'linux'
+  return key
+}
+
+/** 显式任务平台优先，其次无歧义的任务文本，最后宿主平台。 */
+export function taskPlatform(query: string, explicit?: string, fallback?: string): string | undefined {
+  if (trimmed(explicit)) return normalizePlatform(explicit!)
+  const platforms: string[] = []
+  if (/\b(?:windows|win32|win64)\b/i.test(query)) platforms.push('windows')
+  if (/\b(?:linux|ubuntu|debian|fedora)\b/i.test(query)) platforms.push('linux')
+  if (/\b(?:macos|darwin|osx)\b/i.test(query)) platforms.push('macos')
+  return platforms.length === 1 ? platforms[0] : fallback ? normalizePlatform(fallback) : undefined
+}
+
 function matchApplicability(lesson: Lesson, q: RetrievalQuery, queryText: string): ApplicabilityMatch {
-  const out: ApplicabilityMatch = { packages: [], versions: [], platforms: [], versionMismatch: false }
+  const out: ApplicabilityMatch = { packages: [], versions: [], platforms: [], versionMismatch: false, platformMismatch: false }
   const packageVersion = trimmed(q.packageVersion)
+  const currentPlatform = taskPlatform(q.query, q.platform)
+  const platformChecks: boolean[] = []
   const identifiedVersionChecks: boolean[] = []
   for (const entry of lesson.applicability) {
     const pkg = trimmed(entry.package)
@@ -325,11 +378,15 @@ function matchApplicability(lesson: Lesson, q: RetrievalQuery, queryText: string
       if (ok && !out.versions.includes(versions)) out.versions.push(versions)
     }
     const platform = trimmed(entry.platform)
-    if (platform !== undefined && queryText.includes(normalizeText(platform)) && !out.platforms.includes(platform)) {
-      out.platforms.push(platform)
+    if (currentPlatform !== undefined) {
+      const ok = platform === undefined || ['*', 'any', 'all'].includes(normalizePlatform(platform))
+        || platform.split(/[,|/]/).some(item => normalizePlatform(item) === currentPlatform)
+      platformChecks.push(ok)
+      if (ok && platform !== undefined && !out.platforms.includes(platform)) out.platforms.push(platform)
     }
   }
   out.versionMismatch = identifiedVersionChecks.length > 0 && identifiedVersionChecks.every((ok) => !ok)
+  out.platformMismatch = platformChecks.length > 0 && platformChecks.every((ok) => !ok)
   return out
 }
 
@@ -468,6 +525,10 @@ export function retrieveLessons(
     }
     // R3 优先于 R1 的候选扣留：包名已识别但版本不满足时，reason 必须是 version-mismatch。
     const applicability = matchApplicability(lesson, q, queryText)
+    if (applicability.platformMismatch) {
+      skipped.push({ lessonId: lesson.id, reason: 'platform-mismatch' })
+      continue
+    }
     if (applicability.versionMismatch) {
       skipped.push({ lessonId: lesson.id, reason: 'version-mismatch' })
       continue

@@ -4,6 +4,15 @@ export type LessonKind = 'preference' | 'procedure' | 'pitfall' | 'fact';
 export type LessonState = 'candidate' | 'usable' | 'disputed' | 'stale' | 'rejected';
 /** 审阅结论。 */
 export type ReviewDecision = 'unreviewed' | 'accepted' | 'rejected';
+/** 解析 / 冲突处理的可选痕迹（事件与经验都带得下；旧数据没有也合法）。 */
+export interface LessonReviewResolution {
+    /** prefer | drop | merge 等；不强制枚举，由 tools 层约定。 */
+    kind: string;
+    targetId?: string;
+    affectedIds?: string[];
+}
+/** 审阅备注最大长度；超出截断而不是报错。 */
+export declare const REVIEW_NOTE_MAX_LENGTH = 500;
 /** 一条可复用经验。 */
 export interface Lesson {
     schemaVersion: 1;
@@ -36,6 +45,8 @@ export interface Lesson {
         decision: ReviewDecision;
         actor?: string;
         at?: string;
+        note?: string;
+        resolution?: LessonReviewResolution;
     };
     createdAt: string;
     updatedAt: string;
@@ -58,6 +69,8 @@ export interface Evidence {
     /** read=插件读到原记录；claimed=仅模型声称。 */
     verification: 'read' | 'claimed';
     sourceHash?: string;
+    /** 插件生成的核验结果；不是模型给出的保证。 */
+    verificationReason?: string;
 }
 /** dream_learn / 迁移的输入。 */
 export interface LessonInput {
@@ -110,6 +123,8 @@ export type KnowledgeEvent = {
         decision: ReviewDecision;
         actor?: string;
         state: LessonState;
+        note?: string;
+        resolution?: LessonReviewResolution;
     };
 } | {
     schemaVersion: 1;
@@ -119,6 +134,20 @@ export type KnowledgeEvent = {
     idempotencyKey: string;
     requestHash?: string;
     payload: Evidence;
+} | {
+    schemaVersion: 1;
+    id: string;
+    at: string;
+    kind: 'lesson.batch';
+    idempotencyKey: string;
+    requestHash?: string;
+    payload: {
+        updates: Array<{
+            lessonId: string;
+            revision: number;
+            patch: Partial<Lesson>;
+        }>;
+    };
 };
 /** 知识层错误码：invalid=数据不合法；revision=乐观锁不符；duplicate=重复；io=读写/锁失败。 */
 export declare class KnowledgeError extends Error {

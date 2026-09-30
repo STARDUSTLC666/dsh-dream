@@ -256,7 +256,7 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   const now = new Date(2026, 8, 29, 12)
   const raw = {
     lessons: [
-      { id: 'l1', state: 'candidate', title: '候选经验', action: '做事', when: '当 X 时', scopeLabel: '项目 p1', evidenceSummary: '独立证据 0 条', lastValidatedAt: localIso(2026, 9, 28), exceptions: ['', ' 只在离线时 ', null], applicability: [{ package: 'nodemailer', versions: '9.0.5' }, { platform: 'linux' }], weight: 0.9, vector: [1, 2, 3], review: { actor: 'model' } },
+      { id: 'l1', state: 'candidate', revision: 4, independentSupportCount: 2, holdReason: 'candidate-hold', holdReasonLabel: '候选（服务端标签）', scope: { projectId: 'p1', global: false }, title: '候选经验', action: '做事', when: '当 X 时', scopeLabel: '项目 p1', evidenceSummary: '独立证据 0 条', lastValidatedAt: localIso(2026, 9, 28), exceptions: ['', ' 只在离线时 ', null], applicability: [{ package: 'nodemailer', versions: '9.0.5' }, { platform: 'linux' }], weight: 0.9, vector: [1, 2, 3], review: { actor: 'model' } },
       { id: 'l2', state: 'disputed', title: '冲突经验', when: '当 Y 时' },
       { id: 'l3', state: 'usable', title: '可用经验', when: '当 Z 时', action: '' },
       { id: 'bad' },
@@ -269,7 +269,7 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   assert.equal(vm.shown, 2)
   assert.deepEqual(
     Object.keys(vm.rows[0]).sort(),
-    ['applicability', 'candidate', 'disputed', 'evidenceSummary', 'exceptions', 'id', 'lastText', 'lastTitle', 'lastValidatedAt', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when'].sort(),
+    ['action', 'applicability', 'bridgeable', 'candidate', 'conflictIds', 'conflicts', 'disputed', 'evidenceSummary', 'exceptions', 'holdReason', 'holdReasonLabel', 'id', 'independentSupportCount', 'lastText', 'lastTitle', 'lastValidatedAt', 'projectId', 'revision', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when', 'workspaceRoot'].sort(),
     '只投影展示字段：不把权重 / 向量 / 原始 JSON 带进视图模型',
   )
   assert.equal(vm.rows[0].weight, undefined)
@@ -291,6 +291,20 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   assert.deepEqual(Array.from(vm.rows[0].exceptions), ['只在离线时'], 'exceptions 去空去空白')
   assert.equal(vm.rows[1].applicability, '', '没有 applicability 给空串')
   assert.deepEqual(Array.from(vm.rows[1].exceptions), [], '没有 exceptions 给空数组')
+  assert.equal(vm.rows[0].revision, 4)
+  assert.equal(vm.rows[1].revision, 0)
+  assert.equal(vm.rows[0].projectId, 'p1', 'projectId 只从 scope 取，供预览命令参数')
+  assert.equal(vm.rows[1].projectId, '')
+  assert.equal(vm.rows[0].independentSupportCount, 2)
+  assert.equal(vm.rows[0].holdReason, 'candidate-hold', '服务端给的扣留原因优先')
+  assert.equal(vm.rows[0].holdReasonLabel, '候选（服务端标签）', '服务端中文标签优先')
+  assert.equal(vm.rows[1].holdReason, 'state:disputed', '没有服务端原因时按状态确定性推导')
+  assert.match(vm.rows[1].holdReasonLabel, /^冲突未解决/)
+  assert.equal(vm.rows[0].bridgeable, false)
+  const usable = normalizeKnowledge({ lessons: [{ id: 'u1', state: 'usable', title: '可用经验' }] }, now, 10)
+  assert.equal(usable.rows[0].bridgeable, true, 'usable 才给复制预览命令')
+  const noId = normalizeKnowledge({ lessons: [{ id: '', state: 'usable', title: '没 id 的经验' }] }, now, 10)
+  assert.equal(noId.rows[0].bridgeable, false, '没有 id 无法派生可执行命令')
 })
 
 test('normalizeKnowledge()：未知状态不冒充候选，坏形状不崩面板', () => {
@@ -412,4 +426,170 @@ test('normalizeKnowledge()：truncated / badLines 原样带进视图模型，坏
   const bogus = normalizeKnowledge({ stats: { badLines: 'x', truncated: 'yes' } }, new Date(), 50)
   assert.equal(bogus.stats.truncated, false)
   assert.equal(bogus.stats.badLines, 0)
+})
+
+
+// ───────────────────────── M2-C：扣留原因与复制命令 ─────────────────────────
+
+test('skippedReasonLabel()：覆盖检索层全部 reason；未知与空串不伪造文案', () => {
+  const { skippedReasonLabel } = loadClient().internals
+  assert.match(skippedReasonLabel('state:rejected'), /^已驳回/)
+  assert.match(skippedReasonLabel('state:stale'), /^待复核/)
+  assert.match(skippedReasonLabel('state:disputed'), /^冲突未解决/)
+  assert.match(skippedReasonLabel('candidate-hold'), /^候选/)
+  assert.match(skippedReasonLabel('no-evidence'), /^证据不足/)
+  assert.match(skippedReasonLabel('version-mismatch'), /^版本不匹配/)
+  assert.match(skippedReasonLabel('limit'), /^超出条数预算/)
+  assert.match(skippedReasonLabel('budget-stop'), /^超出字符预算/)
+  assert.match(skippedReasonLabel('budget'), /^超出字符预算/)
+  assert.equal(skippedReasonLabel('weird-reason'), '')
+  assert.equal(skippedReasonLabel(''), '')
+  assert.equal(skippedReasonLabel(null), '')
+})
+
+test('holdReasonOf()：disputed/stale/rejected 按状态；candidate 按独立证据；usable 不扣留', () => {
+  const { holdReasonOf } = loadClient().internals
+  assert.equal(holdReasonOf({ state: 'disputed' }), 'state:disputed')
+  assert.equal(holdReasonOf({ state: 'stale' }), 'state:stale')
+  assert.equal(holdReasonOf({ state: 'rejected' }), 'state:rejected')
+  assert.equal(holdReasonOf({ state: 'candidate', independentSupportCount: 0 }), 'no-evidence')
+  assert.equal(holdReasonOf({ state: 'candidate', independentSupportCount: 3 }), 'candidate-hold')
+  assert.equal(holdReasonOf({ state: 'usable' }), '')
+  assert.equal(holdReasonOf(null), '')
+})
+
+test('reviewCommandOf() / bridgePreviewCommandOf()：派生可执行命令，缺 id 给空串', () => {
+  const { reviewActionFor, reviewCommandOf, bridgePreviewCommandOf, bridgeableOf } = loadClient().internals
+  assert.equal(reviewActionFor('candidate'), 'accept')
+  assert.equal(reviewActionFor('disputed'), 'resolve-conflict')
+  assert.equal(reviewActionFor('stale'), 'accept')
+  assert.equal(reviewActionFor('usable'), 'mark-stale')
+  assert.equal(reviewActionFor('rejected'), 'reopen')
+  assert.equal(reviewActionFor('weird'), '')
+  assert.deepEqual(
+    JSON.parse(reviewCommandOf({ id: 'l1', state: 'candidate', revision: 4 }).slice('dream_review '.length)),
+    { action: 'accept', lessonId: 'l1', expectedRevision: 4 },
+  )
+  assert.equal(
+    reviewCommandOf({ id: 'l2', state: 'disputed', revision: 0 }),
+    '',
+  )
+  assert.equal(reviewCommandOf({ id: 'l2', state: 'disputed', revision: 1 }), '', '不生成缺少冲突依据的命令')
+  assert.deepEqual(JSON.parse(reviewCommandOf({ id: 'l2', state: 'disputed', revision: 1 }, { resolution: 'prefer', note: '真实来源证实', affectedIds: ['l3'] }).slice('dream_review '.length)), {
+    action: 'resolve-conflict', lessonId: 'l2', expectedRevision: 1, resolution: 'prefer', note: '真实来源证实', affectedIds: ['l3'],
+  })
+  assert.equal(reviewCommandOf({ id: '', state: 'candidate', revision: 1 }), '')
+  assert.equal(reviewCommandOf(null), '')
+  assert.deepEqual(
+    JSON.parse(bridgePreviewCommandOf('l1', 'proj-mail').slice('dream_bridge '.length)),
+    { mode: 'preview', lessonIds: ['l1'], projectId: 'proj-mail' },
+  )
+  assert.deepEqual(
+    JSON.parse(bridgePreviewCommandOf('l1').slice('dream_bridge '.length)),
+    { mode: 'preview', lessonIds: ['l1'] },
+    '没有 projectId（全局经验）时不伪造参数',
+  )
+  assert.equal(bridgePreviewCommandOf('  '), '')
+  assert.equal(bridgeableOf('usable'), true)
+  assert.equal(bridgeableOf('candidate'), false)
+  const quoted = JSON.parse(bridgePreviewCommandOf('l1', 'project-"quoted', 'E:\\space name').slice('dream_bridge '.length))
+  assert.equal(quoted.projectId, 'project-"quoted')
+  assert.equal(quoted.path, 'E:\\space name/AGENTS.md')
+})
+
+test('回滚命令包含真实备份标识和目标路径，只对可回滚记录提供', () => {
+  const { bridgeRollbackCommandOf } = loadClient().internals
+  const row = { backupId: 'brg_61af1494-e14e-4ec4-a55b-824fb7a5e101', target: 'E:\\项目\\AGENTS.md', rollbackable: true }
+  assert.deepEqual(JSON.parse(bridgeRollbackCommandOf(row).slice('dream_bridge '.length)), { mode: 'rollback', backupId: row.backupId, path: row.target })
+  assert.equal(bridgeRollbackCommandOf({ ...row, rollbackable: false }), '')
+})
+
+test('shortHash()/bridgeActionLabel()：只展示前 12 位，动作有中文标签', () => {
+  const { shortHash, bridgeActionLabel } = loadClient().internals
+  assert.equal(shortHash('abcdefghijklmnop'), 'abcdefghijkl…')
+  assert.equal(shortHash('abc'), 'abc')
+  assert.equal(shortHash(''), '')
+  assert.equal(bridgeActionLabel('create'), '新建')
+  assert.equal(bridgeActionLabel('replace'), '替换管理块')
+  assert.equal(bridgeActionLabel('append'), '追加管理块')
+  assert.equal(bridgeActionLabel('unchanged'), '未改动')
+  assert.equal(bridgeActionLabel('weird'), 'weird')
+  assert.equal(bridgeActionLabel(''), '未知动作')
+})
+
+test('normalizeBridgeRecords()：只投影目标/时间/revision/哈希/可回滚，limit 截断但统计全量', () => {
+  const { normalizeBridgeRecords } = loadClient().internals
+  const now = new Date(2026, 8, 29, 12)
+  const short = 'a'.repeat(64)
+  const after = 'b'.repeat(64)
+  const raw = {
+    records: [
+      { backupId: 'app-1', at: localIso(2026, 9, 28), target: 'AGENTS.md', action: 'replace', beforeSha256: short, afterSha256: after, rollbackable: true, lessons: [{ lessonId: 'l1', revision: 3 }, 'l2@1'], blockBefore: '<!-- secret block -->' },
+      { backupId: 'app-2', at: '', target: 'docs/AGENTS.md', action: 'create', beforeSha256: '', afterSha256: after, rollbackable: false, rollbackReason: '当前管理块已被人工修改', lessons: [] },
+    ],
+    stats: { total: 2, rollbackable: 1 },
+  }
+  const vm = normalizeBridgeRecords(raw, now, 50)
+  assert.equal(vm.rows.length, 2)
+  assert.equal(vm.rows[0].actionLabel, '替换管理块')
+  assert.equal(vm.rows[0].lessonsText, 'l1@3、l2@1')
+  assert.equal(vm.rows[0].beforeShort, 'aaaaaaaaaaaa…')
+  assert.equal(vm.rows[0].afterShort, 'bbbbbbbbbbbb…')
+  assert.equal(vm.rows[0].rollbackText, '可回滚')
+  assert.equal(vm.rows[0].blockBefore, undefined, '不把管理块正文带进视图模型')
+  assert.equal(vm.rows[1].rollbackable, false)
+  assert.match(vm.rows[1].rollbackText, /^不可回滚：/)
+  assert.equal(vm.rows[1].atText, '时间未知')
+  assert.equal(vm.rows[1].lessonsText, '没有经验引用')
+  assert.deepEqual(
+    Object.keys(vm.rows[0]).sort(),
+    ['action', 'actionLabel', 'afterShort', 'at', 'atText', 'atTitle', 'beforeShort', 'id', 'lessons', 'lessonsText', 'rollbackReason', 'rollbackText', 'rollbackable', 'target'].sort(),
+  )
+  assert.equal(vm.total, 2)
+  assert.equal(vm.rollbackable, 1)
+  const capped = normalizeBridgeRecords(raw, now, 1)
+  assert.equal(capped.rows.length, 1)
+  assert.equal(capped.total, 2, 'limit 只截断渲染，总数仍按全量')
+  assert.deepEqual(toHost(normalizeBridgeRecords(null, now, 50)), { rows: [], total: 0, shown: 0, rollbackable: 0 })
+})
+
+test('fetchBridgeRecords()：只发 GET、命中 bridge 路由、兼容信封；错误带 code', async () => {
+  const seen = []
+  const { fetchBridgeRecords } = loadClient({
+    document: { baseURI: 'http://127.0.0.1:5141/dsh/ui/' },
+    fetch: async (url, init) => {
+      seen.push({ url, init })
+      return { ok: true, status: 200, json: async () => ({ ok: true, value: { records: [{ backupId: 'app-1' }], stats: { total: 1, rollbackable: 0 } } }) }
+    },
+  }).internals
+  const payload = await fetchBridgeRecords()
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].url, 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/bridge')
+  assert.equal(seen[0].init.method, undefined, '只读路由不得带 method')
+  assert.equal(seen[0].init.body, undefined, '只读路由不得带 body')
+  assert.deepEqual(Array.from(payload.records, (r) => r.backupId), ['app-1'])
+  const failing = loadClient({
+    fetch: async () => ({ ok: false, status: 409, json: async () => ({ ok: false, error: { code: 'conflict', message: 'busy' } }) }),
+  }).internals.fetchBridgeRecords
+  await assert.rejects(failing(), (error) => {
+    assert.equal(error.message, 'busy')
+    assert.equal(error.code, 'conflict')
+    return true
+  })
+})
+
+test('copyText()：无 clipboard / 被拒绝返回 false；成功返回 true（供失败回退可选中文本）', async () => {
+  const noClipboard = loadClient().internals.copyText
+  assert.equal(await noClipboard('x'), false)
+  const denied = loadClient({
+    navigator: { clipboard: { async writeText() { throw new Error('denied') } } },
+  }).internals.copyText
+  assert.equal(await denied('x'), false)
+  let written = ''
+  const ok = loadClient({
+    navigator: { clipboard: { async writeText(value) { written = value } } },
+  }).internals.copyText
+  assert.equal(await ok('dream_review { }'), true)
+  assert.equal(written, 'dream_review { }')
+  assert.equal(await ok(''), false, '空命令不写剪贴板')
 })

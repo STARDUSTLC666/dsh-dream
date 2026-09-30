@@ -1,4 +1,4 @@
-import { type Evidence, type EvidenceInput, type Lesson, type LessonInput, type LessonState, type ReviewDecision } from './knowledge.js';
+import { type Evidence, type EvidenceInput, type Lesson, type LessonInput, type LessonReviewResolution, type LessonState, type ReviewDecision } from './knowledge.js';
 /** events.jsonl 默认最多回放的行数（有界读取）。 */
 export declare const MAX_REPLAY_EVENTS = 200000;
 /** KnowledgeStore 构造选项（都可省略，保持 FREEZE 的 constructor(knowledgeDir) 可用）。 */
@@ -47,16 +47,29 @@ export declare class KnowledgeStore {
     /**
      * 创建候选经验。同 idempotencyKey + 同 requestHash 幂等；同指纹（文本 + 范围相同）确定性合并，
      * 只把新证据并入已有经验，不新增经验。
-     * R2′：有 read 证据 → 初始 usable（含 user-correction read 时 review=accepted/user）；只有 claimed 或无证据 → candidate。
+     * 经调用方核验的 read 来源可用于项目经验；来源读取不代表用户采纳，review 始终 unreviewed。
      */
-    createLesson(input: LessonInput, idempotencyKey: string): {
+    createLesson(input: LessonInput, idempotencyKey: string, options?: {
+        requireReview?: boolean;
+    }): {
         lesson: Lesson;
         created: boolean;
     };
+    /** 追加证据与更新引用共用一把锁；先检查 revision 与全部输入，不改变审阅状态。 */
+    attachEvidence(id: string, inputs: EvidenceInput[], expectedRevision: number, idempotencyKey: string): Lesson;
     /** 按 patch 更新经验；revision 不符抛 KnowledgeError('revision')（details 带 currentRevision）且不写。 */
     updateLesson(id: string, patch: Partial<Lesson>, expectedRevision: number, idempotencyKey: string): Lesson;
     /** 审阅经验：accepted → usable，rejected → rejected，unreviewed → candidate。 */
-    reviewLesson(id: string, decision: ReviewDecision, expectedRevision: number, idempotencyKey: string, actor?: string): Lesson;
+    reviewLesson(id: string, decision: ReviewDecision, expectedRevision: number, idempotencyKey: string, actor?: string, note?: string, resolution?: LessonReviewResolution): Lesson;
+    /**
+     * 批量原子更新（M2-②）：一个事件承载全部变更；先统一校验，
+     * 任一条不通过 → 零写入并抛 KnowledgeError（details.failedId）。
+     */
+    updateLessonsBatch(updates: Array<{
+        id: string;
+        patch: Partial<Lesson>;
+        expectedRevision: number;
+    }>, idempotencyKey: string): Lesson[];
     /** 状态迁移；不允许的迁移抛 KnowledgeError('invalid') 且不写。 */
     applyTransition(id: string, to: LessonState, expectedRevision: number, idempotencyKey: string): Lesson;
     /** 从事件完整重建派生索引与 checkpoint；不删除、不改写 events.jsonl / evidence.jsonl。 */
@@ -71,10 +84,11 @@ export declare class KnowledgeStore {
         badLines: number;
         orphanEvents: number;
         unsupportedVersions: number;
+        skippedEvents: number;
         firstReplayedEventId?: string;
         replayMode: 'full' | 'snapshot+tail';
         replayedEvents: number;
-        skippedEvents: number;
+        unreplayedEvents: number;
     };
     /** 只读诊断：锁、文件、计数与最近一次派生索引写失败；绝不获取锁、绝不写盘。 */
     diagnose(): {
@@ -113,6 +127,7 @@ export declare class KnowledgeStore {
             badLines: number;
             orphanEvents: number;
             unsupportedVersions: number;
+            skippedEvents: number;
             truncated: boolean;
             byState: Record<LessonState, number>;
         };
@@ -135,6 +150,7 @@ export declare class KnowledgeStore {
      *   在命中该幂等键的那一刻取快照；失败再退回当前实体（best effort）。
      */
     private resolveIdempotentLesson;
+    private resolveIdempotentBatch;
     private replayUntilIdempotencyKey;
     /** 顺序读取 JSONL 的非空行；每 TOUCH_EVERY_LINES 行调用一次 touch（长回放锁心跳）。 */
     private forEachLine;

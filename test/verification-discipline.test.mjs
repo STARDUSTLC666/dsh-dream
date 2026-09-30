@@ -32,33 +32,35 @@ const baseInput = {
   projectId: 'proj-discipline',
 }
 
-test('R2′：read 证据（session）→ 初始 usable', async () => {
+test('没有实际来源时，read 声明自动降为 claimed 候选', async () => {
   const env = makeEnv()
   try {
     const result = await env.learn.execute({
       ...baseInput,
       evidence: [{ kind: 'session', sessionId: 's-read', recordSeq: 1, summary: '实测确认', verification: 'read' }],
     })
-    assert.equal(result.state, 'usable')
+    assert.equal(result.state, 'candidate')
+    assert.equal(result.independentSupportCount, 0)
+    assert.equal(result.evidence[0].verification, 'claimed')
   } finally { rmSync(env.dir, { recursive: true, force: true }) }
 })
 
-test('R2′：user-correction + read → usable 且 review 记 actor=user / accepted', async () => {
+test('模型自称 user-correction + read 不得冒充用户采纳', async () => {
   const env = makeEnv()
   try {
     const result = await env.learn.execute({
       ...baseInput,
       evidence: [{ kind: 'user-correction', sessionId: 's-user', recordSeq: 2, summary: '用户明确纠正', verification: 'read' }],
     })
-    assert.equal(result.state, 'usable')
+    assert.equal(result.state, 'candidate')
     const tool = env.tools.find((item) => item.name === 'dream_learn')
     assert.ok(tool !== undefined)
     // 通过 store 读回 review 内容
     const { KnowledgeStore } = await import('../lib/knowledge-store.js')
     const lesson = new KnowledgeStore(join(env.dir, 'dreams', 'knowledge')).getLesson(result.lessonId)
-    assert.equal(lesson.state, 'usable')
-    assert.equal(lesson.review.decision, 'accepted')
-    assert.equal(lesson.review.actor, 'user')
+    assert.equal(lesson.state, 'candidate')
+    assert.equal(lesson.review.decision, 'unreviewed')
+    assert.equal(lesson.review.actor, undefined)
   } finally { rmSync(env.dir, { recursive: true, force: true }) }
 })
 

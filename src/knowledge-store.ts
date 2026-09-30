@@ -48,6 +48,7 @@ import {
   type KnowledgeEvent,
   type Lesson,
   type LessonInput,
+  type LessonReviewResolution,
   type LessonState,
   type ReviewDecision,
 } from './knowledge.js'
@@ -84,6 +85,10 @@ interface IdempotencyRecord {
   requestHash?: string
   /** 尾部事件回放时保留的"首次结果"快照；checkpoint 里只存 lessonId/requestHash。 */
   lesson?: Lesson
+  /** lesson.batch 的首次结果（多实体）。 */
+  batch?: Lesson[]
+  /** 批量涉及的实体 id；checkpoint 快照用。 */
+  lessonIds?: string[]
 }
 
 interface ReplayState {
@@ -95,6 +100,7 @@ interface ReplayState {
   badLines: number
   orphanEvents: number
   unsupportedVersions: number
+  skippedEvents: number
   firstReplayedEventId?: string
   replayMode: 'full' | 'snapshot+tail'
   idempotencyComplete: boolean
@@ -107,6 +113,7 @@ interface CheckpointCounters {
   badLines: number
   orphanEvents: number
   unsupportedVersions: number
+  skippedEvents: number
   evidenceCount: number
 }
 
@@ -118,7 +125,7 @@ interface CheckpointRecord {
   prefixBytes: number
   eventsTotal: number
   counters: CheckpointCounters
-  idempotency: Record<string, { lessonId: string; requestHash?: string }>
+  idempotency: Record<string, { lessonId: string; requestHash?: string; lessonIds?: string[] }>
   idempotencyComplete: boolean
 }
 
@@ -329,6 +336,8 @@ function acquireLock(lockPath: string, options: { timeoutMs: number; staleMs: nu
   }
 }
 
+const KNOWN_EVENT_KINDS = new Set(['lesson.create', 'lesson.update', 'lesson.review', 'lesson.batch', 'evidence.add'])
+
 /** 事件行形状检查（字段值再做 schema 校验）。 */
 function isEventShape(value: unknown): value is KnowledgeEvent {
   if (!isRecord(value) || value.schemaVersion !== 1) return false
@@ -347,6 +356,17 @@ function isEventShape(value: unknown): value is KnowledgeEvent {
         Number.isInteger(value.revision) &&
         value.payload !== undefined
       )
+    case 'lesson.batch': {
+      if (!isRecord(value.payload) || !Array.isArray(value.payload.updates)) return false
+      return value.payload.updates.every((item) =>
+        isRecord(item) &&
+        typeof item.lessonId === 'string' &&
+        item.lessonId !== '' &&
+        typeof item.revision === 'number' &&
+        Number.isInteger(item.revision) &&
+        isRecord(item.patch)
+      )
+    }
     case 'evidence.add':
       return value.payload !== undefined
     default:
@@ -381,6 +401,7 @@ function createEmptyReplayState(): ReplayState {
     badLines: 0,
     orphanEvents: 0,
     unsupportedVersions: 0,
+    skippedEvents: 0,
     replayMode: 'full',
     idempotencyComplete: true,
     entitiesFromSnapshot: false,
@@ -465,9 +486,9 @@ export class KnowledgeStore {
   /**
    * 创建候选经验。同 idempotencyKey + 同 requestHash 幂等；同指纹（文本 + 范围相同）确定性合并，
    * 只把新证据并入已有经验，不新增经验。
-   * R2′：有 read 证据 → 初始 usable（含 user-correction read 时 review=accepted/user）；只有 claimed 或无证据 → candidate。
+   * 经调用方核验的 read 来源可用于项目经验；来源读取不代表用户采纳，review 始终 unreviewed。
    */
-  createLesson(input: LessonInput, idempotencyKey: string): { lesson: Lesson; created: boolean } {
+  createLesson(input: LessonInput, idempotencyKey: string, options: { requireReview?: boolean } = {}): { lesson: Lesson; created: boolean } {
     assertIdempotencyKey(idempotencyKey)
     if (!isRecord(input)) throw new KnowledgeError('invalid', '经验输入必须是对象')
     if (input.evidence !== undefined && !Array.isArray(input.evidence)) {
@@ -476,6 +497,7 @@ export class KnowledgeStore {
     const evidenceInputs = input.evidence === undefined ? [] : input.evidence
     const requestHash = this.hashRequest({
       operation: 'lesson.create',
+      ...(options.requireReview === true ? { requireReview: true } : {}),
       kind: input.kind === undefined ? null : input.kind,
       title: input.title === undefined ? null : input.title,
       action: input.action === undefined ? null : input.action,
@@ -544,27 +566,19 @@ export class KnowledgeStore {
           .map((id) => state.evidence.get(id))
           .filter((item): item is Evidence => item !== undefined)
         const hasRead = mergedEvidence.some((item) => item.verification === 'read')
-        const hasUserCorrectionRead = mergedEvidence.some((item) => item.kind === 'user-correction' && item.verification === 'read')
 
         const patch: Partial<Lesson> = {}
         if (newIds.length > 0) {
           patch.evidenceIds = mergedIds
-          patch.independentSupportCount = mergeEvidenceSupport({ evidenceIds: mergedIds }, Array.from(state.evidence.values()))
         }
+        const supportCount = mergeEvidenceSupport({ evidenceIds: mergedIds }, Array.from(state.evidence.values()))
+        if (supportCount !== existing.independentSupportCount) patch.independentSupportCount = supportCount
         // R2′：候选经验遇到 read 证据可升为 usable；disputed/stale/rejected 状态保持不变。
-        if (existing.state === 'candidate' && hasRead) {
+        if (existing.state === 'candidate' && hasRead && !options.requireReview) {
           patch.state = 'usable'
-          if (hasUserCorrectionRead) {
-            patch.review = { decision: 'accepted', actor: 'user', at: now }
-          } else if (existing.review.decision !== 'unreviewed') {
+          if (existing.review.decision !== 'unreviewed') {
             patch.review = { decision: 'unreviewed' }
           }
-        } else if (
-          existing.state === 'usable' &&
-          hasUserCorrectionRead &&
-          existing.review.decision !== 'accepted'
-        ) {
-          patch.review = { decision: 'accepted', actor: 'user', at: now }
         }
         if (Object.keys(patch).length === 0) return { lesson: clone(existing), created: false }
         const merged = this.appendLessonUpdate(state, existing, patch, idempotencyKey, requestHash, touch)
@@ -576,11 +590,8 @@ export class KnowledgeStore {
         .map((id) => state.evidence.get(id))
         .filter((item): item is Evidence => item !== undefined)
       const hasRead = allEvidence.some((item) => item.verification === 'read')
-      const hasUserCorrectionRead = allEvidence.some((item) => item.kind === 'user-correction' && item.verification === 'read')
-      const initialState: LessonState = hasRead ? 'usable' : 'candidate'
-      const initialReview: Lesson['review'] = hasUserCorrectionRead
-        ? { decision: 'accepted', actor: 'user', at: now }
-        : { decision: 'unreviewed' }
+      const initialState: LessonState = hasRead && !options.requireReview ? 'usable' : 'candidate'
+      const initialReview: Lesson['review'] = { decision: 'unreviewed' }
 
       const lesson = validateLesson({
         schemaVersion: 1,
@@ -619,6 +630,35 @@ export class KnowledgeStore {
       }
       this.writeIndex(state, touch)
       return { lesson: clone(stored), created: true }
+    })
+  }
+
+  /** 追加证据与更新引用共用一把锁；先检查 revision 与全部输入，不改变审阅状态。 */
+  attachEvidence(id: string, inputs: EvidenceInput[], expectedRevision: number, idempotencyKey: string): Lesson {
+    assertIdempotencyKey(idempotencyKey)
+    if (!Array.isArray(inputs) || inputs.length === 0) throw new KnowledgeError('invalid', 'attach-evidence 需要非空 evidence 数组')
+    const requestHash = this.hashRequest({ operation: 'lesson.attach-evidence', id, inputs })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
+      const cached = state.idempotency.get(idempotencyKey)
+      if (cached) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const lesson = this.resolveIdempotentLesson(state, idempotencyKey)
+        if (!lesson) throw new KnowledgeError('io', '无法恢复追加证据结果')
+        return lesson
+      }
+      const previous = state.lessons.get(id)
+      if (!previous) throw new KnowledgeError('invalid', '经验不存在：' + id)
+      if (previous.revision !== expectedRevision) throw new KnowledgeError('revision', '经验 revision 已变化', { currentRevision: previous.revision })
+      for (const item of inputs) validateEvidence({ ...item, id: 'evd_probe', schemaVersion: 1, observedAt: item.observedAt ?? new Date().toISOString() })
+      const ids = [...previous.evidenceIds]
+      for (const item of inputs) {
+        const evidence = this.persistEvidenceLocked(item, state)
+        if (!ids.includes(evidence.id)) ids.push(evidence.id)
+      }
+      const count = mergeEvidenceSupport({ evidenceIds: ids }, [...state.evidence.values()])
+      if (ids.length === previous.evidenceIds.length && count === previous.independentSupportCount) return clone(previous)
+      return clone(this.appendLessonUpdate(state, previous, { evidenceIds: ids, independentSupportCount: count }, idempotencyKey, requestHash, touch))
     })
   }
 
@@ -666,11 +706,21 @@ export class KnowledgeStore {
     expectedRevision: number,
     idempotencyKey: string,
     actor?: string,
+    note?: string,
+    resolution?: LessonReviewResolution,
   ): Lesson {
     assertIdempotencyKey(idempotencyKey)
     if (!isEnum(decision, REVIEW_DECISIONS)) throw new KnowledgeError('invalid', 'review decision 取值不合法')
     const maskedActor = actor === undefined ? undefined : this.mask ? maskSecrets(actor) : actor
-    const requestHash = this.hashRequest({ operation: 'lesson.review', lessonId: id, decision, actor: maskedActor === undefined ? null : maskedActor })
+    const maskedNote = note === undefined ? undefined : this.mask ? maskSecrets(note) : note
+    const requestHash = this.hashRequest({
+      operation: 'lesson.review',
+      lessonId: id,
+      decision,
+      actor: maskedActor === undefined ? null : maskedActor,
+      note: maskedNote === undefined ? null : maskedNote,
+      resolution: resolution === undefined ? null : resolution,
+    })
     return this.withLock((touch) => {
       const state = this.loadCompleteState(touch)
       const cached = state.idempotency.get(idempotencyKey)
@@ -694,17 +744,21 @@ export class KnowledgeStore {
         throw new KnowledgeError('invalid', '不允许的审阅迁移：' + lesson.state + ' → ' + nextState, { lessonId: id })
       }
       const now = new Date().toISOString()
+      const nextReview: Lesson['review'] = { decision, at: now }
+      if (maskedActor !== undefined) nextReview.actor = maskedActor
+      if (maskedNote !== undefined) nextReview.note = maskedNote
+      if (resolution !== undefined) nextReview.resolution = resolution
       const merged = validateLesson({
         ...lesson,
         state: nextState,
-        review: maskedActor === undefined
-          ? { decision, at: now }
-          : { decision, actor: maskedActor, at: now },
+        review: nextReview,
         revision: lesson.revision + 1,
         updatedAt: now,
       })
-      const payload: { decision: ReviewDecision; actor?: string; state: LessonState } = { decision, state: nextState }
+      const payload: { decision: ReviewDecision; actor?: string; state: LessonState; note?: string; resolution?: LessonReviewResolution } = { decision, state: nextState }
       if (maskedActor !== undefined) payload.actor = maskedActor
+      if (maskedNote !== undefined) payload.note = maskedNote
+      if (resolution !== undefined) payload.resolution = resolution
       const event: KnowledgeEvent = {
         schemaVersion: 1,
         id: 'evt_' + randomUUID(),
@@ -723,6 +777,97 @@ export class KnowledgeStore {
       }
       this.writeIndex(state, touch)
       return clone(merged)
+    })
+  }
+
+  /**
+   * 批量原子更新（M2-②）：一个事件承载全部变更；先统一校验，
+   * 任一条不通过 → 零写入并抛 KnowledgeError（details.failedId）。
+   */
+  updateLessonsBatch(
+    updates: Array<{ id: string; patch: Partial<Lesson>; expectedRevision: number }>,
+    idempotencyKey: string,
+  ): Lesson[] {
+    assertIdempotencyKey(idempotencyKey)
+    if (!Array.isArray(updates) || updates.length === 0) throw new KnowledgeError('invalid', 'updates 必须是非空数组')
+    for (const update of updates) {
+      if (!isRecord(update) || typeof update.id !== 'string' || update.id.trim() === '' || !isRecord(update.patch)) {
+        throw new KnowledgeError('invalid', 'updates 每项必须包含 id/patch/expectedRevision')
+      }
+      if (typeof update.expectedRevision !== 'number' || !Number.isInteger(update.expectedRevision)) {
+        throw new KnowledgeError('invalid', 'expectedRevision 必须是整数', { failedId: update.id })
+      }
+    }
+    const requestHash = this.hashRequest({
+      operation: 'lesson.batch',
+      updates: updates.map((update) => ({ id: update.id, expectedRevision: update.expectedRevision, patch: this.hashablePatch(update.patch) })),
+    })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
+      const cached = state.idempotency.get(idempotencyKey)
+      if (cached !== undefined) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const batch = this.resolveIdempotentBatch(state, idempotencyKey)
+        if (batch === undefined) throw new KnowledgeError('io', '无法恢复批量幂等键的历史结果：' + idempotencyKey, { idempotencyKey })
+        return batch
+      }
+      const now = new Date().toISOString()
+      const planned: Array<{ previous: Lesson; merged: Lesson; patch: Partial<Lesson> }> = []
+      for (const update of updates) {
+        const previous = state.lessons.get(update.id)
+        if (previous === undefined) throw new KnowledgeError('invalid', '经验不存在：' + update.id, { failedId: update.id })
+        if (previous.revision !== update.expectedRevision) {
+          throw new KnowledgeError('revision', '经验 ' + update.id + ' 期望 revision ' + update.expectedRevision + '，实际 ' + previous.revision, {
+            failedId: update.id,
+            expectedRevision: update.expectedRevision,
+            currentRevision: previous.revision,
+          })
+        }
+        const clean = this.cleanPatch(update.patch)
+        if (clean.state !== undefined && clean.state !== previous.state && !canTransition(previous.state, clean.state)) {
+          throw new KnowledgeError('invalid', '不允许的状态迁移：' + previous.state + ' → ' + clean.state, { failedId: update.id })
+        }
+        if (clean.evidenceIds !== undefined) {
+          clean.independentSupportCount = mergeEvidenceSupport({ evidenceIds: clean.evidenceIds }, Array.from(state.evidence.values()))
+        }
+        const merged = this.maskLesson(validateLesson({
+          ...previous,
+          ...clean,
+          id: previous.id,
+          schemaVersion: 1,
+          revision: previous.revision + 1,
+          updatedAt: now,
+        }))
+        planned.push({ previous, merged, patch: clean })
+      }
+      const event: KnowledgeEvent = {
+        schemaVersion: 1,
+        id: 'evt_' + randomUUID(),
+        at: now,
+        kind: 'lesson.batch',
+        idempotencyKey,
+        requestHash,
+        payload: {
+          updates: planned.map(({ previous, merged, patch: clean }) => {
+            const patch: Partial<Lesson> = {}
+            for (const key of Object.keys(clean)) {
+              ;(patch as Record<string, unknown>)[key] = (merged as unknown as Record<string, unknown>)[key]
+            }
+            return { lessonId: previous.id, revision: merged.revision, patch }
+          }),
+        },
+      }
+      this.appendEvent(state, event)
+      const applied: Lesson[] = []
+      for (const { merged } of planned) {
+        state.lessons.set(merged.id, merged)
+        applied.push(merged)
+      }
+      if (!state.idempotency.has(idempotencyKey)) {
+        state.idempotency.set(idempotencyKey, { lessonId: applied[0].id, requestHash, batch: applied, lessonIds: applied.map((lesson) => lesson.id) })
+      }
+      this.writeIndex(state, touch)
+      return clone(applied)
     })
   }
 
@@ -774,10 +919,11 @@ export class KnowledgeStore {
     badLines: number
     orphanEvents: number
     unsupportedVersions: number
+    skippedEvents: number
     firstReplayedEventId?: string
     replayMode: 'full' | 'snapshot+tail'
     replayedEvents: number
-    skippedEvents: number
+    unreplayedEvents: number
   } {
     const state = this.loadAll()
     const byState = emptyStateCounts()
@@ -791,10 +937,11 @@ export class KnowledgeStore {
       badLines: state.badLines,
       orphanEvents: state.orphanEvents,
       unsupportedVersions: state.unsupportedVersions,
+      skippedEvents: state.skippedEvents,
       firstReplayedEventId: state.firstReplayedEventId,
       replayMode: state.replayMode,
       replayedEvents: state.replayedEvents,
-      skippedEvents: Math.max(0, state.events - state.replayedEvents),
+      unreplayedEvents: Math.max(0, state.events - state.replayedEvents),
     }
   }
 
@@ -815,6 +962,7 @@ export class KnowledgeStore {
       badLines: number
       orphanEvents: number
       unsupportedVersions: number
+      skippedEvents: number
       truncated: boolean
       byState: Record<LessonState, number>
     }
@@ -855,6 +1003,7 @@ export class KnowledgeStore {
         badLines: number
         orphanEvents: number
         unsupportedVersions: number
+        skippedEvents: number
         truncated: boolean
         byState: Record<LessonState, number>
       }
@@ -875,6 +1024,7 @@ export class KnowledgeStore {
         badLines: state.badLines,
         orphanEvents: state.orphanEvents,
         unsupportedVersions: state.unsupportedVersions,
+        skippedEvents: state.skippedEvents,
         truncated: state.events > this.maxReplayEvents,
         byState,
       },
@@ -961,21 +1111,36 @@ export class KnowledgeStore {
     if (entry === undefined) return undefined
     if (entry.lesson !== undefined) return clone(entry.lesson)
     const exact = this.replayUntilIdempotencyKey(idempotencyKey)
-    if (exact !== undefined) return clone(exact)
+    if (exact !== undefined && exact.lesson !== undefined) return clone(exact.lesson)
     const current = state.lessons.get(entry.lessonId)
     return current === undefined ? undefined : clone(current)
   }
 
-  private replayUntilIdempotencyKey(idempotencyKey: string): Lesson | undefined {
+  private resolveIdempotentBatch(state: ReplayState, idempotencyKey: string): Lesson[] | undefined {
+    const entry = state.idempotency.get(idempotencyKey)
+    if (entry === undefined) return undefined
+    if (entry.batch !== undefined) return clone(entry.batch)
+    const exact = this.replayUntilIdempotencyKey(idempotencyKey)
+    if (exact !== undefined && exact.batch !== undefined) return clone(exact.batch)
+    const ids = entry.lessonIds !== undefined ? entry.lessonIds : [entry.lessonId]
+    const out: Lesson[] = []
+    for (const id of ids) {
+      const lesson = state.lessons.get(id)
+      if (lesson !== undefined) out.push(clone(lesson))
+    }
+    return out.length === 0 ? undefined : out
+  }
+
+  private replayUntilIdempotencyKey(idempotencyKey: string): IdempotencyRecord | undefined {
     const state = createEmptyReplayState()
-    let found: Lesson | undefined
+    let found: IdempotencyRecord | undefined
     try {
       this.forEachLine(this.eventsPath, 0, (line) => {
         state.events++
         this.applyEventLine(state, line)
         const hit = state.idempotency.get(idempotencyKey)
-        if (hit !== undefined && hit.lesson !== undefined) {
-          found = hit.lesson
+        if (hit !== undefined && (hit.lesson !== undefined || hit.batch !== undefined)) {
+          found = hit
           return false
         }
         return true
@@ -1058,6 +1223,7 @@ export class KnowledgeStore {
       state.badLines = snapshot.checkpoint.counters.badLines
       state.orphanEvents = snapshot.checkpoint.counters.orphanEvents
       state.unsupportedVersions = snapshot.checkpoint.counters.unsupportedVersions
+      state.skippedEvents = snapshot.checkpoint.counters.skippedEvents
       state.snapshotEvidenceCount = snapshot.checkpoint.counters.evidenceCount
       state.idempotencyComplete = snapshot.checkpoint.idempotencyComplete === true
       state.lastEventId = snapshot.checkpoint.lastEventId
@@ -1165,6 +1331,11 @@ export class KnowledgeStore {
       state.unsupportedVersions++
       return
     }
+    const kind = raw.kind
+    if (typeof kind !== 'string' || !KNOWN_EVENT_KINDS.has(kind)) {
+      state.skippedEvents++
+      return
+    }
     if (!isEventShape(raw)) {
       state.badLines++
       return
@@ -1216,9 +1387,10 @@ export class KnowledgeStore {
             state.orphanEvents++
             return
           }
-          const review = event.payload.actor === undefined
-            ? { decision: event.payload.decision, at: event.at }
-            : { decision: event.payload.decision, actor: event.payload.actor, at: event.at }
+          const review: Lesson['review'] = { decision: event.payload.decision, at: event.at }
+          if (event.payload.actor !== undefined) review.actor = event.payload.actor
+          if (event.payload.note !== undefined) review.note = event.payload.note
+          if (event.payload.resolution !== undefined) review.resolution = event.payload.resolution
           const merged = validateLesson({
             ...previous,
             review,
@@ -1234,6 +1406,39 @@ export class KnowledgeStore {
           state.lessons.set(merged.id, merged)
           if (!state.idempotency.has(event.idempotencyKey)) {
             const record: IdempotencyRecord = { lessonId: merged.id, lesson: merged }
+            if (event.requestHash !== undefined) record.requestHash = event.requestHash
+            state.idempotency.set(event.idempotencyKey, record)
+          }
+          return
+        }
+        case 'lesson.batch': {
+          const applied: Lesson[] = []
+          const payload = event.payload as { updates: Array<{ lessonId: string; revision: number; patch: Partial<Lesson> }> }
+          for (const item of payload.updates) {
+            const previous = state.lessons.get(item.lessonId)
+            if (previous === undefined || item.revision <= previous.revision) {
+              state.orphanEvents++
+              continue
+            }
+            const merged = validateLesson({
+              ...previous,
+              ...item.patch,
+              id: previous.id,
+              revision: item.revision,
+              updatedAt: event.at,
+            })
+            if (merged.state !== previous.state && !canTransition(previous.state, merged.state)) {
+              state.orphanEvents++
+              continue
+            }
+            state.lessons.set(merged.id, merged)
+            applied.push(merged)
+          }
+          if (!state.idempotency.has(event.idempotencyKey)) {
+            const first = applied[0]
+            const record: IdempotencyRecord = first === undefined
+              ? { lessonId: payload.updates[0] === undefined ? '' : payload.updates[0].lessonId }
+              : { lessonId: first.id, batch: applied, lessonIds: applied.map((lesson) => lesson.id) }
             if (event.requestHash !== undefined) record.requestHash = event.requestHash
             state.idempotency.set(event.idempotencyKey, record)
           }
@@ -1272,6 +1477,7 @@ export class KnowledgeStore {
     const hash = typeof input.sourceHash === 'string' && input.sourceHash !== '' ? input.sourceHash : undefined
     if (sessionKey === undefined && hash === undefined) return undefined
     for (const item of state.evidence.values()) {
+      if (input.verification === 'claimed' && item.verification === 'read') continue
       if (sessionKey !== undefined && evidenceSessionKey(item) === sessionKey) return item
       if (hash !== undefined && item.sourceHash === hash) return item
     }
@@ -1282,11 +1488,11 @@ export class KnowledgeStore {
   private persistEvidenceLocked(input: EvidenceInput, state: ReplayState): Evidence {
     if (!isRecord(input)) throw new KnowledgeError('invalid', '证据输入必须是对象')
     const existing = this.findEvidenceByNaturalKey(state, input)
-    if (existing !== undefined) return existing
+    if (existing !== undefined && !(existing.verification === 'claimed' && input.verification === 'read')) return existing
     const now = new Date().toISOString()
     const raw: Evidence = {
       schemaVersion: 1,
-      id: 'evd_' + randomUUID(),
+      id: existing?.id ?? 'evd_' + randomUUID(),
       kind: input.kind,
       observedAt: typeof input.observedAt === 'string' ? input.observedAt : now,
       summary: input.summary,
@@ -1296,6 +1502,7 @@ export class KnowledgeStore {
     if (input.recordSeq !== undefined) raw.recordSeq = input.recordSeq
     if (input.projectId !== undefined) raw.projectId = input.projectId
     if (input.sourceHash !== undefined) raw.sourceHash = input.sourceHash
+    if (input.verificationReason !== undefined) raw.verificationReason = input.verificationReason
     const evidence = this.maskEvidence(validateEvidence(raw))
     const natural = evidenceNaturalKey(evidence)
     const event: KnowledgeEvent = {
@@ -1360,13 +1567,18 @@ export class KnowledgeStore {
 
   private maskLesson(lesson: Lesson): Lesson {
     if (!this.mask) return lesson
-    return {
+    const masked: Lesson = {
       ...lesson,
       title: maskSecrets(lesson.title),
       action: maskSecrets(lesson.action),
       when: maskSecrets(lesson.when),
       exceptions: lesson.exceptions.map((item) => maskSecrets(item)),
     }
+    if (lesson.review.note !== undefined) {
+      const refs = [lesson.id, ...(lesson.review.resolution?.affectedIds ?? []), ...(lesson.review.resolution?.targetId ? [lesson.review.resolution.targetId] : [])]
+      masked.review = { ...lesson.review, note: maskSecrets(lesson.review.note, refs) }
+    }
+    return masked
   }
 
   private maskEvidence(evidence: Evidence): Evidence {
@@ -1456,6 +1668,7 @@ export class KnowledgeStore {
       badLines: counterNumber('badLines'),
       orphanEvents: counterNumber('orphanEvents'),
       unsupportedVersions: counterNumber('unsupportedVersions'),
+      skippedEvents: counterNumber('skippedEvents'),
       evidenceCount: counterNumber('evidenceCount'),
     }
 
@@ -1493,14 +1706,18 @@ export class KnowledgeStore {
         if (!isRecord(value) || typeof value.lessonId !== 'string' || value.lessonId === '') return undefined
         const record: IdempotencyRecord = { lessonId: value.lessonId }
         if (typeof value.requestHash === 'string') record.requestHash = value.requestHash
+        if (Array.isArray(value.lessonIds)) {
+          record.lessonIds = value.lessonIds.filter((id): id is string => typeof id === 'string')
+        }
         idempotency.set(key, record)
       }
     }
-    const serialized: Record<string, { lessonId: string; requestHash?: string }> = {}
+    const serialized: Record<string, { lessonId: string; requestHash?: string; lessonIds?: string[] }> = {}
     for (const [key, entry] of idempotency) {
-      serialized[key] = entry.requestHash === undefined
-        ? { lessonId: entry.lessonId }
-        : { lessonId: entry.lessonId, requestHash: entry.requestHash }
+      const record: { lessonId: string; requestHash?: string; lessonIds?: string[] } = { lessonId: entry.lessonId }
+      if (entry.requestHash !== undefined) record.requestHash = entry.requestHash
+      if (entry.lessonIds !== undefined) record.lessonIds = entry.lessonIds
+      serialized[key] = record
     }
     return {
       lessons,
@@ -1524,11 +1741,12 @@ export class KnowledgeStore {
     const size = statSync(this.eventsPath).size
     if (size > 0 && (state.lastEventId === undefined || state.lastEventId === '')) return undefined
     const prefixBytes = Math.min(size, PREFIX_HASH_BYTES)
-    const idempotency: Record<string, { lessonId: string; requestHash?: string }> = {}
+    const idempotency: Record<string, { lessonId: string; requestHash?: string; lessonIds?: string[] }> = {}
     for (const [key, entry] of state.idempotency) {
-      idempotency[key] = entry.requestHash === undefined
-        ? { lessonId: entry.lessonId }
-        : { lessonId: entry.lessonId, requestHash: entry.requestHash }
+      const record: { lessonId: string; requestHash?: string; lessonIds?: string[] } = { lessonId: entry.lessonId }
+      if (entry.requestHash !== undefined) record.requestHash = entry.requestHash
+      if (entry.lessonIds !== undefined) record.lessonIds = entry.lessonIds
+      idempotency[key] = record
     }
     return {
       offset: size,
@@ -1541,6 +1759,7 @@ export class KnowledgeStore {
         badLines: state.badLines,
         orphanEvents: state.orphanEvents,
         unsupportedVersions: state.unsupportedVersions,
+        skippedEvents: state.skippedEvents,
         evidenceCount: state.evidence.size,
       },
       idempotency,

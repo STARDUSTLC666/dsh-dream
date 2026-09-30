@@ -22,6 +22,8 @@ export interface RetrievalQuery {
     packageVersion?: string;
     /** 显式包名上下文；与 query 文本一起用于识别 applicability[].package（R3）。 */
     packageName?: string;
+    /** 任务目标平台；宿主工具缺省使用当前系统，跨平台任务可显式指定。 */
+    platform?: string;
     /** 是否返回 candidate；默认 true（面板/审计需要）。dream_context 默认传 false（R1）。 */
     includeCandidates?: boolean;
     /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
@@ -73,6 +75,13 @@ export declare function rankInversionCount(rankedLessonIds: string[], result: {
         reason: string;
     }>;
 }): number;
+/** skipped.reason 的中文标签（面板与工具共用；未知 reason 原样返回）。 */
+export declare function skippedReasonLabel(reason: string): string;
+/**
+ * 浏览态（无 query 上下文）下一条经验的确定性扣留原因；usable 返回 undefined。
+ * 与 retrieveLessons 的优先级一致：no-evidence 先于 candidate-hold；version-mismatch 需 query/包名，不适用。
+ */
+export declare function deterministicHoldReason(lesson: Pick<Lesson, 'state' | 'independentSupportCount'>): string | undefined;
 /** 解析 limit/maxChars，套用默认值与硬上限。 */
 export declare function resolveRetrievalBudget(q: Pick<RetrievalQuery, 'limit' | 'maxChars'>): {
     limit: number;
@@ -80,6 +89,9 @@ export declare function resolveRetrievalBudget(q: Pick<RetrievalQuery, 'limit' |
 };
 /** 简单 semver 条件匹配：支持 = / > / >= / < / <= / ^ / ~、逗号或空格 AND、|| OR、x/* 通配。 */
 export declare function versionSatisfies(versionText: string, rangeText: string): boolean;
+export declare function normalizePlatform(value: string): string;
+/** 显式任务平台优先，其次无歧义的任务文本，最后宿主平台。 */
+export declare function taskPlatform(query: string, explicit?: string, fallback?: string): string | undefined;
 /**
  * 任务相关经验检索。只返回 global 或与查询项目/工作区精确匹配的记录；
  * 未知项目（未给 projectId/workspaceRoot）时只返回 global，绝不跨项目扫描。

@@ -468,7 +468,7 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
     inject(names, callback) { injected.push(names); callback(webCtx) },
   }
   apply(ctx, { journalDir: dir })
-  assert.deepEqual(injected, [['webServer']])
+  assert.deepEqual(injected, [['webServer'], ['connection']])
   assert.equal(routes.length, 3)
   const journalRoute = routes.find((route) => route.path === DREAM_ROUTE)
   const knowledgeRoute = routes.find((route) => route.path === DREAM_KNOWLEDGE_ROUTE)

@@ -59,6 +59,8 @@ export declare class KnowledgeStore {
     attachEvidence(id: string, inputs: EvidenceInput[], expectedRevision: number, idempotencyKey: string): Lesson;
     /** 按 patch 更新经验；revision 不符抛 KnowledgeError('revision')（details 带 currentRevision）且不写。 */
     updateLesson(id: string, patch: Partial<Lesson>, expectedRevision: number, idempotencyKey: string): Lesson;
+    /** 记录一次使用反馈，不改变审阅、状态、证据和最后核验时间。 */
+    recordFeedback(id: string, vote: 'useful' | 'not-applicable', note: string | undefined, expectedRevision: number, idempotencyKey: string): Lesson;
     /** 审阅经验：accepted → usable，rejected → rejected，unreviewed → candidate。 */
     reviewLesson(id: string, decision: ReviewDecision, expectedRevision: number, idempotencyKey: string, actor?: string, note?: string, resolution?: LessonReviewResolution): Lesson;
     /**

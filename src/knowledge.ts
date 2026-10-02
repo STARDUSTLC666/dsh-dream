@@ -49,12 +49,20 @@ export interface Lesson {
   /** 独立证据数（同证据复述不增加）。 */
   independentSupportCount: number
   review: { decision: ReviewDecision; actor?: string; at?: string; note?: string; resolution?: LessonReviewResolution }
+  /** 使用反馈独立于审阅和证据；只保留最近 20 次明细，事件流保留历史。 */
+  feedback?: LessonFeedback
   createdAt: string
   updatedAt: string
   lastValidatedAt?: string
   reviewAfter?: string
   supersedes?: string[]
   conflictIds: string[]
+}
+
+export interface LessonFeedback {
+  useful: number
+  notApplicable: number
+  recent: Array<{ vote: 'useful' | 'not-applicable'; at: string; note?: string }>
 }
 
 /** 一条证据：只存脱敏摘要 + 定位信息。 */
@@ -237,6 +245,23 @@ function readReview(value: unknown): Lesson['review'] {
   return review
 }
 
+function readFeedback(value: unknown): LessonFeedback | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) fail('feedback', '必须是对象')
+  for (const key of ['useful', 'notApplicable'] as const) {
+    if (!Number.isSafeInteger(value[key]) || (value[key] as number) < 0) fail('feedback.' + key, '必须是非负安全整数')
+  }
+  if (!Array.isArray(value.recent) || value.recent.length > 20) fail('feedback.recent', '最多 20 条')
+  const recent: LessonFeedback['recent'] = value.recent.map((item: unknown) => {
+    if (!isRecord(item) || (item.vote !== 'useful' && item.vote !== 'not-applicable')) fail('feedback.recent.vote', '取值不合法')
+    const at = readIsoDate(item.at, 'feedback.recent.at', true) as string
+    const note = readString(item.note, 'feedback.recent.note')
+    if (note !== undefined && note.length > REVIEW_NOTE_MAX_LENGTH) fail('feedback.recent.note', '超过长度上限')
+    return { vote: item.vote, at, ...(note === undefined ? {} : { note }) }
+  })
+  return { useful: value.useful as number, notApplicable: value.notApplicable as number, recent }
+}
+
 /** 当前内存模型 / 写盘的 lesson schemaVersion。 */
 export const LESSON_SCHEMA_VERSION = 1
 
@@ -329,6 +354,8 @@ export function validateLesson(value: unknown, options: ValidateLessonOptions = 
   if (lastValidatedAt !== undefined) lesson.lastValidatedAt = lastValidatedAt
   if (reviewAfter !== undefined) lesson.reviewAfter = reviewAfter
   if (supersedes !== undefined) lesson.supersedes = supersedes
+  const feedback = readFeedback(value.feedback)
+  if (feedback !== undefined) lesson.feedback = feedback
   return lesson
 }
 

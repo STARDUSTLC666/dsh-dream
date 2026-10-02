@@ -106,6 +106,8 @@ export declare function limitFromQuery(raw: unknown, fallback?: number): number;
 export declare function knowledgeDirOf(options: DreamWebOptions, journalDir?: string): string;
 /** 解析后的 bridgeDir：显式路径优先，否则 = <journalDir>/bridge。 */
 export declare function bridgeDirOf(options: DreamWebOptions, journalDir?: string): string;
+/** 递归脱敏；结构化绝对路径按目录分段，避免 Unix 分隔符把正常路径连成长令牌。 */
+export declare function maskDeep<T>(value: T, key?: string): T;
 /** 知识目录不存在（或尚未建立）时的空载荷：不写盘、不报 404。 */
 export declare function emptyKnowledgePayload(): KnowledgeWebPayload;
 /**

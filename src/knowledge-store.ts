@@ -699,6 +699,36 @@ export class KnowledgeStore {
     })
   }
 
+  /** 记录一次使用反馈，不改变审阅、状态、证据和最后核验时间。 */
+  recordFeedback(id: string, vote: 'useful' | 'not-applicable', note: string | undefined, expectedRevision: number, idempotencyKey: string): Lesson {
+    assertIdempotencyKey(idempotencyKey)
+    if (vote !== 'useful' && vote !== 'not-applicable') throw new KnowledgeError('invalid', '反馈必须是 useful / not-applicable')
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new KnowledgeError('invalid', '反馈必须带有效的经验版本')
+    if (note !== undefined && (typeof note !== 'string' || note.length > 500)) throw new KnowledgeError('invalid', '反馈备注最多 500 字符')
+    const cleanNote = note === undefined || note.trim() === '' ? undefined : this.mask ? maskSecrets(note.trim()) : note.trim()
+    const requestHash = this.hashRequest({ operation: 'lesson.feedback', id, vote, note: cleanNote ?? null, expectedRevision })
+    return this.withLock((touch) => {
+      const state = this.loadCompleteState(touch)
+      const cached = state.idempotency.get(idempotencyKey)
+      if (cached !== undefined) {
+        this.assertSameRequest(cached, requestHash, idempotencyKey)
+        const result = this.resolveIdempotentLesson(state, idempotencyKey)
+        if (result === undefined) throw new KnowledgeError('io', '无法恢复反馈结果')
+        return result
+      }
+      const previous = state.lessons.get(id)
+      if (previous === undefined) throw new KnowledgeError('invalid', '经验不存在：' + id)
+      if (previous.revision !== expectedRevision) throw new KnowledgeError('revision', '经验已更新，请刷新后再反馈', { currentRevision: previous.revision })
+      const old = previous.feedback ?? { useful: 0, notApplicable: 0, recent: [] }
+      const feedback: NonNullable<Lesson['feedback']> = {
+        useful: old.useful + (vote === 'useful' ? 1 : 0),
+        notApplicable: old.notApplicable + (vote === 'not-applicable' ? 1 : 0),
+        recent: [...old.recent, { vote, at: new Date().toISOString(), ...(cleanNote === undefined ? {} : { note: cleanNote }) }].slice(-20),
+      }
+      return clone(this.appendLessonUpdate(state, previous, { feedback }, idempotencyKey, requestHash, touch))
+    })
+  }
+
   /** 审阅经验：accepted → usable，rejected → rejected，unreviewed → candidate。 */
   reviewLesson(
     id: string,
@@ -1577,6 +1607,10 @@ export class KnowledgeStore {
     if (lesson.review.note !== undefined) {
       const refs = [lesson.id, ...(lesson.review.resolution?.affectedIds ?? []), ...(lesson.review.resolution?.targetId ? [lesson.review.resolution.targetId] : [])]
       masked.review = { ...lesson.review, note: maskSecrets(lesson.review.note, refs) }
+    }
+    if (lesson.feedback !== undefined) masked.feedback = {
+      ...lesson.feedback,
+      recent: lesson.feedback.recent.map(item => ({ ...item, ...(item.note === undefined ? {} : { note: maskSecrets(item.note) }) })),
     }
     return masked
   }

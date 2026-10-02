@@ -240,7 +240,7 @@ const REFERENCE_KEYS = new Set(['id', 'lessonId', 'lessonIds', 'evidenceIds', 'c
 const PATH_KEYS = new Set(['target', 'path', 'resolvedPath', 'workspaceRoot'])
 
 /** 递归脱敏；结构化绝对路径按目录分段，避免 Unix 分隔符把正常路径连成长令牌。 */
-function maskDeep<T>(value: T, key?: string): T {
+export function maskDeep<T>(value: T, key?: string): T {
   if (typeof value === 'string') {
     if (key !== undefined && HASH_KEY_RE.test(key) && /^[0-9a-f]{64}$/i.test(value)) return value
     if (key !== undefined && REFERENCE_KEYS.has(key) && isDreamReference(value)) return value

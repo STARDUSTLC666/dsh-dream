@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "DSH 做梦与经验记忆：核验来源、审阅经验，预览写入 AGENTS.md 并支持回滚；附梦境日记面板，默认隐私脱敏，零运行时依赖。",
   "type": "module",
   "main": "lib/index.js",

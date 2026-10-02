@@ -48,12 +48,23 @@ export interface Lesson {
         note?: string;
         resolution?: LessonReviewResolution;
     };
+    /** 使用反馈独立于审阅和证据；只保留最近 20 次明细，事件流保留历史。 */
+    feedback?: LessonFeedback;
     createdAt: string;
     updatedAt: string;
     lastValidatedAt?: string;
     reviewAfter?: string;
     supersedes?: string[];
     conflictIds: string[];
+}
+export interface LessonFeedback {
+    useful: number;
+    notApplicable: number;
+    recent: Array<{
+        vote: 'useful' | 'not-applicable';
+        at: string;
+        note?: string;
+    }>;
 }
 /** 一条证据：只存脱敏摘要 + 定位信息。 */
 export interface Evidence {

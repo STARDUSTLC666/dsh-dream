@@ -4,6 +4,14 @@
 
 # dsh-dream
 
+## 0.7.0 update (2026-10-02)
+
+- Direct review buttons, conflict resolution with a required reason, and expandable source records. UI decisions record `human`; model tools still record `model`. Revision conflicts preserve entered text.
+- Project lessons can preview the exact AGENTS.md changes, apply the approved preview, and roll back the managed block while preserving manual content outside it. Previews expire after ten minutes and check both lesson revision and file hash. Lessons without a project directory keep the project-chat preview command.
+- Separate useful / not-applicable feedback with optional context, idempotent retries, and the latest twenty details. Feedback does not automatically accept, reject, validate, or add evidence to a lesson.
+- Mutations use Harness 0.2.0-rc.2's authenticated Connection Fetch carrier. Read-only endpoints and command fallbacks remain. A Dream-scoped narrow-window layout prevents the settings navigation from squeezing the content into single-character columns.
+- See [0.7.0 validation](docs/validation/0.7.0.md) for browser, automatic-test and native Desktop boundaries.
+
 ## 0.6.0 update (2026-09-30)
 
 - **Source verification and review**: reads actual session records or bounded project artifacts. Unverifiable claims stay claimed with a reason. New lessons start as candidates, including user corrections.
@@ -59,18 +67,18 @@ Restart the web service afterwards. The dream journal lives at `~/.dsh/.dsh-drea
 
 ## Dream journal panel (0.4.0+)
 
-Once installed, DSH's **Settings →「梦境日记」(Dream journal)** grows a read-only panel (Web profile only; headless hosts keep the tools and the skill without a settings page).
+Once installed, DSH's **Settings →「梦境日记」(Dream journal)** provides Journal, Lessons and Write log views. From 0.7.0, reviews and feedback run through the authenticated Connection carrier in Harness 0.2.0-rc.2. Headless hosts keep the tools and skill without a settings page.
 
 - **What it shows**: totals, a mood-square strip (never empty for a single dream, wraps when there are many) and the lessons board at the top; below that, a card timeline, newest first, with timestamp, mood, reflection body and lessons. Reflections are expanded by default and collapse to 4 lines with a show-more control beyond 4 lines or 220 characters.
 - **Lessons board**: ranked by journal occurrences and recency; 3 or more occurrences are labelled common lessons. Frequency does not establish correctness, importance or bridge eligibility. Technical lessons need their own sources, review and a write preview.
 - **Search**: filters by keyword across reflections and lessons, case-insensitively. Mood distribution and the lessons board are computed over the full journal; the timeline is paged by search and limit (latest 50 by default).
 - **Filtering and older dreams**: from 8 dreams on, a Filter menu appears (by mood, or only dreams with lessons; it applies to the loaded window and says so). When 50 dreams are loaded and more exist, the footer offers "show older dreams", which fetches up to the 500-dream route cap in one go.
-- **Read-only**: the panel only reads from the plugin's own GET /_dsh/dsh-dream/journal (loopback-only; non-GET → 405, non-local Host → 403). There is no write action; saving, listing and recalling dreams still happen in chat via dream_save / dream_journal / dream_recall, and the panel never modifies the journal file.
+- **Journal reads**: GET /_dsh/dsh-dream/journal is loopback-only; non-GET → 405, non-local Host → 403. Saving, listing and recalling dreams still happen in chat via dream_save / dream_journal / dream_recall. Panel reviews update knowledge events; previews do not write files.
 - **Data file**: the panel renders the journal itself — ~/.dsh/.dsh-dream/dreams.jsonl by default ($DSH_HOME/.dsh-dream/dreams.jsonl; an explicit journalDir wins). The storage format is unchanged: one JSON object per line, safe to remove or read with dream_journal.
 - **Privacy**: read-only routes mask text again while preserving validated lesson, evidence and backup references for commands. The UI reads local same-origin routes and does not upload to third-party services. Privacy blur is a display effect; DOM text and local logs remain plaintext.
 - **Before the first dream**: the panel shows an empty state pointing you to ask the agent to「做个梦」; a single dream renders as one card, with neither the mood strip nor the lessons board left empty and no misleading charts.
-- **Lessons view**: usable lessons and the review queue appear separately; rejected history is optional. Cards show when/action directly, with expandable scope, versions, exceptions and evidence. Review forms generate complete commands to paste into DSH chat; refresh afterwards. The panel itself never writes files.
-- **Write log and rollback (M2)**: `dream_bridge apply` appends an application record to `<journalDir>/bridge/records.jsonl` (target, time, lessonId@revision, before/after hashes, original managed block); the panel's "Write log" shows it read-only, and only reports "rollbackable" while the current managed block still matches that apply.
+- **Lessons view**: usable lessons and the review queue appear separately; rejected history is optional. Review buttons save directly with revision checks. Conflict resolution requires a reason. Source records can be expanded; useful / not-applicable feedback is recorded independently of review and validation. Command fallbacks remain available.
+- **Write log and rollback**: `dream_bridge apply` appends an application record with the target, time, lesson revisions, hashes and original managed block. The panel provides a confirmed rollback action while the current block still matches. Text outside the managed block remains intact; externally changed blocks are not overwritten.
 
 ## Tools
 

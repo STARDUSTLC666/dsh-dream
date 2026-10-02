@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { resolveConfig, type ResolvedDreamConfig } from './config.js'
 import { buildDreamTools, type DreamToolDefinition } from './tools.js'
 import { installDreamWeb } from './web.js'
+import { installDreamActions } from './web-actions.js'
 
 /** cordis 服务注入：要用 ctx.tools 与 ctx.skills。 */
 export const name = 'dream'
@@ -66,7 +67,8 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
   }
   // 面板同源路由：宿主有 webServer 才由 web.ts 用 ctx.inject 挂上；headless 夹具没有 inject 就跳过。
   if (typeof ctx.inject === 'function') {
-    installDreamWeb(ctx, { journalDir: cfg.journalDir })
+    installDreamWeb(ctx, { journalDir: cfg.journalDir, config: cfg })
+    installDreamActions(ctx, { config: cfg })
   }
   if (typeof ctx.on === 'function') {
     ctx.on('dispose', () => {

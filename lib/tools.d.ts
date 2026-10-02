@@ -25,3 +25,5 @@ export interface DreamToolDefinition {
 export declare function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinition[];
 /** 把会话摘要拼成一段可读文本（供模型一次性阅读）。 */
 export declare function buildDigestText(digest: SessionDigest): string;
+/** actor comes from the trusted caller, never from tool or browser arguments. */
+export declare function executeDreamReview(cfg: ResolvedDreamConfig, rawArgs: unknown, exec: unknown, actor?: 'model' | 'human'): Promise<unknown>;

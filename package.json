@@ -1,7 +1,7 @@
 {
   "name": "@stardustlc/dsh-dream",
   "version": "0.7.0",
-  "description": "DSH 做梦与经验记忆：核验来源、审阅经验，预览写入 AGENTS.md 并支持回滚；附梦境日记面板，默认隐私脱敏，零运行时依赖。",
+  "description": "回顾会话、保存反思，并把经过核验和审阅的经验用于后续任务。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -20,7 +20,8 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

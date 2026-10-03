@@ -2,6 +2,8 @@
 
 [中文](README.md)
 
+![dsh-dream whale girl plugin cover](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/assets/cover-whale-girl.png)
+
 Collect candidate lessons from completed tasks, review them and reuse relevant memories. Manual reflections remain available.
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://img.shields.io/npm/dm/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream)

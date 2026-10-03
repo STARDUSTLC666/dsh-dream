@@ -2,6 +2,8 @@
 
 [English](README.en.md)
 
+![dsh-dream 鲸鱼娘插件封面](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/assets/cover-whale-girl.png)
+
 自动整理任务中的候选经验，审阅后在相关任务中回用；也可手动复盘并保存梦境日记。
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://img.shields.io/npm/dm/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream)

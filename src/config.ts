@@ -20,6 +20,15 @@ export interface ResolvedDreamConfig {
   maxUserMessages: number
   /** 梦原料入梦前是否做隐私脱敏（默认 true）。 */
   maskSecrets: boolean
+  /** 默认开启；辅助模型调用受持久化预算限制。 */
+  autoCollect: boolean
+  autoRetrieve: boolean
+  autoMaxCallsPerDay: number
+  autoCooldownMs: number
+  autoMinToolCalls: number
+  autoMaxInputChars: number
+  autoMaxOutputTokens: number
+  autoTimeoutMs: number
 }
 
 function str(value: unknown, fallback: string): string {
@@ -42,5 +51,13 @@ export function resolveConfig(raw?: Record<string, unknown> | null, env: NodeJS.
     maxCharsPerSession: clamp(cfg.maxCharsPerSession, 6000, 500, 50000),
     maxUserMessages: clamp(cfg.maxUserMessages, 5, 1, 20),
     maskSecrets: cfg.maskSecrets !== false,
+    autoCollect: cfg.autoCollect !== false,
+    autoRetrieve: cfg.autoRetrieve !== false,
+    autoMaxCallsPerDay: clamp(cfg.autoMaxCallsPerDay, 4, 1, 20),
+    autoCooldownMs: clamp(cfg.autoCooldownMs, 600000, 1000, 3600000),
+    autoMinToolCalls: clamp(cfg.autoMinToolCalls, 2, 1, 50),
+    autoMaxInputChars: clamp(cfg.autoMaxInputChars, 12000, 1000, 20000),
+    autoMaxOutputTokens: clamp(cfg.autoMaxOutputTokens, 1200, 200, 2000),
+    autoTimeoutMs: clamp(cfg.autoTimeoutMs, 30000, 1000, 60000),
   }
 }

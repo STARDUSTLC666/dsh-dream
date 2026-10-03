@@ -12,6 +12,15 @@ export interface ResolvedDreamConfig {
     maxUserMessages: number;
     /** 梦原料入梦前是否做隐私脱敏（默认 true）。 */
     maskSecrets: boolean;
+    /** 默认开启；辅助模型调用受持久化预算限制。 */
+    autoCollect: boolean;
+    autoRetrieve: boolean;
+    autoMaxCallsPerDay: number;
+    autoCooldownMs: number;
+    autoMinToolCalls: number;
+    autoMaxInputChars: number;
+    autoMaxOutputTokens: number;
+    autoTimeoutMs: number;
 }
 /** 解析并校验插件配置。 */
 export declare function resolveConfig(raw?: Record<string, unknown> | null, env?: NodeJS.ProcessEnv): ResolvedDreamConfig;

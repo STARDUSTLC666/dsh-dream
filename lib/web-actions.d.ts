@@ -1,5 +1,6 @@
 import { type ResolvedDreamConfig } from './config.js';
 export declare const DREAM_ACTION_ROUTE = "/api/dsh-dream/actions";
+export declare const DREAM_AUTOMATIC_ROUTE = "/api/dsh-dream/automatic";
 type Options = {
     journalDir?: string;
     config?: Record<string, unknown> | ResolvedDreamConfig | null;

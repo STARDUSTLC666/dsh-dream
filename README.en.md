@@ -2,13 +2,14 @@
 
 [中文](README.md)
 
-Review past sessions, keep reflections and reuse verified, reviewed lessons.
+Collect candidate lessons from completed tasks, review them and reuse relevant memories. Manual reflections remain available.
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://img.shields.io/npm/dm/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
 
 ## What it does
 
 - Browse journals, retrieve lessons and inspect their sources.
+- Collect candidates after tasks and retrieve accepted memories for relevant tasks, with separate switches.
 - Review lessons, resolve conflicts and record separate usage feedback.
 - Preview AGENTS.md changes before applying them, with rollback support.
 
@@ -24,13 +25,13 @@ For the web version, replace `desktop` with `web`. Restart DSH after installatio
 
 ## Start using it
 
-Ask to review recent tasks and keep useful lessons. Open Settings → Dream Journal to inspect sources and review lessons; preview rule changes before applying them.
+Use DSH normally. A completed turn qualifies when it contains an explicit preference/correction or at least two non-Dream tool calls. Within the configured budget, Dream creates candidates. Open Settings → Dream Journal to inspect their sources and accept them; relevant later tasks retrieve accepted memories automatically. You can still ask for a separate reflection and journal entry.
 
-The assistant records lessons through tools; manual data entry is unnecessary. The skill guides retrieval at task start and candidate submission at wrap-up, rather than continuous background learning. New lessons await review; project rules require a separate preview and apply action. UI language follows DSH; journal and lesson content stays original.
+Automatic collection uses the current session's model and quota: up to four auxiliary calls per day, ten minutes apart, with 1200 output tokens per call by default. Ordinary chat is skipped; new input cancels collection. Only sourced project candidates are saved. Acceptance and project-rule changes remain separate actions. UI language follows DSH; journal and lesson content stays original.
 
 ## Requirements and configuration
 
-Uses local DSH sessions and journals with secret masking. Interactive actions use the DSH 0.2.0-rc.2 authenticated channel; tools and skills also work in headless mode.
+Uses local DSH sessions and journals with secret masking. Automatic features use official session events and dynamic prompt context; interactive actions use the authenticated Connection channel. Verified with 0.2.0-rc.2 and 0.2.1-alpha.1. Hosts without the automatic interfaces retain tools and skills.
 
 Detailed configuration, tool arguments and troubleshooting are in the [usage guide](docs/USAGE.en.md). For standalone development, follow the Node requirement in [package.json](package.json).
 

@@ -13,7 +13,19 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 
 Restart the web service afterwards. The dream journal lives at `~/.dsh/.dsh-dream/dreams.jsonl` and survives uninstallation; remove that directory manually for a full cleanup. Part of [dsh-suite](https://github.com/STARDUSTLC666/dsh-suite) — one command installs all 18 STARDUSTLC plugins.
 
-## Dream journal panel (0.4.0+)
+## Automatic collection and retrieval (0.8.0+)
+
+Use DSH normally: a completed human root turn qualifies after an explicit preference/correction or at least two non-Dream tool calls with a visible assistant summary. Dream observes new events only; it does not scan old history, subagents or unsuccessful turns.
+
+Settings → Dream Journal has independent collection and retrieval switches, today's call count, the latest result/skip reason and a link to the review queue. Inspect candidate sources and accept them there. Settings persist under `journalDir/automatic/state.json`; page switches override configured defaults.
+
+Defaults: four auxiliary calls per day, ten minutes apart, 12000 total system-plus-JSON characters, 1200 output tokens, a 30-second timeout and at most three candidates per call. The request uses the current session's provider/model and quota and can incur charges. Only limited masked visible messages are sent; reasoning, system prompts and tool arguments/results are excluded. New input, disabling collection or unloading cancels active collection. Attempts consume budget even on failure, with no Dream-level retry; host adapter retry policy is unchanged.
+
+Automatic retrieval makes no auxiliary model call. It supplies at most three accepted, independently sourced, task/project/platform-matching lessons in 3000 characters of dynamic context, preserving conditions and exceptions. Candidates, stale, disputed and rejected lessons are excluded. Version-bound lessons remain held because dependency versions are unknown here; use explicit `dream_context` with an actually verified package/version. Automatic features do not save journals, accept candidates or edit AGENTS.md. Verified on official 0.2.0-rc.2 and 0.2.1-alpha.1; hosts missing these interfaces keep manual tools and skills.
+
+Configuration keys are `autoCollect`, `autoRetrieve`, `autoMaxCallsPerDay` (1–20), `autoCooldownMs` (1000–3600000), `autoMinToolCalls` (1–50), `autoMaxInputChars` (1000–20000), `autoMaxOutputTokens` (200–2000) and `autoTimeoutMs` (1000–60000). Add them under the `dream` row's `config` in your profile's `cordis.patch.yml`.
+
+## Journal and lesson panel
 
 Once installed, DSH's **Settings →「梦境日记」(Dream journal)** provides Journal, Lessons and Write log views. From 0.7.0, reviews and feedback run through the authenticated Connection carrier in Harness 0.2.0-rc.2. Headless hosts keep the tools and skill without a settings page.
 
@@ -24,7 +36,7 @@ Once installed, DSH's **Settings →「梦境日记」(Dream journal)** provides
 - **Journal reads**: GET /_dsh/dsh-dream/journal is loopback-only; non-GET → 405, non-local Host → 403. Saving, listing and recalling dreams still happen in chat via dream_save / dream_journal / dream_recall. Panel reviews update knowledge events; previews do not write files.
 - **Data file**: the panel renders the journal itself — ~/.dsh/.dsh-dream/dreams.jsonl by default ($DSH_HOME/.dsh-dream/dreams.jsonl; an explicit journalDir wins). The storage format is unchanged: one JSON object per line, safe to remove or read with dream_journal.
 - **Privacy**: read-only routes mask text again while preserving validated lesson, evidence and backup references for commands. The UI reads local same-origin routes and does not upload to third-party services. Privacy blur is a display effect; DOM text and local logs remain plaintext.
-- **Before the first dream**: the panel shows an empty state pointing you to ask the agent to「做个梦」; a single dream renders as one card, with neither the mood strip nor the lessons board left empty and no misleading charts.
+- **Before the first dream**: automatic candidates await review in Lessons; ask the assistant for a separate reflection to create journal entries. A single dream renders as one card without misleading charts.
 - **Lessons view**: usable lessons and the review queue appear separately; rejected history is optional. Review buttons save directly with revision checks. Conflict resolution requires a reason. Source records can be expanded; useful / not-applicable feedback is recorded independently of review and validation. Command fallbacks remain available.
 - **Write log and rollback**: `dream_bridge apply` appends an application record with the target, time, lesson revisions, hashes and original managed block. The panel provides a confirmed rollback action while the current block still matches. Text outside the managed block remains intact; externally changed blocks are not overwritten.
 
@@ -68,9 +80,11 @@ The dream journal holds subjective reflections; technical lessons that should be
 
 Dream material is masked before journaling: sk keys, GitHub/Groq/Slack tokens, AWS keys, JWTs, `password/token/api_key` assignments and long high-entropy strings become `[masked·type]`. In M1 the lesson / evidence / error / bridge write paths also run through `mask.ts` when `maskSecrets` is on, and text returned by the read-only panel route is masked again. Disable with `maskSecrets: false`.
 
+Automatic paths always mask text, even with `maskSecrets: false`. Masking cannot recognize every kind of personal data; disable collection for sensitive projects. State contains budgets, hashed session cursors and outcome codes, not transcripts. Corrupt state disables automatic features without overwriting the file; preserve it before troubleshooting. A live writer lock fails promptly rather than waiting or stealing ownership.
+
 ## Permissions & data
 
-Read-only access to the sessions directory; appends JSONL to the journal directory plus lessons/evidence under `journalDir/knowledge/`; no network calls. Session content may be sensitive — the protocol forbids secrets in dreams, but the journal is plaintext: review before sharing.
+Read-only access to the sessions directory; appends journals and lessons/evidence under `journalDir`. Automatic collection sends limited masked visible messages through the current DSH LLM adapter using its credentials and quota, with no separate model account or memory service. Local journals and lessons are plaintext: review before sharing.
 
 ## Development
 

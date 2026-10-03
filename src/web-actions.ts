@@ -9,8 +9,10 @@ import { maskSecrets } from './mask.js'
 import { buildDreamTools, executeDreamReview } from './tools.js'
 import { rollbackBridge } from './bridge.js'
 import { maskDeep } from './web.js'
+import { automaticRuntime } from './automatic.js'
 
 export const DREAM_ACTION_ROUTE = '/api/dsh-dream/actions'
+export const DREAM_AUTOMATIC_ROUTE = '/api/dsh-dream/automatic'
 const BODY_LIMIT = 64 * 1024
 const PREVIEW_LIFETIME = 10 * 60 * 1000
 const MAX_PREVIEWS = 100
@@ -85,6 +87,13 @@ export function createDreamActionHandler(options: Options = {}): (request: Reque
       const body = raw as Record<string, unknown>
       if (request.signal.aborted) return fail(409, 'cancelled', '操作已取消')
       const operation = text(body, 'operation')
+      if (operation === 'automatic') {
+        if ((body.enabled !== undefined && typeof body.enabled !== 'boolean') || (body.retrievalEnabled !== undefined && typeof body.retrievalEnabled !== 'boolean') || (body.enabled === undefined && body.retrievalEnabled === undefined)) throw new KnowledgeError('invalid', '自动功能开关必须是布尔值')
+        const runtime = automaticRuntime(cfg)
+        if (!runtime) return fail(503, 'unavailable', '自动功能尚未就绪，请刷新或重新启用插件')
+        runtime.control({ enabled: body.enabled, retrievalEnabled: body.retrievalEnabled })
+        return json(200, { ok: true, automatic: runtime.status() })
+      }
       if (operation === 'review') {
         if (!['accept', 'reject', 'reopen', 'mark-stale', 'resolve-conflict'].includes(String(body.action))) throw new KnowledgeError('invalid', '不支持此页面审阅动作')
         checkRevision(store, body)
@@ -142,5 +151,9 @@ export function installDreamActions(ctx: any, options: Options = {}): void {
   ctx.inject(['connection'], (host: any) => {
     if (typeof host.connection?.fetch?.register !== 'function') return
     host.connection.fetch.register({ path: DREAM_ACTION_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch })
+    const cfg = { ...resolveConfig(options.config as Record<string, unknown>), ...(options.journalDir === undefined ? {} : { journalDir: options.journalDir }) }
+    host.connection.fetch.register({ path: DREAM_AUTOMATIC_ROUTE, methods: ['GET'], requestBody: 'buffered', fetch: async () => json(200, {
+      ok: true, automatic: automaticRuntime(cfg)?.status() ?? { available: false, enabled: false, retrievalEnabled: false, problem: 'unavailable' },
+    }) })
   })
 }

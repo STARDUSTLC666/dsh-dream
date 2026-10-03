@@ -10,6 +10,7 @@ import { resolveConfig, type ResolvedDreamConfig } from './config.js'
 import { buildDreamTools, type DreamToolDefinition } from './tools.js'
 import { installDreamWeb } from './web.js'
 import { installDreamActions } from './web-actions.js'
+import { installAutomaticDream } from './automatic.js'
 
 /** cordis 服务注入：要用 ctx.tools 与 ctx.skills。 */
 export const name = 'dream'
@@ -70,6 +71,7 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
     installDreamWeb(ctx, { journalDir: cfg.journalDir, config: cfg })
     installDreamActions(ctx, { config: cfg })
   }
+  installAutomaticDream(ctx, cfg)
   if (typeof ctx.on === 'function') {
     ctx.on('dispose', () => {
       for (const dispose of disposers) dispose()
@@ -86,3 +88,4 @@ export * from './bridge.js'
 export * from './knowledge.js'
 export * from './knowledge-store.js'
 export * from './retrieval.js'
+export * from './automatic.js'

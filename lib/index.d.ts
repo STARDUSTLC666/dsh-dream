@@ -36,3 +36,4 @@ export * from './bridge.js';
 export * from './knowledge.js';
 export * from './knowledge-store.js';
 export * from './retrieval.js';
+export * from './automatic.js';

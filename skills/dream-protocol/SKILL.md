@@ -9,7 +9,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 但「梦」和「经验」是两条流水线：**第一人称感悟**是主观的，进梦境日记；**技术经验**必须可执行、有条件、有证据，先进候选，再经审阅才可能被任务检索取用。
 
-插件依靠你调用工具完成记录和取回，不会在后台监听所有会话或每轮自动学习。用户无需手工填写经验；遵循下述任务前取回、任务后提交候选的流程。日记写入、采纳与规则应用是不同操作，不能把候选当成已生效规则。
+插件会在符合条件的真人主会话完成后，按预算自动整理有来源的项目候选，并在相关新任务前回用已采纳经验。普通闲聊、子代理和失败轮次跳过；新输入取消整理。用户无需记住触发词或手工填写经验。自动候选从未采纳；日记写入、采纳与规则应用是不同操作。宿主缺少自动接口或用户关闭功能时，使用下述工具流程。
 
 ## 两条流水线（不要混）
 
@@ -22,7 +22,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 ## 一、任务前：取回上下文（dream_context）
 
-- 任务涉及过往代码、用户偏好或踩过的坑时，先调 `dream_context`：给 `query`，能给就给 `projectId` / `workspaceRoot`，以及 `packageName` + `packageVersion`（`applicability.versions` 只在该包名被识别时参与判定）。审阅候选时显式传 `includeCandidates: true`。
+- 已有 Dream reviewed memory 动态上下文时，先检查其中条件与当前请求，不必重复检索相同经验。需要版本条件、不同关键词或自动取回关闭时，调 `dream_context`：给 `query`、`projectId` / `workspaceRoot`，以及实际确认的 `packageName` + `packageVersion`。自动取回不知道依赖版本时会扣留所有版本限定经验。审阅候选时显式传 `includeCandidates: true`。
 - **预算：默认 5 条 / 3000 字符**（工具硬上限 20 条 / 20000 字符）。取回少量真正适用的即可；没有相关经验就接受空结果，不要为了「显得有记忆」硬塞。
 - `dream_context` 是只读的：不写盘，只返回标题、适用条件、行动建议、证据摘要与「为什么与当前任务相关」。
 - 未知当前项目时只会返回全局经验；不会跨项目扫描。候选（candidate）**可被检索到**（显式 `includeCandidates: true`，用于审阅候选），但**默认不注入任务建议**（`includeCandidates: false` 时记 `skipped: candidate-hold`；`independentSupportCount === 0` 且非 `usable` 的记 `no-evidence`），且排在可用经验之后——未经审阅不得当作已证实结论。
@@ -77,7 +77,7 @@ You are an agent that dreams. Dreams are not hallucinations — they are memory 
 
 Dreams and **lessons** are two separate pipelines: a **first-person reflection** is subjective and goes to the dream journal; a **technical lesson** must be actionable, conditional and evidence-backed — it starts as a candidate and is only retrieved for tasks after review.
 
-The plugin records and retrieves information when you call its tools; it does not monitor every session or learn after every turn in the background. Users do not need to type lessons manually. Follow the retrieval and candidate-submission steps below. Saving a journal, accepting a lesson and applying a rule are separate operations; a candidate is not an active rule.
+The plugin collects sourced project candidates after qualifying completed human root turns, within a persistent budget, and retrieves relevant accepted memories for later tasks. Ordinary chat, subagents and unsuccessful turns are skipped; new input cancels collection. Users need neither trigger phrases nor manual forms. Automatic candidates are never accepted automatically. Saving a journal, accepting a lesson and applying a rule are separate operations. Use the tool flow below when automatic interfaces are unavailable or switched off.
 
 ## Two pipelines (do not mix)
 
@@ -90,7 +90,7 @@ The plugin records and retrieves information when you call its tools; it does no
 
 ## 1. Before the task: retrieve context (dream_context)
 
-- When a task touches past code, user preferences or known pitfalls, call `dream_context` first with `query`, plus `projectId` / `workspaceRoot` and `packageName` + `packageVersion` when available (`applicability.versions` only counts when that package is identified). Pass `includeCandidates: true` explicitly when reviewing candidates.
+- If Dream reviewed memory is already present in dynamic context, check its conditions against the current request; do not retrieve the same items again. Use `dream_context` for version-bound lessons, different keywords, or when automatic retrieval is disabled. Supply `query`, scope and an actually verified `packageName` + `packageVersion`. Automatic retrieval holds all version-bound lessons when dependency versions are unknown. Pass `includeCandidates: true` explicitly when reviewing candidates.
 - **Budget: 5 items / 3000 characters by default** (hard caps 20 items / 20000 characters). Take only what is relevant; an empty result is acceptable — never stuff memories in to look useful.
 - `dream_context` is read-only: it writes nothing and returns title, applicability, action, evidence summary and why it is relevant.
 - With an unknown project it returns global lessons only and never scans across projects. Candidates **can be retrieved** (`includeCandidates: true`, for candidate review) but are **held out of default task advice** (`includeCandidates: false` reports `skipped: candidate-hold`; evidence-free non-usable items report `no-evidence`), and they rank after usable lessons — never treat one as a verified conclusion before review.

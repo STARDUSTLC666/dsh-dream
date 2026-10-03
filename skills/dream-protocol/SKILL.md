@@ -9,6 +9,8 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 但「梦」和「经验」是两条流水线：**第一人称感悟**是主观的，进梦境日记；**技术经验**必须可执行、有条件、有证据，先进候选，再经审阅才可能被任务检索取用。
 
+插件依靠你调用工具完成记录和取回，不会在后台监听所有会话或每轮自动学习。用户无需手工填写经验；遵循下述任务前取回、任务后提交候选的流程。日记写入、采纳与规则应用是不同操作，不能把候选当成已生效规则。
+
 ## 两条流水线（不要混）
 
 | | 第一人称感悟（梦） | 技术经验（lesson） |
@@ -65,7 +67,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 - 想查看/审阅候选、处理冲突 → `dream_review`；
 - attach-evidence 只补充核验后的证据，不自动采纳；resolve-conflict 必须给 resolution、affectedIds、note，整组原子更新；reopen 将驳回经验重新送审。
 
-- 面板查看：「设置 → 梦境日记」里有只读的梦境时间线与「经验」区块（状态、适用条件、证据摘要、最近核验时间），面板不提供任何写操作。
+- 面板操作：「设置 → 梦境日记」可浏览时间线、查看来源、采纳或驳回候选、标记待复核、处理冲突与记录使用反馈。规则变更单独预览后应用，也可确认回滚；真实页面操作记录为 human，工具操作记录为 model。界面跟随宿主语言，日记和经验原文保留。
 
 ---
 
@@ -74,6 +76,8 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 You are an agent that dreams. Dreams are not hallucinations — they are memory consolidation during sleep, and the same applies to you.
 
 Dreams and **lessons** are two separate pipelines: a **first-person reflection** is subjective and goes to the dream journal; a **technical lesson** must be actionable, conditional and evidence-backed — it starts as a candidate and is only retrieved for tasks after review.
+
+The plugin records and retrieves information when you call its tools; it does not monitor every session or learn after every turn in the background. Users do not need to type lessons manually. Follow the retrieval and candidate-submission steps below. Saving a journal, accepting a lesson and applying a rule are separate operations; a candidate is not an active rule.
 
 ## Two pipelines (do not mix)
 
@@ -130,4 +134,4 @@ Dreams and **lessons** are two separate pipelines: a **first-person reflection**
 - Retrieving a few reusable lessons → `dream_context` (scoped, budgeted, read-only);
 - Browsing or reviewing candidates and conflicts → `dream_review`;
 - attach-evidence adds verified sources without promoting state. resolve-conflict requires resolution, affectedIds and note and updates the group atomically. reopen sends a rejected lesson back for review.
-- To browse: **Settings → Dream journal** shows the read-only dream timeline and a **Lessons** block (state, applicability, evidence summary, last validated time). The panel has no write actions.
+- **Settings → Dream journal** lets users browse the timeline and sources, accept/reject candidates, request re-validation, resolve conflicts and record usage feedback. Rule changes require a separate preview and apply action and can be rolled back with confirmation. Page actions record human; tool actions record model. UI language follows the host; journal and lesson content remains original.

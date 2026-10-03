@@ -48,6 +48,28 @@ test('client bundle registers the scoped package identity used by the host boot 
     'a mismatched factory id makes the host retry the bundle and fail with duplicate registration')
 })
 
+test('DSH locale changes labels and derived status without translating stored lesson text', () => {
+  const loaded = loadClient()
+  let active = 'zh', slot
+  const locale = { getSnapshot() { return { active } } }
+  loaded.exports.apply({ locale, slots: {
+    inject(_name, callback) { callback() }, register(meta) { slot = meta },
+  } })
+  assert.equal(slot.label(), '梦境日记')
+  assert.equal(slot.inject().locale, locale)
+  const input = { lessons: [{ id: 'lesson-1', title: '中文经验', action: '保留原文', state: 'candidate' }], evidence: [] }
+  assert.equal(loaded.internals.normalizeKnowledge(input, new Date()).rows[0].stateLabel, '候选（未采纳）')
+  active = 'en-US'
+  assert.equal(slot.label(), 'Dream journal')
+  const row = loaded.internals.normalizeKnowledge(input, new Date()).rows[0]
+  assert.equal(row.stateLabel, 'Candidate (not accepted)')
+  assert.equal(row.title, '中文经验'); assert.equal(row.action, '保留原文')
+  const error = loaded.internals.displayError({ message: '经验已更新，请刷新后重新操作', code: 'revision', status: 409 })
+  assert.match(error, /Refresh/); assert.match(error, /409/); assert.doesNotMatch(error, /[\u3400-\u9fff]/)
+  active = 'zh'
+  assert.equal(slot.label(), '梦境日记')
+})
+
 function localIso(year, month, day, hour = 12) {
   return new Date(year, month - 1, day, hour).toISOString()
 }

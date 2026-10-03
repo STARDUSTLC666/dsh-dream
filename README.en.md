@@ -26,6 +26,8 @@ For the web version, replace `desktop` with `web`. Restart DSH after installatio
 
 Ask to review recent tasks and keep useful lessons. Open Settings → Dream Journal to inspect sources and review lessons; preview rule changes before applying them.
 
+The assistant records lessons through tools; manual data entry is unnecessary. The skill guides retrieval at task start and candidate submission at wrap-up, rather than continuous background learning. New lessons await review; project rules require a separate preview and apply action. UI language follows DSH; journal and lesson content stays original.
+
 ## Requirements and configuration
 
 Uses local DSH sessions and journals with secret masking. Interactive actions use the DSH 0.2.0-rc.2 authenticated channel; tools and skills also work in headless mode.

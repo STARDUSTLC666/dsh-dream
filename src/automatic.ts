@@ -214,11 +214,7 @@ export class AutomaticDream {
   }
 
   private async generate(route: any, sessionId: string, text: string, signal: AbortSignal): Promise<string> {
-    const stream = this.host.llm.stream({
-      provider: route.provider, model: route.model, sessionId, signal,
-      system: SYSTEM, maxTokens: this.cfg.autoMaxOutputTokens, tools: [],
-      messages: [{ id: randomUUID(), role: 'user', source: { kind: 'dsh-dream-automatic' }, content: [{ type: 'text', text }] }],
-    })[Symbol.asyncIterator]()
+    let stream: AsyncIterator<any> | undefined
     let output = '', stopped = false
     const blocks = new Map<number, string>()
     let rejectAbort!: (reason: unknown) => void
@@ -227,8 +223,27 @@ export class AutomaticDream {
     signal.addEventListener('abort', onAbort, { once: true })
     try {
       signal.throwIfAborted()
+      // Short extraction JSON shares the output budget with hidden reasoning.
+      // Opt out only when this exact model advertises support; preserve other
+      // providers' defaults and older hosts without the metadata seam.
+      let reasoningEffort: string | undefined
+      if (typeof this.host.llm.resolveModelInfo === 'function') {
+        try {
+          const model: any = await Promise.race([this.host.llm.resolveModelInfo(route.provider, route.model, signal), aborted])
+          const efforts = object(model?.reasoning).efforts
+          if (Array.isArray(efforts) && efforts.some(item => object(item).id === 'off')) reasoningEffort = 'off'
+        } catch { signal.throwIfAborted() }
+      }
+      signal.throwIfAborted()
+      const iterator = this.host.llm.stream({
+        provider: route.provider, model: route.model, sessionId, signal,
+        system: SYSTEM, maxTokens: this.cfg.autoMaxOutputTokens, tools: [],
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        messages: [{ id: randomUUID(), role: 'user', source: { kind: 'dsh-dream-automatic' }, content: [{ type: 'text', text }] }],
+      })[Symbol.asyncIterator]()
+      stream = iterator
       for (;;) {
-        const part: any = await Promise.race([stream.next(), aborted])
+        const part: any = await Promise.race([iterator.next(), aborted])
         if (part.done) break
         const chunk = object(part.value)
         if (chunk.type === 'tool-call-delta' || (chunk.type === 'block-end' && object(chunk.block).type === 'tool-call')) throw new Error('automatic-model-tools')
@@ -242,7 +257,7 @@ export class AutomaticDream {
       return output
     } finally {
       signal.removeEventListener('abort', onAbort)
-      if (typeof stream.return === 'function') void Promise.resolve(stream.return()).catch(() => {})
+      if (typeof stream?.return === 'function') void Promise.resolve(stream.return()).catch(() => {})
     }
   }
 

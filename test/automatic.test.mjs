@@ -41,7 +41,7 @@ function setup(t, { output = { lessons: [lesson()] }, stream: custom, ...config 
     if (finish) { send('turn/end', { turn: 1, reason: { kind: reason } }); await runtime.whenIdle() }
   }
   const store = new KnowledgeStore(join(cfg.journalDir, 'knowledge'))
-  return { root, cfg, runtime, session, agent, calls, contexts, listeners, turn, send, store, advance: ms => { now += ms } }
+  return { root, cfg, runtime, session, agent, host, calls, contexts, listeners, turn, send, store, advance: ms => { now += ms } }
 }
 
 test('normal work creates a sourced candidate without a dream trigger phrase', async t => {
@@ -68,6 +68,52 @@ test('ordinary chat, internal messages and unsuccessful turns spend no model bud
     await e.turn(options)
     assert.equal(e.calls.length, 0)
   }
+})
+
+test('advertised reasoning off leaves the short extraction budget for complete candidate JSON', async t => {
+  const e = setup(t, { stream: async function* (options) {
+    if (options.reasoningEffort !== 'off') {
+      yield { type: 'text-delta', index: 0, text: '{"lessons":[' }
+      yield { type: 'finish', reason: { kind: 'max-tokens' } }
+      return
+    }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: JSON.stringify({ lessons: [lesson()] }) } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  } })
+  const route = { provider: 'fixture', model: 'model-a', reasoningEffort: 'max' }
+  e.session.requestContext = () => route
+  e.host.llm.resolveModelInfo = async (provider, model, signal) => {
+    assert.equal(provider, route.provider); assert.equal(model, route.model)
+    assert.equal(signal.aborted, false)
+    return { reasoning: { efforts: [{ id: 'high' }, { id: 'off' }], defaultEffort: 'high' } }
+  }
+  await e.turn()
+  assert.equal(e.calls[0].reasoningEffort, 'off')
+  assert.equal(e.calls[0].maxTokens, 1200)
+  assert.equal(e.calls[0].purpose, undefined)
+  assert.equal(e.store.listLessons().length, 1)
+  assert.equal(e.store.listLessons()[0].review.decision, 'unreviewed')
+  assert.equal(route.reasoningEffort, 'max')
+})
+
+test('unsupported or unavailable effort metadata preserves provider defaults', async t => {
+  for (const resolveModelInfo of [undefined, async () => ({ reasoning: { efforts: [{ id: 'high' }] } }), async () => { throw new Error('metadata unavailable') }]) {
+    const e = setup(t)
+    e.host.llm.resolveModelInfo = resolveModelInfo
+    await e.turn()
+    assert.equal(Object.hasOwn(e.calls[0], 'reasoningEffort'), false)
+    assert.equal(e.store.listLessons().length, 1)
+  }
+})
+
+test('auxiliary deadline includes model metadata that ignores abort', async t => {
+  const e = setup(t, { autoTimeoutMs: 1000 })
+  e.host.llm.resolveModelInfo = () => new Promise(() => {})
+  const keepAlive = setInterval(() => {}, 500)
+  try { await e.turn() } finally { clearInterval(keepAlive) }
+  assert.equal(e.runtime.status().last.reason, 'timeout')
+  assert.equal(e.calls.length, 0)
+  assert.equal(e.runtime.status().callsToday, 1)
 })
 
 test('explicit preference can qualify without tools', async t => {

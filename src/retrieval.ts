@@ -10,6 +10,7 @@
  */
 import type { Evidence, Lesson, LessonState } from './knowledge.js'
 import { normalizeLessonText } from './knowledge.js'
+import { needsMemoryReview } from './memory.js'
 
 /** 检索入参；limit/maxChars 在内部按硬上限裁剪。 */
 export interface RetrievalQuery {
@@ -30,6 +31,7 @@ export interface RetrievalQuery {
   includeCandidates?: boolean
   /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
   includeNoEvidence?: boolean
+  now?: number
 }
 
 /** 检索结果中的单条经验（when/exceptions 永不截断）。 */
@@ -212,6 +214,7 @@ const SKIPPED_REASON_LABELS: Record<string, string> = {
   'no-evidence': '无独立证据',
   'version-mismatch': '版本条件不匹配',
   'platform-mismatch': '平台条件不匹配',
+  'review-due': '已到复核时间',
   limit: '超出条数上限',
   'budget-stop': '预算放不下',
   budget: '预算放不下（旧值）',
@@ -518,6 +521,10 @@ export function retrieveLessons(
 
   for (const lesson of lessons) {
     if (!scopeMatches(lesson, q)) continue
+    if (needsMemoryReview(lesson, q.now ?? Date.now())) {
+      skipped.push({ lessonId: lesson.id, reason: 'review-due' })
+      continue
+    }
     const excludedReason = EXCLUDED_STATE_REASONS[lesson.state]
     if (excludedReason !== undefined) {
       skipped.push({ lessonId: lesson.id, reason: excludedReason })

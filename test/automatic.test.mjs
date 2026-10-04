@@ -13,7 +13,7 @@ const quote = '工作区放在 E 盘，不要删除系统文件。'
 function lesson(sourceSeq = 11) { return { kind: 'preference', title: '在 E 盘工作并保留系统文件', action: '把项目和临时工作放在 E 盘，保留系统文件', when: '处理此项目的文件时', exceptions: [], sourceSeq, quote } }
 function setup(t, { output = { lessons: [lesson()] }, stream: custom, ...config } = {}) {
   const root = mkdtempSync(join(process.cwd(), '.auto-test-'))
-  const cfg = resolveConfig({ journalDir: join(root, 'journal'), sessionsRoot: join(root, 'sessions'), autoCooldownMs: 1000, ...config })
+  const cfg = resolveConfig({ journalDir: join(root, 'journal'), sessionsRoot: join(root, 'sessions'), autoCooldownMs: 1000, autoIdleMs: 0, ...config })
   let now = Date.now(), calls = []
   const listeners = new Map(), contexts = []
   const host = {
@@ -58,6 +58,7 @@ test('normal work creates a sourced candidate without a dream trigger phrase', a
   assert.equal(candidate.scope.global, false)
   assert.equal(e.store.listEvidence()[0].recordSeq, 11)
   assert.equal(e.store.listEvidence()[0].verification, 'read')
+  assert.equal(e.store.listEvidence()[0].summary,quote)
   assert.equal(existsSync(join(e.root, 'AGENTS.md')), false)
   assert.equal(existsSync(join(e.cfg.journalDir, 'dreams.jsonl')), false)
 })
@@ -316,4 +317,75 @@ test('both authenticated Fetch routes declare the official request-body mode', a
   const status = await routes.find(route => route.methods.includes('GET')).fetch(new Request('http://dsh.internal/api/dsh-dream/automatic'))
   assert.equal(status.status, 200)
   assert.equal((await status.json()).automatic.available, true)
+})
+
+test('chat controls independently disable contribution and use, persist and clear queued excerpts',async t=>{
+  const e=setup(t,{autoIdleMs:60000,stream:async function*(options){
+    const source=JSON.parse(options.messages[0].content[0].text).sourceMessages.find(s=>s.role==='user')
+    yield {type:'block-end',index:0,block:{type:'text',text:JSON.stringify({lessons:[{...lesson(source.seq),quote:source.text}]})}}
+    yield {type:'finish',reason:{kind:'stop'}}
+  }})
+  await e.turn();assert.equal(e.runtime.status().pendingTurns,1);assert.equal(e.calls.length,0)
+  e.runtime.controlSession(e.session.id,{contribute:false,use:true})
+  assert.equal(e.runtime.status().pendingTurns,0)
+  const again=new AutomaticDream(e.cfg)
+  assert.equal(again.status().sessions[0].use,true);assert.equal(again.status().sessions[0].contribute,false)
+  e.runtime.control({enabled:false,retrievalEnabled:false})
+  e.runtime.controlSession(e.session.id,{contribute:true})
+  await e.turn();e.runtime.flush();await e.runtime.whenIdle()
+  assert.equal(e.calls.length,1)
+  const [row]=e.store.listLessons();e.store.reviewLesson(row.id,'accepted',row.revision,'policy-accept','human')
+  e.listeners.get('agent/inbox/claimed')({agent:e.agent,message:{source:{kind:'user'},content:[{type:'text',text:'E 盘 工作区 文件'}]}})
+  assert.match(e.runtime.context(e.agent),/E 盘/)
+  e.runtime.controlSession(e.session.id,{use:false});assert.equal(e.runtime.context(e.agent),'')
+  assert.throws(()=>e.runtime.controlSession('unknown-chat',{use:true}),/unknown/)
+})
+
+test('a batched extraction retains each original session and event sequence',async t=>{
+  const e=setup(t,{autoIdleMs:60000,stream:async function*(options){
+    const messages=JSON.parse(options.messages[0].content[0].text).sourceMessages.filter(s=>s.role==='user')
+    assert.equal(messages.length,2)
+    yield {type:'block-end',index:0,block:{type:'text',text:JSON.stringify({lessons:messages.map((s,i)=>({...lesson(s.seq),title:'偏好 '+i,action:'偏好动作 '+i,quote:s.text}))})}}
+    yield {type:'finish',reason:{kind:'stop'}}
+  }})
+  await e.turn()
+  const other={...e.session,id:'second-session'}
+  for(const [type,seq,data] of [
+    ['turn/start',30,{}],['user/message',31,{source:{kind:'user'},content:[{type:'text',text:quote+'导出文件名带日期。'}]}],
+    ['tool/call',32,{name:'bash'}],['tool/call',33,{name:'read'}],
+    ['assistant/message',34,{content:[{type:'text',text:'已经检查工作区并保留原始资料。'}]}],['turn/end',35,{reason:{kind:'completed'}}],
+  ])e.runtime.observe(other,{type,seq,data})
+  await e.runtime.whenIdle();assert.equal(e.runtime.status().pendingTurns,2)
+  e.runtime.flush();await e.runtime.whenIdle();assert.equal(e.calls.length,1)
+  assert.deepEqual(e.store.listEvidence().map(s=>[s.sessionId,s.recordSeq]).sort(),[['second-session',31],['session-test',11]])
+})
+
+test('retrieval records exposure once and immediately drops rejected or expired facts',async t=>{
+  const e=setup(t)
+  const made=e.store.createLesson({...lesson(),kind:'fact',workspaceRoot:e.root,evidence:[{kind:'session',sessionId:'fact',recordSeq:11,summary:quote,verification:'read'}]},'review-expiry-fact',{requireReview:true}).lesson
+  const accepted=e.store.reviewLesson(made.id,'accepted',made.revision,'review-expiry-accept','human')
+  e.listeners.get('agent/inbox/claimed')({agent:e.agent,message:{source:{kind:'user'},content:[{type:'text',text:'工作区 E 盘 文件'}]}})
+  assert.match(e.runtime.context(e.agent),/E 盘/);assert.match(e.runtime.context(e.agent),/E 盘/)
+  assert.equal(readAutomaticState(e.cfg).retrieved[accepted.id].count,1)
+  assert.equal(e.store.getLesson(accepted.id).lastValidatedAt,accepted.lastValidatedAt)
+  e.advance(31*86400000);assert.equal(e.runtime.context(e.agent),'')
+  e.store.reviewLesson(accepted.id,'accepted',accepted.revision,'review-expiry-renew','human')
+  // The fake clock is ahead of real review time, so that review remains expired.
+  assert.equal(e.runtime.context(e.agent),'')
+  const preference=e.store.createLesson({...lesson(),workspaceRoot:e.root,evidence:[{kind:'session',sessionId:'pref',recordSeq:1,summary:quote,verification:'read'}]},'review-pref').lesson
+  const p=e.store.reviewLesson(preference.id,'accepted',preference.revision,'review-pref-accept','human')
+  assert.match(e.runtime.context(e.agent),/E 盘/)
+  e.store.reviewLesson(p.id,'rejected',p.revision,'review-pref-reject','human')
+  assert.equal(e.runtime.context(e.agent),'')
+})
+test('authenticated chat actions validate booleans and unknown sessions without writes',async t=>{
+  const e=setup(t,{autoIdleMs:60000});await e.turn()
+  const handle=createDreamActionHandler({config:e.cfg}),file=join(e.cfg.journalDir,'automatic/state.json')
+  const call=body=>handle(new Request('http://127.0.0.1/api/dsh-dream/actions',{method:'POST',headers:{'content-type':'application/json','x-dsh-dream-action':'1'},body:JSON.stringify(body)}))
+  const before=readFileSync(file,'utf8')
+  assert.equal((await call({operation:'automatic-chat',sessionId:e.session.id,use:'false'})).status,400)
+  assert.equal((await call({operation:'automatic-chat',sessionId:'unknown',use:false})).status,409)
+  assert.equal(readFileSync(file,'utf8'),before)
+  assert.equal((await call({operation:'automatic-chat',sessionId:e.session.id,use:false,contribute:true})).status,200)
+  const [row]=e.runtime.status().sessions;assert.equal(row.use,false);assert.equal(row.contribute,true)
 })

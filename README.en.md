@@ -12,7 +12,9 @@ Collect candidate lessons from completed tasks, review them and reuse relevant m
 
 - Browse journals, retrieve lessons and inspect their sources.
 - Collect candidates after tasks and retrieve accepted memories for relevant tasks, with separate switches.
+- Consolidate after quiet time, retain turns during cooldown or quota limits, and control use and contribution per chat.
 - Review lessons, resolve conflicts and record separate usage feedback.
+- Review candidates by project/topic; pause expired facts until they are reviewed again.
 - Preview AGENTS.md changes before applying them, with rollback support.
 
 ## Install
@@ -29,7 +31,9 @@ For the web version, replace `desktop` with `web`. Restart DSH after installatio
 
 Use DSH normally. A completed turn qualifies when it contains an explicit preference/correction or at least two non-Dream tool calls. Within the configured budget, Dream creates candidates. Open Settings → Dream Journal to inspect their sources and accept them; relevant later tasks retrieve accepted memories automatically. You can still ask for a separate reflection and journal entry.
 
-Automatic collection uses the current session's model and quota: up to four auxiliary calls per day, ten minutes apart, with 1200 output tokens per call by default. Ordinary chat is skipped; new input cancels collection. Only sourced project candidates are saved. Acceptance and project-rule changes remain separate actions. UI language follows DSH; journal and lesson content stays original.
+Automatic collection uses the current session's model and quota. By default, it waits for 60 quiet seconds, merges up to four turns in the same project, and allows four calls per day at least ten minutes apart, with 1200 output tokens per call. Cooldown and quota limits defer turns; new input stops auxiliary work and retains unfinished excerpts. The bounded queue keeps up to 32 turns for 24 hours and survives restart. Ordinary chat is skipped.
+
+New memories await review: inspect the source quote, conditions and exceptions before accepting them. Facts require review after 30 days by default; stable preferences have no default expiry. Retrieval is reference exposure, not renewed verification. Acceptance and project-rule changes remain separate actions. UI language follows DSH; journal and lesson content stays original.
 
 ## Requirements and configuration
 

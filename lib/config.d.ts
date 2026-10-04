@@ -21,6 +21,7 @@ export interface ResolvedDreamConfig {
     autoMaxInputChars: number;
     autoMaxOutputTokens: number;
     autoTimeoutMs: number;
+    autoIdleMs: number;
 }
 /** 解析并校验插件配置。 */
 export declare function resolveConfig(raw?: Record<string, unknown> | null, env?: NodeJS.ProcessEnv): ResolvedDreamConfig;

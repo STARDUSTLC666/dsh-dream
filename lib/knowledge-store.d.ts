@@ -1,4 +1,11 @@
 import { type Evidence, type EvidenceInput, type Lesson, type LessonInput, type LessonReviewResolution, type LessonState, type ReviewDecision } from './knowledge.js';
+type MemorySnapshot = {
+    sourceKey: string;
+    lessons: Lesson[];
+    evidence: Evidence[];
+    badLines: number;
+    complete: boolean;
+};
 /** events.jsonl 默认最多回放的行数（有界读取）。 */
 export declare const MAX_REPLAY_EVENTS = 200000;
 /** KnowledgeStore 构造选项（都可省略，保持 FREEZE 的 constructor(knowledgeDir) 可用）。 */
@@ -37,6 +44,9 @@ export declare class KnowledgeStore {
     listLessons(): Lesson[];
     /** 全部证据，按 observedAt 升序（同刻按 id 稳定排序）。 */
     listEvidence(): Evidence[];
+    /** Content-addressed, immutable snapshot. Hashes also detect same-size, same-mtime writes. */
+    readSnapshot(): MemorySnapshot;
+    private sourceFingerprint;
     /** 按 id 取经验；不存在返回 undefined。 */
     getLesson(id: string): Lesson | undefined;
     /** 追加证据；同 sessionId+recordSeq 或同 sourceHash 视为重复，返回已有记录且不写。 */
@@ -71,7 +81,7 @@ export declare class KnowledgeStore {
         id: string;
         patch: Partial<Lesson>;
         expectedRevision: number;
-    }>, idempotencyKey: string): Lesson[];
+    }>, idempotencyKey: string, candidateReview?: 'accepted' | 'rejected'): Lesson[];
     /** 状态迁移；不允许的迁移抛 KnowledgeError('invalid') 且不写。 */
     applyTransition(id: string, to: LessonState, expectedRevision: number, idempotencyKey: string): Lesson;
     /** 从事件完整重建派生索引与 checkpoint；不删除、不改写 events.jsonl / evidence.jsonl。 */
@@ -188,3 +198,4 @@ export declare class KnowledgeStore {
     private writeIndex;
     private writeIndexStrict;
 }
+export {};

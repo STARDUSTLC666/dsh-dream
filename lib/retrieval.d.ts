@@ -28,6 +28,7 @@ export interface RetrievalQuery {
     includeCandidates?: boolean;
     /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
     includeNoEvidence?: boolean;
+    now?: number;
 }
 /** 检索结果中的单条经验（when/exceptions 永不截断）。 */
 export interface RetrievedLesson {

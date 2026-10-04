@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "回顾会话、保存反思，并把经过核验和审阅的经验用于后续任务。",
   "type": "module",
   "main": "lib/index.js",

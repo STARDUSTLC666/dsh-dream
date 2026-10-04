@@ -291,7 +291,7 @@ test('normalizeKnowledge()：只投影展示字段，limit 只截断渲染、byS
   assert.equal(vm.shown, 2)
   assert.deepEqual(
     Object.keys(vm.rows[0]).sort(),
-    ['action', 'applicability', 'bridgeable', 'candidate', 'conflictIds', 'conflicts', 'disputed', 'evidence', 'evidenceSummary', 'feedback', 'exceptions', 'holdReason', 'holdReasonLabel', 'id', 'independentSupportCount', 'lastText', 'lastTitle', 'lastValidatedAt', 'projectId', 'revision', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when', 'workspaceRoot'].sort(),
+    ['action', 'applicability', 'bridgeable', 'candidate', 'conflictIds', 'conflicts', 'disputed', 'evidence', 'evidenceSummary', 'feedback', 'exceptions', 'groupKey', 'kind', 'lastRetrievedAt', 'reviewDue', 'holdReason', 'holdReasonLabel', 'id', 'independentSupportCount', 'lastText', 'lastTitle', 'lastValidatedAt', 'projectId', 'revision', 'scopeLabel', 'state', 'stateClass', 'stateLabel', 'title', 'when', 'workspaceRoot'].sort(),
     '只投影展示字段：不把权重 / 向量 / 原始 JSON 带进视图模型',
   )
   assert.equal(vm.rows[0].weight, undefined)

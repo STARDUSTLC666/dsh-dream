@@ -4,6 +4,14 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { ResolvedDreamConfig } from './config.js'
 
+export interface PendingMemory {
+  key: string; sessionId: string; cwd: string; endSeq: number; createdAt: number; readyAt: number
+  provider: string; model: string
+  sources: Array<{ seq: number; role: 'user' | 'assistant'; text: string; hash: string }>
+  lease?: { job: string; pid: number; until: number }
+}
+export interface ChatMemoryPolicy { sessionId: string; cwd?: string; use?: boolean; contribute?: boolean }
+
 export interface AutomaticState {
   version: 1
   day: string
@@ -12,6 +20,11 @@ export interface AutomaticState {
   retrievalEnabled?: boolean
   lastAttemptAt?: number
   cursors: Record<string, number>
+  pending?: PendingMemory[]
+  policies?: Record<string, ChatMemoryPolicy>
+  expired?: number
+  overflow?: number
+  retrieved?: Record<string, { at: number; count: number }>
   last?: { at: number; reason: string; saved: number; job?: string }
 }
 
@@ -23,7 +36,7 @@ export function budgetDay(now: number): string {
 export function readAutomaticState(cfg: ResolvedDreamConfig, now = Date.now()): AutomaticState {
   const file = join(cfg.journalDir, 'automatic', 'state.json')
   if (!existsSync(file)) return { version: 1, day: budgetDay(now), calls: 0, cursors: {} }
-  if (statSync(file).size > 128 * 1024) throw new Error('automatic-state-invalid')
+  if (statSync(file).size > 2 * 1024 * 1024) throw new Error('automatic-state-invalid')
   const raw = JSON.parse(readFileSync(file, 'utf8'))
   if (raw?.version !== 1 || typeof raw.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.day)
     || !Number.isSafeInteger(raw.calls) || raw.calls < 0 || raw.calls > 100000
@@ -36,6 +49,22 @@ export function readAutomaticState(cfg: ResolvedDreamConfig, now = Date.now()): 
     || (raw.last !== undefined && (!Number.isSafeInteger(raw.last.at) || typeof raw.last.reason !== 'string' || raw.last.reason.length > 80 || !Number.isSafeInteger(raw.last.saved) || raw.last.saved < 0 || (raw.last.job !== undefined && typeof raw.last.job !== 'string')))) {
     throw new Error('automatic-state-invalid')
   }
+  const text = (v: unknown, max: number) => typeof v === 'string' && v.length > 0 && v.length <= max
+  const integer = (v: unknown) => Number.isSafeInteger(v) && Number(v) >= 0
+  if ((raw.pending !== undefined && (!Array.isArray(raw.pending) || raw.pending.length > 32 || raw.pending.some((p: any) =>
+    !p || !text(p.key, 64) || !text(p.sessionId, 200) || !text(p.cwd, 2000) || !integer(p.endSeq)
+    || !integer(p.createdAt) || !integer(p.readyAt) || !text(p.provider, 200) || !text(p.model, 200)
+    || !Array.isArray(p.sources) || p.sources.length < 1 || p.sources.length > 6 || p.sources.some((s: any) =>
+      !s || !integer(s.seq) || !['user', 'assistant'].includes(s.role) || !text(s.text, 1800) || !/^[a-f0-9]{64}$/.test(s.hash))
+    || (p.lease !== undefined && (!text(p.lease.job, 64) || !integer(p.lease.pid) || p.lease.pid < 1 || !integer(p.lease.until))))))
+    || (raw.policies !== undefined && (!raw.policies || Array.isArray(raw.policies) || typeof raw.policies !== 'object'
+      || Object.keys(raw.policies).length > 128 || Object.entries(raw.policies).some(([key, p]: [string, any]) =>
+        !/^[a-f0-9]{24}$/.test(key) || !p || !text(p.sessionId, 200) || (p.cwd !== undefined && !text(p.cwd, 2000))
+        || ['use', 'contribute'].some(k => p[k] !== undefined && typeof p[k] !== 'boolean'))))
+    || ['expired', 'overflow'].some(k => raw[k] !== undefined && !integer(raw[k]))
+    || (raw.retrieved !== undefined && (!raw.retrieved || Array.isArray(raw.retrieved) || typeof raw.retrieved !== 'object'
+      || Object.keys(raw.retrieved).length > 2000 || Object.entries(raw.retrieved).some(([key, v]: [string, any]) =>
+        !text(key, 200) || !v || !integer(v.at) || !integer(v.count))))) throw new Error('automatic-state-invalid')
   return raw as AutomaticState
 }
 

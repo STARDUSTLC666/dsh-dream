@@ -29,6 +29,7 @@ export interface ResolvedDreamConfig {
   autoMaxInputChars: number
   autoMaxOutputTokens: number
   autoTimeoutMs: number
+  autoIdleMs: number
 }
 
 function str(value: unknown, fallback: string): string {
@@ -59,5 +60,6 @@ export function resolveConfig(raw?: Record<string, unknown> | null, env: NodeJS.
     autoMaxInputChars: clamp(cfg.autoMaxInputChars, 12000, 1000, 20000),
     autoMaxOutputTokens: clamp(cfg.autoMaxOutputTokens, 1200, 200, 2000),
     autoTimeoutMs: clamp(cfg.autoTimeoutMs, 30000, 1000, 60000),
+    autoIdleMs: clamp(cfg.autoIdleMs, 60000, 0, 3600000),
   }
 }

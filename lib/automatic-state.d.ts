@@ -1,4 +1,31 @@
 import type { ResolvedDreamConfig } from './config.js';
+export interface PendingMemory {
+    key: string;
+    sessionId: string;
+    cwd: string;
+    endSeq: number;
+    createdAt: number;
+    readyAt: number;
+    provider: string;
+    model: string;
+    sources: Array<{
+        seq: number;
+        role: 'user' | 'assistant';
+        text: string;
+        hash: string;
+    }>;
+    lease?: {
+        job: string;
+        pid: number;
+        until: number;
+    };
+}
+export interface ChatMemoryPolicy {
+    sessionId: string;
+    cwd?: string;
+    use?: boolean;
+    contribute?: boolean;
+}
 export interface AutomaticState {
     version: 1;
     day: string;
@@ -7,6 +34,14 @@ export interface AutomaticState {
     retrievalEnabled?: boolean;
     lastAttemptAt?: number;
     cursors: Record<string, number>;
+    pending?: PendingMemory[];
+    policies?: Record<string, ChatMemoryPolicy>;
+    expired?: number;
+    overflow?: number;
+    retrieved?: Record<string, {
+        at: number;
+        count: number;
+    }>;
     last?: {
         at: number;
         reason: string;

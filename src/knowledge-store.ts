@@ -53,6 +53,17 @@ import {
   type ReviewDecision,
 } from './knowledge.js'
 import { maskSecrets } from './mask.js'
+import { memoryDirectory } from './memory.js'
+
+type MemorySnapshot = { sourceKey: string; lessons: Lesson[]; evidence: Evidence[]; badLines: number; complete: boolean }
+const snapshots = new Map<string, MemorySnapshot>()
+function freezeTree(value: any): any {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeTree(child)
+    Object.freeze(value)
+  }
+  return value
+}
 
 /** events.jsonl 默认最多回放的行数（有界读取）。 */
 export const MAX_REPLAY_EVENTS = 200000
@@ -464,6 +475,42 @@ export class KnowledgeStore {
       .sort((a, b) => (a.observedAt === b.observedAt ? a.id.localeCompare(b.id) : a.observedAt.localeCompare(b.observedAt)))
   }
 
+  /** Content-addressed, immutable snapshot. Hashes also detect same-size, same-mtime writes. */
+  readSnapshot(): MemorySnapshot {
+    const key = this.sourceFingerprint()
+    const cacheKey = this.dir + ':' + this.maxReplayEvents
+    const cached = snapshots.get(cacheKey)
+    if (cached?.sourceKey === key) return cached
+    snapshots.delete(cacheKey)
+    // Cold reads verify the authority, including edits in the middle of a
+    // legacy checkpoint's prefix/tail guards. Warm reads only hash the files.
+    const state = this.mergeEvidenceFile(this.loadEventsBounded(0))
+    if (this.sourceFingerprint() !== key) throw new KnowledgeError('io', '记忆正在更新，请稍后重试')
+    const snapshot = freezeTree({ sourceKey: key, lessons: [...state.lessons.values()], evidence: [...state.evidence.values()], badLines: state.badLines,
+      complete: state.idempotencyComplete && state.orphanEvents === 0 && state.unsupportedVersions === 0 && state.skippedEvents === 0 })
+    if (snapshots.size >= 16) snapshots.delete(snapshots.keys().next().value!)
+    snapshots.set(cacheKey, snapshot)
+    return snapshot
+  }
+
+  private sourceFingerprint(): string {
+    const digest = createHash('sha256'), buffer = Buffer.allocUnsafe(64 * 1024)
+    for (const file of [this.eventsPath, this.evidencePath, this.indexPath]) {
+      digest.update(file)
+      let fd: number
+      try { fd = openSync(file, 'r') } catch (error: any) {
+        if (error.code === 'ENOENT') { digest.update(':missing'); continue }
+        throw error
+      }
+      try {
+        let count: number
+        while ((count = readSync(fd, buffer, 0, buffer.length, null)) > 0) digest.update(buffer.subarray(0, count))
+        digest.update(':end')
+      } finally { closeSync(fd) }
+    }
+    return digest.digest('hex')
+  }
+
   /** 按 id 取经验；不存在返回 undefined。 */
   getLesson(id: string): Lesson | undefined {
     const state = this.loadEvents()
@@ -817,6 +864,7 @@ export class KnowledgeStore {
   updateLessonsBatch(
     updates: Array<{ id: string; patch: Partial<Lesson>; expectedRevision: number }>,
     idempotencyKey: string,
+    candidateReview?: 'accepted' | 'rejected',
   ): Lesson[] {
     assertIdempotencyKey(idempotencyKey)
     if (!Array.isArray(updates) || updates.length === 0) throw new KnowledgeError('invalid', 'updates 必须是非空数组')
@@ -830,6 +878,7 @@ export class KnowledgeStore {
     }
     const requestHash = this.hashRequest({
       operation: 'lesson.batch',
+      ...(candidateReview === undefined ? {} : { candidateReview }),
       updates: updates.map((update) => ({ id: update.id, expectedRevision: update.expectedRevision, patch: this.hashablePatch(update.patch) })),
     })
     return this.withLock((touch) => {
@@ -843,6 +892,7 @@ export class KnowledgeStore {
       }
       const now = new Date().toISOString()
       const planned: Array<{ previous: Lesson; merged: Lesson; patch: Partial<Lesson> }> = []
+      let reviewGroup: string | undefined
       for (const update of updates) {
         const previous = state.lessons.get(update.id)
         if (previous === undefined) throw new KnowledgeError('invalid', '经验不存在：' + update.id, { failedId: update.id })
@@ -854,6 +904,15 @@ export class KnowledgeStore {
           })
         }
         const clean = this.cleanPatch(update.patch)
+        if (candidateReview !== undefined) {
+          if (previous.state !== 'candidate' || previous.conflictIds.length) throw new KnowledgeError('invalid', '批量审阅只接受没有冲突的候选，请逐条核对其他记录')
+          const group = JSON.stringify([previous.kind, previous.scope.global === true, previous.scope.projectId, previous.scope.workspaceRoot])
+          reviewGroup ??= group
+          if (group !== reviewGroup) throw new KnowledgeError('invalid', '批量审阅需要相同项目、范围和主题')
+          if (candidateReview === 'accepted' && !previous.evidenceIds.some(id => state.evidence.get(id)?.verification === 'read')) throw new KnowledgeError('invalid', '请先核对候选的实际来源')
+          clean.state = candidateReview === 'accepted' ? 'usable' : 'rejected'
+          clean.review = { decision: candidateReview, actor: 'human', at: now }
+        }
         if (clean.state !== undefined && clean.state !== previous.state && !canTransition(previous.state, clean.state)) {
           throw new KnowledgeError('invalid', '不允许的状态迁移：' + previous.state + ' → ' + clean.state, { failedId: update.id })
         }
@@ -1814,6 +1873,7 @@ export class KnowledgeStore {
       lessons,
       stateCounts,
       byState: stateCounts,
+      memory: memoryDirectory([...state.lessons.values()], [...state.evidence.values()]),
     }
     const checkpoint = this.buildCheckpoint(state)
     if (checkpoint !== undefined) payload.checkpoint = checkpoint

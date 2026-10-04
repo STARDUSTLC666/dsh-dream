@@ -129,3 +129,17 @@ test('read-only UI queries and handler registration do not create a knowledge di
   createDreamActionHandler({ journalDir: join(root, 'journal') })
   assert.equal(existsSync(join(root, 'journal')), false)
 })
+
+test('batch review rejects mixed revisions, duplicated ids and unread sources without partial changes',async()=>{
+  const e=fixture()
+  const make=title=>e.store.createLesson({kind:'preference',title,action:title,when:'交付文档时',workspaceRoot:e.project,evidence:[{kind:'session',sessionId:title,recordSeq:1,summary:title,verification:'read'}]},'batch-api-'+title,{requireReview:true}).lesson
+  const a=make('交付文档带日期'),b=make('交付文档带格式说明')
+  const items=[a,b].map(row=>({lessonId:row.id,expectedRevision:row.revision})),path=join(e.journalDir,'knowledge/events.jsonl'),before=readFileSync(path,'utf8')
+  assert.equal((await e.call({operation:'review-batch',action:'accept',items:[items[0],{...items[1],expectedRevision:99}],requestId:'api-batch-invalid'})).status,409)
+  assert.equal((await e.call({operation:'review-batch',action:'accept',items:[items[0],items[0]],requestId:'api-batch-duplicate'})).status,400)
+  assert.equal(readFileSync(path,'utf8'),before)
+  const body={operation:'review-batch',action:'accept',items,requestId:'api-batch-success'}
+  assert.equal((await e.call(body)).status,200);const after=readFileSync(path,'utf8')
+  assert.equal((await e.call(body)).status,200);assert.equal(readFileSync(path,'utf8'),after)
+  assert.equal(e.store.getLesson(a.id).review.actor,'human');assert.equal(e.store.getLesson(b.id).state,'usable')
+})

@@ -1,6 +1,7 @@
 import { type ResolvedDreamConfig } from './config.js';
 import { type DreamEntry, type DreamStats } from './journal.js';
 import type { Evidence, Lesson } from './knowledge.js';
+import { memoryDirectory } from './memory.js';
 /** 面板与浏览器说话的同源路由。 */
 export declare const DREAM_ROUTE = "/_dsh/dsh-dream/journal";
 /** M1 经验面板的只读路由。 */
@@ -43,7 +44,11 @@ export interface KnowledgeWebPayload {
     lessons: Array<Lesson & {
         scopeLabel: string;
         evidenceSummary: string;
+        reviewDue?: boolean;
+        nextReviewAt?: string;
+        lastRetrievedAt?: string;
     }>;
+    memory?: ReturnType<typeof memoryDirectory>;
     /** 脱敏后的证据记录。 */
     evidence: Evidence[];
     /** 全量统计（不受条数影响）。 */

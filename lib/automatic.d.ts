@@ -8,7 +8,11 @@ export declare class AutomaticDream {
     private queries;
     private queue;
     private pending;
-    private active?;
+    private scheduler?;
+    private active;
+    private sessions;
+    private contextCache;
+    private retrievalStamp;
     private closed;
     private ready;
     private host;
@@ -27,8 +31,14 @@ export declare class AutomaticDream {
         enabled?: boolean;
         retrievalEnabled?: boolean;
     }): void;
+    controlSession(id: string, changes: {
+        use?: boolean | null;
+        contribute?: boolean | null;
+    }): void;
+    flush(): void;
     observe(session: any, event: any): void;
     private process;
+    private generateBatch;
     private generate;
     private parse;
     context(agent: any): string;

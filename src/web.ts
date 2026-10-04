@@ -23,6 +23,8 @@ import type { Evidence, Lesson } from './knowledge.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { isDreamReference, maskSecrets } from './mask.js'
 import { buildEvidenceSummary, lessonScopeLabel } from './retrieval.js'
+import { memoryDirectory, needsMemoryReview, reviewDeadline } from './memory.js'
+import { readAutomaticState } from './automatic-state.js'
 
 /** 面板与浏览器说话的同源路由。 */
 export const DREAM_ROUTE = '/_dsh/dsh-dream/journal'
@@ -89,7 +91,8 @@ export interface KnowledgeWebStats {
 /** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
 export interface KnowledgeWebPayload {
   /** 每条经验额外带 scopeLabel 与 evidenceSummary（与 dream_context 同源文案）。 */
-  lessons: Array<Lesson & { scopeLabel: string; evidenceSummary: string }>
+  lessons: Array<Lesson & { scopeLabel: string; evidenceSummary: string; reviewDue?: boolean; nextReviewAt?: string; lastRetrievedAt?: string }>
+  memory?: ReturnType<typeof memoryDirectory>
   /** 脱敏后的证据记录。 */
   evidence: Evidence[]
   /** 全量统计（不受条数影响）。 */
@@ -432,14 +435,20 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
       const lessons = reader.listLessons()
       const evidence = reader.listEvidence()
       const stats = normalizeKnowledgeStats(reader.stats())
+      let retrieved: Record<string, { at: number; count: number }> = {}
+      try { retrieved = readAutomaticState({ ...resolveConfig(options.config as Record<string, unknown> | null | undefined), journalDir: journalDirOf(options) }).retrieved ?? {} } catch { /* read-only panel still reports knowledge */ }
       const payload: KnowledgeWebPayload = {
         lessons: lessons.map((lesson) => maskDeep({
           ...lesson,
           scopeLabel: lessonScopeLabel(lesson.scope),
           evidenceSummary: buildEvidenceSummary(lesson, evidence),
+          reviewDue: needsMemoryReview(lesson),
+          ...(reviewDeadline(lesson) === undefined ? {} : { nextReviewAt: new Date(reviewDeadline(lesson)!).toISOString() }),
+          ...(retrieved[lesson.id] ? { lastRetrievedAt: new Date(retrieved[lesson.id].at).toISOString() } : {}),
         })),
         evidence: evidence.map((item) => maskDeep(item)),
         stats,
+        memory: maskDeep(memoryDirectory(lessons, evidence)),
       }
       responseJson(res, 200, payload)
     } catch (error) {

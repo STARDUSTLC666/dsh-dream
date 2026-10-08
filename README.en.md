@@ -8,6 +8,8 @@ Collect candidate lessons from completed tasks, review them and reuse relevant m
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
 
+Feedback and contributions are welcome: report [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) or submit [pull requests](https://github.com/STARDUSTLC666/dsh-dream/pulls).
+
 ## What it does
 
 - Browse journals, retrieve lessons and inspect their sources.

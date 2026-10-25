@@ -12,6 +12,8 @@ Only lessons you accept in the panel are reused automatically. A model's `dream_
 
 Feedback and contributions are welcome: report [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) or submit [pull requests](https://github.com/STARDUSTLC666/dsh-dream/pulls).
 
+Open the new native sidebar workbench after updating and restarting DSH. Settings remains available. See the [workbench guide and validation boundaries](docs/WORKBENCH.md).
+
 ## What it does
 
 - Browse journals, retrieve lessons and inspect their sources.

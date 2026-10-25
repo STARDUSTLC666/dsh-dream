@@ -53,21 +53,26 @@ test('DSH locale changes labels and derived status without translating stored le
   let active = 'zh', slot
   const locale = { getSnapshot() { return { active } } }
   loaded.exports.apply({ locale, slots: {
-    inject(_name, callback) { callback() }, register(meta) { slot = meta },
+    inject(_name, callback) { callback() }, register(meta) { if(meta.name === 'settings.section') slot = meta },
   } })
-  assert.equal(slot.label(), '梦境日记')
+  assert.equal(slot.label(), 'Dream 记忆')
   assert.equal(slot.inject().locale, locale)
   const input = { lessons: [{ id: 'lesson-1', title: '中文经验', action: '保留原文', state: 'candidate' }], evidence: [] }
   assert.equal(loaded.internals.normalizeKnowledge(input, new Date()).rows[0].stateLabel, '候选（未采纳）')
   active = 'en-US'
-  assert.equal(slot.label(), 'Dream journal')
+  assert.equal(slot.label(), 'Dream memory')
   const row = loaded.internals.normalizeKnowledge(input, new Date()).rows[0]
   assert.equal(row.stateLabel, 'Candidate (not accepted)')
   assert.equal(row.title, '中文经验'); assert.equal(row.action, '保留原文')
+  for (const summary of ['无证据（仅候选，不可作为已证实结论）','证据暂不可核对（2 条引用缺失）','独立证据 1 条（已读 1 / 仅声明 0）']) {
+    const normalized=loaded.internals.normalizeKnowledge({lessons:[{...input.lessons[0],evidenceSummary:summary}],evidence:[]},new Date()).rows[0]
+    assert.doesNotMatch(normalized.evidenceSummary,/[\u3400-\u9fff]/)
+    assert.equal(normalized.title,'中文经验')
+  }
   const error = loaded.internals.displayError({ message: '经验已更新，请刷新后重新操作', code: 'revision', status: 409 })
   assert.match(error, /Refresh/); assert.match(error, /409/); assert.doesNotMatch(error, /[\u3400-\u9fff]/)
   active = 'zh'
-  assert.equal(slot.label(), '梦境日记')
+  assert.equal(slot.label(), 'Dream 记忆')
 })
 
 function localIso(year, month, day, hour = 12) {

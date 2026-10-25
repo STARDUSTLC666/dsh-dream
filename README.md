@@ -10,6 +10,8 @@
 
 欢迎使用，遇到问题或有改进建议，请提交 [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) 和 [PR](https://github.com/STARDUSTLC666/dsh-dream/pulls)。
 
+更新并重启 DSH 后，可从原生侧栏打开新版工作台，原设置入口继续保留。详见[工作台说明与验收范围](docs/WORKBENCH.md)。
+
 ## 功能
 
 - 浏览梦境日记、检索经验并查看关联来源。

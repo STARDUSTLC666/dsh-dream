@@ -54,7 +54,7 @@ Once installed, DSH's **Settings →「梦境日记」(Dream journal)** provides
 | `dream_save` | Write a reflection + 1-5 lessons + mood to the permanent journal | `reflection` required |
 | `dream_journal` | List dreams, newest first | `limit` |
 | `dream_recall` | Keyword search across the journal | `query` required |
-| `dream_bridge` | Bridge accepted, scope-matched lessons into AGENTS.md (`preview` / `apply` / `rollback`; omitting `mode` keeps the legacy direct write with a deprecation notice) | `mode` optional; `path` / `lessonIds` / `maxLessons` / `expectedSha256` / `previewId` / `projectId` |
+| `dream_bridge` | Bridge accepted, scope-matched lessons into AGENTS.md (`preview` / `apply` / `rollback`; omitting `mode` performs a read-only preview) | `mode` optional; `path` / `lessonIds` / `maxLessons` / `expectedSha256` / `previewId` / `projectId` |
 | `dream_health` | Self-check: sessions dir / dream count / config summary | — |
 | `dream_learn` | Submit a candidate technical lesson with evidence (validate / mask / dedupe / scope; evidence-free input stays a candidate) | `kind`, `title`, `action`, `when` required; `evidence` optional (defaults to `[]`) |
 | `dream_context` | Retrieve a few applicable lessons before a task (read-only; candidates are held out by default) | `query` required; `projectId` / `workspaceRoot` / `limit` / `maxChars` / `packageName` / `packageVersion` / `platform` / `includeCandidates` optional |
@@ -68,7 +68,7 @@ Conflict review requires resolution (prefer / drop / merge), affectedIds and not
 - `apply`: requires the preview’s `expectedSha256` (null for a missing file); also pass `previewId` to bind the preview; a concurrent edit returns `conflict` with zero writes. It only replaces the Dream managed block (`<!-- dsh-dream:start/end -->`), preserving text outside the block, BOM and line endings, first fsyncs a pending recovery record, then atomically replaces the target and records applied;
 - `rollback`: locates the record by backupId and rolls back only while the current managed block still equals that apply result, preserving later manual additions outside it.
 
-Omitting `mode` keeps the 0.5.x direct write and returns a deprecation notice; new flows should use `preview → apply`. Only `usable`, scope-matched (or explicit global with review.decision accepted) lessons can be bridged — frequency is no longer an admission criterion — and everything written is masked via `mask.ts`. The panel's "Write log" shows these records and whether they are rollbackable.
+From 0.11.0, omitting `mode` performs a read-only preview. Model acceptance and conflict resolution only recommend human review. Automatic reuse and bridging require `review.actor=human`; global acceptance also requires explicit all-project confirmation. Only `usable`, scope-matched (or explicit global with review.decision accepted) lessons can be bridged — frequency is no longer an admission criterion — and everything written is masked via `mask.ts`. The panel's "Write log" shows these records and whether they are rollbackable.
 
 The bundled `dream-protocol` skill teaches the agent when and how to dream (and the journaling discipline: patterns only, never secrets).
 

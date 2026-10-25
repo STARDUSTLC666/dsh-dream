@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { buildDreamTools, resolveConfig } from '../lib/index.js'
 import { KnowledgeStore } from '../lib/knowledge-store.js'
+import { executeDreamReview } from '../lib/tools.js'
 import { seedSessionEvidence } from './fixtures/session-evidence.mjs'
 
 function makeEnv() {
@@ -40,7 +41,7 @@ function storeOf(env) {
 
 async function acceptLesson(env, lessonId) {
   const current = storeOf(env).getLesson(lessonId)
-  return toolOf(env, 'dream_review').execute({ action: 'accept', lessonId, expectedRevision: current.revision })
+  return executeDreamReview(env.cfg, { action: 'accept', lessonId, expectedRevision: current.revision, confirmGlobal: true }, undefined, 'human')
 }
 
 async function learnAccepted(env, title, sessionId) {
@@ -63,14 +64,15 @@ async function markDisputed(env, lessonId, conflictWith) {
 
 async function resolveConflict(env, lessonId, conflictWith, resolution, note) {
   const current = storeOf(env).getLesson(lessonId)
-  return toolOf(env, 'dream_review').execute({
+  return executeDreamReview(env.cfg, {
     action: 'resolve-conflict',
     lessonId,
     expectedRevision: current.revision,
     conflictWith,
     resolution,
     note,
-  })
+    confirmGlobal: true,
+  }, undefined, 'human')
 }
 
 /** 递归快照目录内容（相对路径 + 字节 + mtimeMs），用于证明只读调用零写入。 */
@@ -248,7 +250,7 @@ test('用户纠正的真实来源仍需审阅，不能自动记成用户采纳',
     const beforeReview = await toolOf(env, 'dream_context').execute({ query: 'Nodemailer 取消投递', projectId: 'proj-a' })
     assert.deepEqual(beforeReview.items, [])
     await acceptLesson(env, corrected.lessonId)
-    assert.equal(storeOf(env).getLesson(corrected.lessonId).review.actor, 'model')
+    assert.equal(storeOf(env).getLesson(corrected.lessonId).review.actor, 'human')
     const context = await toolOf(env, 'dream_context').execute({ query: 'Nodemailer 取消投递', projectId: 'proj-a' })
     assert.deepEqual(context.items.map((item) => item.lessonId), [corrected.lessonId], 'S5：只注入用户纠正，不注入 claimed 推测')
     assert.deepEqual(context.skipped, [{ lessonId: speculation.lessonId, reason: 'no-evidence' }])
@@ -458,7 +460,7 @@ test('R3：包名识别后 version-mismatch 不注入；显式 packageName 且�
   } finally { env.cleanup() }
 })
 
-test('dream_review：actor=user 被忽略并记为 model；accept 后 usable', async () => {
+test('dream_review：actor=user 不能伪造人工采纳；模型 accept 只建议、不写入', async () => {
   const env = makeEnv()
   try {
     const learned = await toolOf(env, 'dream_learn').execute({
@@ -480,12 +482,13 @@ test('dream_review：actor=user 被忽略并记为 model；accept 后 usable', a
     })
     assert.equal(reviewed.ok, true)
     assert.equal(reviewed.previousState, 'candidate')
-    assert.equal(reviewed.state, 'usable')
-    assert.equal(reviewed.revision, current.revision + 1)
-    assert.equal(reviewed.lesson.review.decision, 'accepted')
-    assert.equal(reviewed.lesson.review.actor, 'model')
+    assert.equal(reviewed.state, 'candidate')
+    assert.equal(reviewed.requiresHumanReview, true)
+    assert.equal(reviewed.revision, current.revision)
+    assert.equal(reviewed.lesson.review.decision, 'unreviewed')
+    assert.equal(reviewed.lesson.review.actor, undefined)
     assert.notEqual(reviewed.lesson.review.actor, 'user')
-    assert.equal(store.getLesson(learned.lessonId).review.actor, 'model')
+    assert.equal(store.getLesson(learned.lessonId).review.actor, undefined)
   } finally { env.cleanup() }
 })
 
@@ -529,7 +532,7 @@ test('dream_review：mark-stale 后 dream_context 排除并给 skipped 原因', 
       evidence: [EVIDENCE_READ],
     })
     const review = toolOf(env, 'dream_review')
-    const accepted = await review.execute({ action: 'accept', lessonId: learned.lessonId, expectedRevision: 1 })
+    const accepted = await acceptLesson(env, learned.lessonId)
     const staled = await review.execute({ action: 'mark-stale', lessonId: learned.lessonId, expectedRevision: accepted.revision })
     assert.equal(staled.previousState, 'usable')
     assert.equal(staled.state, 'stale')

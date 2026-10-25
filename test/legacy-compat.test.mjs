@@ -160,10 +160,8 @@ test('六工具只增不减：读工具零写入，dream_save 只追加一行，
 
     const agents = join(env.dir, 'AGENTS.md')
     const bridge = await exec(env.tools, 'dream_bridge', { path: agents, maxLessons: 10 })
-    const agentsText = readFileSync(agents, 'utf8')
-    assert.equal(bridge.action, 'created')
-    assert.match(agentsText, /<!-- dsh-dream:lessons:start/)
-    assert.match(agentsText, /<!-- dsh-dream:lessons:end -->/)
+    assert.equal(bridge.mode, 'preview')
+    assert.equal(existsSync(agents), false, '默认桥接不能直接写入未审阅的旧日记')
 
     const current = {
       journal: scrub(journal, env.dir),
@@ -171,15 +169,14 @@ test('六工具只增不减：读工具零写入，dream_save 只追加一行，
       health: scrub(health, env.dir),
       digest: scrub(digest, env.dir),
       dreamSaveKeys: Object.keys(saved).sort(),
-      bridge: { action: bridge.action, lessonsCount: bridge.lessonsCount, file: agentsText },
       context: { items: context.items, budget: context.budget },
     }
     const currentPaths = new Set(keyPaths(current))
-    const missing = keyPaths(GOLDEN.stable).filter((path) => !currentPaths.has(path))
+    const { bridge: legacyBridge, ...stableReads } = GOLDEN.stable
+    const missing = keyPaths(stableReads).filter((path) => !currentPaths.has(path))
     assert.deepEqual(missing, [], '旧输出键路径只增不减，缺失：' + missing.join(', '))
     assertSuperset(GOLDEN.stable.journal, current.journal, 'journal')
     assertSuperset(GOLDEN.stable.recall, current.recall, 'recall')
-    assert.deepEqual(current.bridge, GOLDEN.stable.bridge, 'dream_bridge 稳定值不得变')
     for (const key of GOLDEN.stable.dreamSaveKeys) assert.ok(current.dreamSaveKeys.includes(key), 'dream_save 输出字段减少：' + key)
   } finally { rmSync(env.dir, { recursive: true, force: true }) }
 })

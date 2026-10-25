@@ -128,12 +128,12 @@ export function queryScopeLabel(q: Pick<RetrievalQuery, 'projectId' | 'workspace
 
 /** 经验范围文案（面板与 dream_context 共用）。 */
 export function lessonScopeLabel(scope: Lesson['scope']): string {
+  if (scope.global === true) return '全局'
   const project = trimmed(scope.projectId)
   const workspace = trimmed(scope.workspaceRoot)
   if (project !== undefined && workspace !== undefined) return '项目 ' + project + '（工作区 ' + workspace + '）'
   if (project !== undefined) return '项目 ' + project
   if (workspace !== undefined) return '工作区 ' + workspace
-  if (scope.global === true) return '全局'
   return '未限定范围'
 }
 

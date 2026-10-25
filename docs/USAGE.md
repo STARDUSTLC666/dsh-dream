@@ -62,11 +62,11 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 | `dream_save` | 记梦：反思 + 1-5 条教训 + 心境，永久保存 | `reflection` 必填；`lessons`/`mood` 可选 |
 | `dream_journal` | 翻梦：倒序列出历史梦境 | `limit` 可选 |
 | `dream_recall` | 忆梦：关键词检索梦境 | `query` 必填 |
-| `dream_bridge` | 渡梦：把已采纳、范围匹配的经验写入 AGENTS.md（`preview` 预览 / `apply` 应用 / `rollback` 回滚；缺省保留旧直写并给弃用提示） | `mode` 可选；`path` / `lessonIds` / `maxLessons` / `expectedSha256` / `previewId` / `projectId` |
+| `dream_bridge` | 渡梦：把已采纳、范围匹配的经验写入 AGENTS.md（`preview` 预览 / `apply` 应用 / `rollback` 回滚；省略模式只读预览） | `mode` 可选；`path` / `lessonIds` / `maxLessons` / `expectedSha256` / `previewId` / `projectId` |
 | `dream_health` | 自检：会话目录/梦境计数/配置汇总 | 无 |
 | `dream_learn` | 提交候选技术经验及证据（校验 / 脱敏 / 去重 / 按范围保存；无证据只能留在候选） | `kind`、`title`、`action`、`when` 必填；`evidence` 可选（缺省 `[]`） |
 | `dream_context` | 任务前取回少量适用经验（只读；候选默认不注入） | `query` 必填；`projectId` / `workspaceRoot` / `limit` / `maxChars` / `packageName` / `packageVersion` / `platform` / `includeCandidates` 可选 |
-| `dream_review` | 审阅与状态流转：采纳 / 驳回 / 标记过期 / 标记冲突 / 处理冲突 / 补充证据 / 重新送审 | `action`、`lessonId`、`expectedRevision` 必填 |
+| `dream_review` | 审阅与状态流转：建议人工采纳 / 驳回 / 标记过期 / 标记冲突 / 处理冲突 / 补充证据 / 重新送审 | `action`、`lessonId`、`expectedRevision` 必填 |
 
 处理冲突时必须填写 resolution（prefer / drop / merge）、affectedIds 与 note；所有当事方一并校验并在同一事件中保存，校验失败不改任何经验。attach-evidence 核验并附加来源，reopen 把驳回经验重新置为候选。
 
@@ -79,6 +79,7 @@ dream_recall { query: "输入法" }
 dream_bridge { mode: "preview", path: "AGENTS.md", maxLessons: 10 }
 dream_context { query: "SMTP 取消投递", projectId: "mailer", packageName: "nodemailer", packageVersion: "9.0.5", platform: "windows" }
 dream_learn { kind: "pitfall", title: "池化发送中 close() 不保证终止投递", action: "取消后验证当前连接确实关闭", when: "使用 Nodemailer 9.0.5 池化发送并处理 AbortSignal 时", evidence: [{ kind: "local-artifact", artifactPath: "test-results/smtp.txt", summary: "本机 SMTP 复现：取消后服务器仍收到正文", verification: "read" }] }
+// 仅建议审阅；实际采纳请在「设置 → 梦境日记 → 经验」中确认。
 dream_review { action: "accept", lessonId: "lesson-…", expectedRevision: 1 }
 ```
 
@@ -90,7 +91,9 @@ dream_review { action: "accept", lessonId: "lesson-…", expectedRevision: 1 }
 - `apply`：必须带预览的 `expectedSha256`（新文件为 null），建议同时带 `previewId`，文件被并发修改时返回 `conflict` 且零写入；只替换 Dream 管理块（`<!-- dsh-dream:start/end -->`），保留块外文字、BOM 与换行风格，先持久化 pending 恢复记录再原子替换文件，最后记录 applied；
 - `rollback`：用 backupId 定位记录，只在当前管理块仍等于该次 apply 结果时回滚，保留块外后来追加的人工内容。
 
-缺省不传 `mode` 保持 0.5.x 直写并返回弃用提示；建议新流程一律显式 `preview → apply`。只有 `usable`、scope 匹配当前项目（或显式 global 且 review.decision 为 accepted）的经验可桥接，频次不再准入；写入内容统一过 `mask.ts`。面板的「写入记录」展示备份与可否回滚，0.7.0 起提供确认回滚按钮。
+0.11.0 起省略 `mode` 等同于 `preview`，不再从旧日记直接写入规则。只有 `usable`、`review.decision=accepted`、`review.actor=human`，且范围匹配当前项目或人工确认的全局经验可桥接。频次不作为准入条件；写入内容统一过 `mask.ts`。面板「写入记录」提供确认回滚。
+
+模型调用 `dream_review accept` 或 `resolve-conflict` 仅返回 `requiresHumanReview: true`，不写入经验或增加版本。请在面板核对来源后确认；全局经验还需勾选「用于所有项目」。单条、批量及冲突处理均检查这个确认。旧的模型采纳、未知审阅者记录会显示为待人工审阅，并暂停自动上下文、默认检索、摘要和规则桥接。工具结果中的文字只计为出现过，不计独立支持。
 
 ## 做梦协议（随包技能）
 

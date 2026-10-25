@@ -44,6 +44,7 @@ export interface KnowledgeWebPayload {
     lessons: Array<Lesson & {
         scopeLabel: string;
         evidenceSummary: string;
+        humanReviewRequired?: boolean;
         reviewDue?: boolean;
         nextReviewAt?: string;
         lastRetrievedAt?: string;

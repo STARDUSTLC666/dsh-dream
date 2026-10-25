@@ -8,7 +8,7 @@ import { maskSecrets } from './mask.js'
 import { retrieveLessons } from './retrieval.js'
 import { budgetDay, readAutomaticState, updateAutomaticState, type PendingMemory } from './automatic-state.js'
 import { MemoryQueue } from './automatic-queue.js'
-import { reviewDeadline } from './memory.js'
+import { isHumanAccepted, reviewDeadline } from './memory.js'
 
 type Source = { seq: number; role: 'user' | 'assistant'; text: string; hash: string; sessionId?: string; recordSeq?: number }
 type Frame = { session: any; sources: Source[]; tools: number; hasHuman: boolean; trigger: boolean; turn: number; generation: number }
@@ -116,7 +116,7 @@ export class AutomaticDream {
         maxOutputTokens: this.cfg.autoMaxOutputTokens,
         minToolCalls: this.cfg.autoMinToolCalls,
         checkedTurns: this.checks, injectedItems: this.injected,
-        candidates: store.readSnapshot().lessons.filter(item => item.state === 'candidate').length,
+        candidates: store.readSnapshot().lessons.filter(item => item.state === 'candidate' || (item.state === 'usable' && !isHumanAccepted(item))).length,
         last: state.last ?? null,
         problem: this.problem ?? null,
       }
@@ -345,7 +345,7 @@ export class AutomaticDream {
       const cacheKey = snapshot.sourceKey + JSON.stringify([query, agent.session.header.cwd, process.platform])
       let cached = this.contextCache.get(agent)
       if (cached?.key !== cacheKey || cached.until <= now) {
-      const eligible = snapshot.lessons.filter(item => item.state === 'usable' && item.review.decision === 'accepted' && item.independentSupportCount > 0
+      const eligible = snapshot.lessons.filter(item => isHumanAccepted(item) && item.independentSupportCount > 0
         && !item.applicability.some(condition => condition.versions?.trim()))
       const { items } = retrieveLessons(eligible, snapshot.evidence, {
         query, workspaceRoot: agent.session.header.cwd, limit: 3, maxChars: 2400,

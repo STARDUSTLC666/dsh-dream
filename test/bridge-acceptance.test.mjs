@@ -18,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildDreamTools, resolveConfig } from '../lib/index.js'
 import { KnowledgeStore } from '../lib/knowledge-store.js'
 import { seedSessionEvidence } from './fixtures/session-evidence.mjs'
+import { executeDreamReview } from '../lib/tools.js'
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const START = '<!-- dsh-dream:start -->'
@@ -59,7 +60,7 @@ async function learn(env, title, extra = {}) {
   seedSessionEvidence(env.cfg, input.evidence, input)
   const result = await env.learn.execute(input)
   const review = env.tools.find(tool => tool.name === 'dream_review')
-  const accepted = await review.execute({ action: 'accept', lessonId: result.lessonId, expectedRevision: 1 })
+  const accepted = await executeDreamReview(env.cfg, { action: 'accept', lessonId: result.lessonId, expectedRevision: 1, confirmGlobal: true }, undefined, 'human')
   return { ...result, state: accepted.state }
 }
 
@@ -441,13 +442,13 @@ test('R9c not-accepted-global：global 未经 accepted 不得桥接；已采纳 
       kind: 'procedure', title: '全局已采纳经验', action: 'a', when: 'w', global: true, ...env.scope,
       evidence: [{ kind: 'user-correction', sessionId: 's-global-user', recordSeq: 2, summary: '用户明确要求', verification: 'read' }],
     })
-    await env.tools.find(tool => tool.name === 'dream_review').execute({ action: 'accept', lessonId: accepted.lessonId, expectedRevision: 1 })
+    await executeDreamReview(env.cfg, { action: 'accept', lessonId: accepted.lessonId, expectedRevision: 1, confirmGlobal: true }, undefined, 'human')
     const preview = previewOf((await callBridge(env, { mode: 'preview', lessonIds: [unaccepted.lessonId, accepted.lessonId] })).value)
     const ids = preview.lessons.map((item) => item.lessonId ?? item.id)
     assert.equal(ids.includes(unaccepted.lessonId), false, '未 accepted 的 global 不得入选')
     assert.ok(ids.includes(accepted.lessonId), '用户已 accepted 的 global 应入选')
     const skipped = new Map(preview.skipped.map((item) => [item.lessonId, item.reason]))
-    assert.equal(skipped.get(unaccepted.lessonId), 'not-accepted-global', '桥接枚举只认 not-accepted-global，实际 ' + JSON.stringify(preview.skipped))
+    assert.equal(skipped.get(unaccepted.lessonId), 'human-review-required')
   } finally { rmSync(env.dir, { recursive: true, force: true }) }
 })
 
@@ -457,10 +458,8 @@ test('R10 脱敏：含 sk- 的旧日记教训不得原样写入 AGENTS.md', asyn
     const { saveDream } = await import('../lib/journal.js')
     saveDream(env.journalDir, '旧日记', ['注意 ' + SECRET + ' 不要泄漏'], '平静')
     const legacy = await callBridge(env, { path: env.agentPath, maxLessons: 5 })
-    assert.equal(legacy.ok, true, 'legacy 直写应成功：' + refusalMessage(legacy))
-    const text = read(env.agentPath).toString('utf8')
-    assert.equal(text.includes(SECRET), false, '明文密钥不得进 AGENTS.md')
-    assert.match(text, /已脱敏/)
+    assert.equal(legacy.value.mode, 'preview', '缺省只读预览，不再把旧日记直接写入规则')
+    assert.equal(existsSync(env.agentPath), false)
 
     const learned = await learn(env, '把密钥 ' + SECRET + ' 写进标题')
     const preview = previewOf((await callBridge(env, { mode: 'preview', lessonIds: [learned.lessonId] })).value)

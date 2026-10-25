@@ -87,7 +87,7 @@ function makeLesson(over = {}) {
     state: over.state === undefined ? 'usable' : over.state,
     evidenceIds: [],
     independentSupportCount: 1,
-    review: over.review === undefined ? { decision: 'accepted', actor: 'user' } : over.review,
+    review: over.review === undefined ? { decision: 'accepted', actor: 'human' } : over.review,
     createdAt: ISO,
     updatedAt: over.updatedAt === undefined ? ISO : over.updatedAt,
     conflictIds: [],
@@ -397,9 +397,9 @@ test('资格：usable + 项目/工作区匹配或 global+accepted；其余给 sk
   try {
     const ws = realpathSync(env.project)
     const lessons = [
-      makeLesson({ id: 'lsn-1', title: '项目匹配', scope: { global: false, projectId: 'proj-a' }, review: { decision: 'unreviewed' } }),
-      makeLesson({ id: 'lsn-2', title: '工作区匹配', scope: { global: false, workspaceRoot: env.project }, review: { decision: 'unreviewed' } }),
-      makeLesson({ id: 'lsn-3', title: '全局已采纳', scope: { global: true }, review: { decision: 'accepted', actor: 'user' } }),
+      makeLesson({ id: 'lsn-1', title: '项目匹配', scope: { global: false, projectId: 'proj-a' } }),
+      makeLesson({ id: 'lsn-2', title: '工作区匹配', scope: { global: false, workspaceRoot: env.project } }),
+      makeLesson({ id: 'lsn-3', title: '全局已采纳', scope: { global: true } }),
       makeLesson({ id: 'lsn-4', title: '全局未采纳', scope: { global: true }, review: { decision: 'unreviewed' } }),
       makeLesson({ id: 'lsn-5', title: '候选', state: 'candidate', scope: { global: false, projectId: 'proj-a' } }),
       makeLesson({ id: 'lsn-6', title: '别的项目', scope: { global: false, projectId: 'proj-b' } }),
@@ -408,7 +408,7 @@ test('资格：usable + 项目/工作区匹配或 global+accepted；其余给 sk
     assert.equal(p.ok, true)
     assert.deepEqual(p.lessons.map((item) => item.lessonId).sort(), ['lsn-1', 'lsn-2', 'lsn-3'])
     const reasons = Object.fromEntries(p.skipped.map((item) => [item.lessonId, item.reason]))
-    assert.equal(reasons['lsn-4'], 'not-accepted-global')
+    assert.equal(reasons['lsn-4'], 'human-review-required')
     assert.equal(reasons['lsn-5'], 'not-usable')
     assert.equal(reasons['lsn-6'], 'scope-mismatch')
 
@@ -489,7 +489,7 @@ test('并发：两个进程并行 apply 只允许一个成功，人工内容不�
     const workerSource = [
       "import { applyBridge } from '" + libUrl + "'",
       "const [projectRoot, targetPath, journalDir, expectedSha, title] = process.argv.slice(2)",
-      "const lesson = { id: 'lsn_worker', revision: 1, kind: 'procedure', title, action: '动作', when: '条件', exceptions: [], scope: { global: true }, applicability: [], state: 'usable', evidenceIds: [], independentSupportCount: 1, review: { decision: 'accepted', actor: 'user' }, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', conflictIds: [] }",
+      "const lesson = { id: 'lsn_worker', revision: 1, kind: 'procedure', title, action: '动作', when: '条件', exceptions: [], scope: { global: true }, applicability: [], state: 'usable', evidenceIds: [], independentSupportCount: 1, review: { decision: 'accepted', actor: 'human' }, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', conflictIds: [] }",
       "const result = applyBridge({ journalDir, projectRoot, path: targetPath, lessons: [lesson], maskSecrets: true, expectedSha256: expectedSha })",
       "process.stdout.write(JSON.stringify({ ok: result.ok, action: result.ok ? result.action : null, code: result.ok ? null : result.error.code, title }))",
     ].join('\n')

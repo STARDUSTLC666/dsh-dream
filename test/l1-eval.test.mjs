@@ -148,6 +148,8 @@ function buildStore(dir, prefix, lessons) {
     if (typeof spec.state === 'string' && spec.state !== '' && spec.state !== created.lesson.state) {
       store.applyTransition(created.lesson.id, spec.state, created.lesson.revision, prefix + '-t-' + spec.key)
     }
+    const current = store.getLesson(created.lesson.id)
+    if (current.state === 'usable') store.reviewLesson(current.id, 'accepted', current.revision, prefix + '-human-' + spec.key, 'human')
   }
   return { store, ids }
 }

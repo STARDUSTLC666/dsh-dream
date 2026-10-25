@@ -6,6 +6,8 @@
 
 Collect candidate lessons from completed tasks, review them and reuse relevant memories. Manual reflections remain available.
 
+Only lessons you accept in the panel are reused automatically. A model's `dream_review accept` recommends review and leaves the lesson unchanged. Earlier model approvals need human review again. Global acceptance requires an explicit confirmation that the lesson applies to all projects. `dream_bridge` now defaults to a read-only preview.
+
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
 
 Feedback and contributions are welcome: report [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) or submit [pull requests](https://github.com/STARDUSTLC666/dsh-dream/pulls).

@@ -61,6 +61,7 @@ export function verifyEvidence(claim: EvidenceClaim, context: EvidenceContext): 
   if (quote === '') return held('quote-missing')
   try {
     let text: string
+    let toolOutput = false
     if (claim.kind === 'local-artifact') {
       if (!context.cwd || !claim.artifactPath) return held('artifact-context-missing')
       const root = realpathSync(context.cwd)
@@ -96,11 +97,15 @@ export function verifyEvidence(claim: EvidenceClaim, context: EvidenceContext): 
       const entry = found[0], data = record(entry.data)
       if (claim.kind === 'user-correction' && (entry.type !== 'user/message' || (header.version >= 4 && record(data.source).kind !== 'user'))) return held('not-human-message')
       if (entry.type !== 'user/message' && entry.type !== 'assistant/message' && entry.type !== 'tool/result') return held('record-not-visible')
+      toolOutput = entry.type === 'tool/result'
       text = visibleText(data.content ?? data.text ?? data.message ?? entry.data)
     }
     if (!normalized(text).includes(quote)) return held('quote-mismatch')
     const hash = createHash('sha256').update(text, 'utf8').digest('hex')
     if (claim.sourceHash !== undefined && claim.sourceHash !== hash) return held('source-hash-mismatch')
+    // Finding text in a webpage/mail/tool result proves occurrence, not that its
+    // instructions are independently supported. Retain the reference for review.
+    if (toolOutput) return { ...base, sourceHash: hash, verificationReason: 'tool-output-observed' }
     return { ...base, verification: 'read', sourceHash: hash, verificationReason: 'source-verified' }
   } catch {
     return held('source-unreadable')

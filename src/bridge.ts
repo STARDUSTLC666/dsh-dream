@@ -35,7 +35,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { needsMemoryReview } from './memory.js'
+import { isHumanAccepted, needsMemoryReview } from './memory.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path'
 import { dreamStats } from './journal.js'
@@ -387,6 +387,7 @@ export function selectBridgeLessons(
   const reasonFor = (lesson: Lesson): string | undefined => {
     if (needsMemoryReview(lesson)) return 'review-due'
     if (lesson.state !== 'usable') return 'not-usable'
+    if (!isHumanAccepted(lesson)) return 'human-review-required'
     if (lesson.scope.global === true) {
       return lesson.review.decision === 'accepted' ? undefined : 'not-accepted-global'
     }

@@ -23,7 +23,7 @@ import type { Evidence, Lesson } from './knowledge.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { isDreamReference, maskSecrets } from './mask.js'
 import { buildEvidenceSummary, lessonScopeLabel } from './retrieval.js'
-import { memoryDirectory, needsMemoryReview, reviewDeadline } from './memory.js'
+import { isHumanAccepted, memoryDirectory, needsMemoryReview, reviewDeadline } from './memory.js'
 import { readAutomaticState } from './automatic-state.js'
 
 /** 面板与浏览器说话的同源路由。 */
@@ -91,7 +91,7 @@ export interface KnowledgeWebStats {
 /** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
 export interface KnowledgeWebPayload {
   /** 每条经验额外带 scopeLabel 与 evidenceSummary（与 dream_context 同源文案）。 */
-  lessons: Array<Lesson & { scopeLabel: string; evidenceSummary: string; reviewDue?: boolean; nextReviewAt?: string; lastRetrievedAt?: string }>
+  lessons: Array<Lesson & { scopeLabel: string; evidenceSummary: string; humanReviewRequired?: boolean; reviewDue?: boolean; nextReviewAt?: string; lastRetrievedAt?: string }>
   memory?: ReturnType<typeof memoryDirectory>
   /** 脱敏后的证据记录。 */
   evidence: Evidence[]
@@ -440,6 +440,7 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
       const payload: KnowledgeWebPayload = {
         lessons: lessons.map((lesson) => maskDeep({
           ...lesson,
+          humanReviewRequired: lesson.state === 'usable' && !isHumanAccepted(lesson),
           scopeLabel: lessonScopeLabel(lesson.scope),
           evidenceSummary: buildEvidenceSummary(lesson, evidence),
           reviewDue: needsMemoryReview(lesson),

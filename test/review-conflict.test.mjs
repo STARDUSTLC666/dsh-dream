@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildDreamTools, resolveConfig } from '../lib/index.js'
 import { KnowledgeStore } from '../lib/knowledge-store.js'
+import { executeDreamReview } from '../lib/tools.js'
 import { seedSessionEvidence } from './fixtures/session-evidence.mjs'
 
 function makeEnv() {
@@ -43,14 +44,14 @@ async function learn(env, title) {
     evidence,
   })
   assert.equal(result.state, 'candidate')
-  const accepted = await env.review.execute({ action: 'accept', lessonId: result.lessonId, expectedRevision: 1 })
+  const accepted = await executeDreamReview(env.cfg, { action: 'accept', lessonId: result.lessonId, expectedRevision: 1 }, undefined, 'human')
   assert.equal(accepted.state, 'usable')
   return result.lessonId
 }
 
 async function review(env, args) {
   try {
-    const value = await env.review.execute(args)
+    const value = await executeDreamReview(env.cfg, args, undefined, 'human')
     return { ok: value === null || typeof value !== 'object' ? true : value.ok !== false, value }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }

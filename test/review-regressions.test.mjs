@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { buildDreamTools, resolveConfig, KnowledgeStore, previewBridge, applyBridge, rollbackBridge, listBridgeApplications } from '../lib/index.js'
 import { createKnowledgeWebHandler, createBridgeWebHandler } from '../lib/web.js'
+import { executeDreamReview } from '../lib/tools.js'
 
 function client() {
   let definition
@@ -55,7 +56,7 @@ test('真实 UUID 经 web 投影仍唯一，面板 ID 可以直接审阅和预�
     const projected = ui.normalizeKnowledge(payload, new Date(), 50).rows.find(l => l.id === a.id)
     assert.ok(projected)
     assert.equal(projected.action, '先验证再执行')
-    const accepted = await e.tool('dream_review').execute(JSON.parse(ui.reviewCommandOf(projected).slice('dream_review '.length)))
+    const accepted = await executeDreamReview(e.cfg, JSON.parse(ui.reviewCommandOf(projected).slice('dream_review '.length)), undefined, 'human')
     assert.equal(accepted.state, 'usable')
     assert.equal(e.store.getLesson(b.id).revision, b.revision)
     const preview = await e.tool('dream_bridge').execute(JSON.parse(ui.bridgePreviewCommandOf(projected.id, projected.projectId).slice('dream_bridge '.length)), { cwd: e.project })
@@ -67,7 +68,7 @@ test('公开工具完整走通新文件 preview(null) → apply → web backupId
   const e = env()
   try {
     const lesson = create(e, '服务检查')
-    e.store.reviewLesson(lesson.id, 'accepted', lesson.revision, 'accept', 'model')
+    e.store.reviewLesson(lesson.id, 'accepted', lesson.revision, 'accept', 'human')
     const bridge = e.tool('dream_bridge'), args = { lessonIds: [lesson.id], projectId: 'project-a' }, exec = { cwd: e.project }
     const p = await bridge.execute({ ...args, mode: 'preview' }, exec)
     assert.equal(p.expected.sha256, null)
@@ -197,7 +198,7 @@ test('冲突组遇到 rejected 成员必须整体拒绝，事件和双方 revisi
   const e = env()
   try {
     const a = create(e, '冲突甲'), b = create(e, '冲突乙')
-    e.store.reviewLesson(a.id, 'accepted', 1, 'accept-a', 'model')
+    e.store.reviewLesson(a.id, 'accepted', 1, 'accept-a', 'human')
     e.store.reviewLesson(b.id, 'rejected', 1, 'reject-b', 'model')
     const before = readFileSync(join(e.cfg.journalDir, 'knowledge', 'events.jsonl'))
     await assert.rejects(e.tool('dream_review').execute({ action: 'mark-disputed', lessonId: a.id, expectedRevision: 2, conflictWith: [b.id] }), /迁移/)
@@ -212,7 +213,7 @@ test('记录目录写入失败时，不得先改 AGENTS.md', () => {
   const e = env()
   try {
     const l = create(e, '安全写入')
-    const lesson = e.store.reviewLesson(l.id, 'accepted', 1, 'accepted', 'model')
+    const lesson = e.store.reviewLesson(l.id, 'accepted', 1, 'accepted', 'human')
     const target = join(e.project, 'AGENTS.md')
     writeFileSync(target, '# 人工内容\n')
     mkdirSync(join(e.cfg.journalDir, 'bridge', 'records.jsonl'), { recursive: true })
@@ -229,7 +230,7 @@ test('Windows 任务不能注入仅 Linux 的 systemctl 操作', async () => {
   const e = env()
   try {
     const l = e.store.createLesson(input('重启服务', { action: 'sudo systemctl restart app', applicability: [{ platform: 'linux' }] }), 'linux').lesson
-    e.store.reviewLesson(l.id, 'accepted', 1, 'accept', 'model')
+    e.store.reviewLesson(l.id, 'accepted', 1, 'accept', 'human')
     const r = await e.tool('dream_context').execute({ query: 'Windows 重启服务', projectId: 'project-a', platform: 'windows' })
     assert.equal(r.items.length, 0)
     assert.equal(r.skipped[0].reason, 'platform-mismatch')
@@ -238,7 +239,7 @@ test('Windows 任务不能注入仅 Linux 的 systemctl 操作', async () => {
 
 function bridgeFixture(e) {
   const l = create(e, '中断恢复')
-  const lesson = e.store.reviewLesson(l.id, 'accepted', 1, 'accept', 'model')
+  const lesson = e.store.reviewLesson(l.id, 'accepted', 1, 'accept', 'human')
   const target = join(e.project, 'AGENTS.md')
   const original = Buffer.from('\ufeff# 人工规则\r\n\r\n保留这一段。\r\n')
   writeFileSync(target, original)

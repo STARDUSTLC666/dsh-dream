@@ -236,7 +236,7 @@ test('version-bound accepted lessons stay out of automatic context when versions
   const e = setup(t)
   const made = e.store.createLesson({ ...lesson(), workspaceRoot: e.root, applicability: [{ package: 'example', versions: '<2.0.0' }], evidence: [{ kind: 'session', sessionId: 'other', recordSeq: 9, summary: quote, verification: 'read', sourceHash: 'f'.repeat(64) }] }, 'version-fixture')
   const row = e.store.listLessons().find(item => item.id === made.lesson.id)
-  e.store.reviewLesson(row.id, 'accepted', row.revision, 'version-review', 'user')
+  e.store.reviewLesson(row.id, 'accepted', row.revision, 'version-review', 'human')
   e.listeners.get('agent/inbox/claimed')({ agent: e.agent, message: { source: { kind: 'user' }, content: [{ type: 'text', text: 'example 工作区 E 盘' }] } })
   assert.equal(e.contexts[0].text({ scope: e.agent }), '')
 })
@@ -288,7 +288,7 @@ test('automatic retrieval requires accepted state, matches the current scope and
   e.listeners.get('agent/inbox/claimed')({ agent: e.agent, message: { source: { kind: 'user' }, content: [{ type: 'text', text: '工作区 E 盘 文件' }] } })
   assert.equal(e.contexts[0].text({ scope: e.agent }), '')
   const [lesson] = e.store.listLessons()
-  e.store.reviewLesson(lesson.id, 'accepted', lesson.revision, 'review-fixture', 'user')
+  e.store.reviewLesson(lesson.id, 'accepted', lesson.revision, 'review-fixture', 'human')
   const context = e.contexts[0].text({ scope: e.agent })
   assert.match(context, /在 E 盘工作/)
   assert.ok(context.length <= 3000)
@@ -297,6 +297,21 @@ test('automatic retrieval requires accepted state, matches the current scope and
   assert.equal(e.contexts[0].text({ scope: elsewhere }), '')
   e.runtime.control({ retrievalEnabled: false })
   assert.equal(e.contexts[0].text({ scope: e.agent }), '')
+})
+
+test('automatic retrieval excludes old model approvals until a human reviews them', async t => {
+  const e = setup(t)
+  await e.turn()
+  e.listeners.get('agent/inbox/claimed')({ agent: e.agent, message: { source: { kind: 'user' }, content: [{ type: 'text', text: '工作区 E 盘 文件' }] } })
+  let [row] = e.store.listLessons()
+  for (const actor of ['model', 'user', undefined]) {
+    row = e.store.reviewLesson(row.id, 'accepted', row.revision, 'old-review-' + String(actor), actor)
+    assert.equal(e.contexts[0].text({ scope: e.agent }), '')
+    assert.equal(e.runtime.status().candidates, 1)
+  }
+  e.store.reviewLesson(row.id, 'accepted', row.revision, 'human-review', 'human')
+  assert.match(e.contexts[0].text({ scope: e.agent }), /在 E 盘工作/)
+  assert.equal(e.runtime.status().candidates, 0)
 })
 
 test('automatic settings use the authenticated mutation handler and reject cross-origin writes', async t => {

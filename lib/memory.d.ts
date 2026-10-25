@@ -1,4 +1,6 @@
 import type { Evidence, Lesson } from './knowledge.js';
+/** A model recommendation or an old actor-less record is not human approval. */
+export declare function isHumanAccepted(lesson: Lesson): boolean;
 /** A retrieval deadline is not a verification result; feedback never renews it. */
 export declare function reviewDeadline(lesson: Lesson): number | undefined;
 export declare function needsMemoryReview(lesson: Lesson, now?: number): boolean;

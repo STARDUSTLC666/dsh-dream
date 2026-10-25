@@ -1,5 +1,10 @@
 import type { Evidence, Lesson } from './knowledge.js'
 
+/** A model recommendation or an old actor-less record is not human approval. */
+export function isHumanAccepted(lesson: Lesson): boolean {
+  return lesson.state === 'usable' && lesson.review.decision === 'accepted' && lesson.review.actor === 'human'
+}
+
 /** A retrieval deadline is not a verification result; feedback never renews it. */
 export function reviewDeadline(lesson: Lesson): number | undefined {
   const explicit = lesson.reviewAfter ? Date.parse(lesson.reviewAfter) : NaN
@@ -18,7 +23,7 @@ export function needsMemoryReview(lesson: Lesson, now = Date.now()): boolean {
 /** Derived layers contain pointers; authoritative lessons and evidence remain untouched. */
 export function memoryDirectory(lessons: Lesson[], evidence: Evidence[], now = Date.now()) {
   const byId = new Map(evidence.map(item => [item.id, item]))
-  const accepted = new Set(lessons.filter(item => item.review.decision === 'accepted').map(item => item.id))
+  const accepted = new Set(lessons.filter(isHumanAccepted).map(item => item.id))
   const entries = lessons.filter(item => item.state !== 'rejected').map(item => ({
     lessonId: item.id, revision: item.revision, title: item.title, topic: item.kind, scope: item.scope,
     state: item.state, reviewDue: needsMemoryReview(item, now),

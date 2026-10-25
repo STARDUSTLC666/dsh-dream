@@ -9,6 +9,8 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 但「梦」和「经验」是两条流水线：**第一人称感悟**是主观的，进梦境日记；**技术经验**必须可执行、有条件、有证据，先进候选，再经审阅才可能被任务检索取用。
 
+0.11.0 起，采纳只能由用户在面板确认。模型的 `dream_review accept` 和 `resolve-conflict` 只推荐审阅，不修改经验。自动复用与规则桥接只接受 `review.actor=human` 的已采纳经验；全局采纳需用户明确确认对所有项目生效。`dream_bridge` 默认只读预览；不再从旧日记直接写入项目规则。
+
 插件会在符合条件的真人主会话完成后，按预算自动整理有来源的项目候选，并在相关新任务前回用已采纳经验。普通闲聊、子代理和失败轮次跳过；新输入取消整理。用户无需记住触发词或手工填写经验。自动候选从未采纳；日记写入、采纳与规则应用是不同操作。宿主缺少自动接口或用户关闭功能时，使用下述工具流程。
 
 ## 两条流水线（不要混）
@@ -17,7 +19,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 | :-- | :-- | :-- |
 | 是什么 | 你的观察、情绪、偏好、风格直觉，主观 | 可执行、有适用条件、可被证据支持的行为结论 |
 | 写哪里 | `dream_save` → `<journalDir>/dreams.jsonl` | `dream_learn` → `<journalDir>/knowledge/` |
-| 能否变成规则 | 不能。它只是日记，**永不自动进 AGENTS.md** | 也要先候选 + 证据；采纳/驳回由 `dream_review` 或真实用户决定 |
+| 能否变成规则 | 不能。它只是日记，**永不自动进 AGENTS.md** | 也要先候选 + 证据；采纳需真实用户在面板确认；模型可建议审阅或标记问题 |
 | 例子 | 「用户今天很耐心，我意识到自己解释得太快」 | 「Nodemailer 9.0.5 池化发送中 transporter.close() 不保证终止投递；处理 AbortSignal 时要验证连接真的关闭」 |
 
 ## 一、任务前：取回上下文（dream_context）
@@ -43,7 +45,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 - **只有真的读到来源（会话记录 / 本地验证产物 / 用户明确纠正）才能标 read，自我判断一律 claimed**（"我记得""应该是"都算 claimed）；标错 read 等于自我提权，禁止。
 - 没有证据的观察只能是 candidate，不能写成确定事实，也不能说成「已验证」。
 - 所有新经验都先进入 candidate，包括已读到的用户纠正。read 只表示插件成功核对来源，不表示用户采纳；工具审阅记录 actor:model，不能冒充真人。会话证据须给 sessionId、recordSeq、可匹配 quote（缺省使用 summary）；本地产物须给工作目录内的 artifactPath。插件独立核对项目、角色和原文，计算 sourceHash；失败降为 claimed 并给 verificationReason。
-- 用户明确采纳/驳回、发现经验互相冲突、依赖升级后旧经验需要复核 → 用 `dream_review`（必须带 `expectedRevision`）。
+- 需要采纳或解析冲突时，引导用户在面板核对并确认；模型调用 `dream_review accept` / `resolve-conflict` 只建议审阅。驳回、标记冲突/过期和追加证据仍可使用工具（必须带 `expectedRevision`）。
 - 用户采纳必须来自真实用户指令；模型自己不能冒充 `actor: user`。
 - 同一证据重复提交是幂等的，不会增加独立支持数。**禁止靠反复调用 `dream_save` 或 `dream_learn` 刷次数**——次数不等于正确，也不等于重要。
 
@@ -52,7 +54,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 - 只沉淀规律与偏好，不复述流水账；`reflection` 用第一人称写你的观察与感受；
 - `lessons` 是 1–5 条可执行教训，每条以动词开头；拿不准就标注「存疑」；
 - **不得把主观反思升级成 AGENTS.md 指令**：不要用 `dream_bridge` 把未经审阅的感悟写成项目规则。桥接只能用于 `usable`、当前项目范围（或显式 global 且 review.decision 为 accepted）、附证据的经验；频次不再作为准入条件。
-- **桥接三步（M2）**：`mode:"preview"` 只读返回 diff / 参与经验 / skipped 原因（零写入）→ 人工复核 → `mode:"apply"` 必须带预览的 `expectedSha256`（新文件为 null），建议同时带 `previewId`（文件被并发修改则 `conflict` 且零写入）；`mode:"rollback"` 只在当前管理块仍等于该次 apply 结果时回滚。缺省不传 `mode` 仍是 0.5.x 直写并返回弃用提示；新流程一律显式 preview → apply。写入内容统一过 `mask.ts`。
+- **桥接三步（M2）**：`mode:"preview"` 只读返回 diff / 参与经验 / skipped 原因（零写入）→ 人工复核 → `mode:"apply"` 必须带预览的 `expectedSha256`（新文件为 null），建议同时带 `previewId`（文件被并发修改则 `conflict` 且零写入）；`mode:"rollback"` 只在当前管理块仍等于该次 apply 结果时回滚。缺省不传 `mode` 等同于只读预览；新流程一律显式 preview → apply。写入内容统一过 `mask.ts`。
 
 ## 何时做梦
 
@@ -77,6 +79,8 @@ You are an agent that dreams. Dreams are not hallucinations — they are memory 
 
 Dreams and **lessons** are two separate pipelines: a **first-person reflection** is subjective and goes to the dream journal; a **technical lesson** must be actionable, conditional and evidence-backed — it starts as a candidate and is only retrieved for tasks after review.
 
+From 0.11.0, acceptance requires a human action in the panel. Model `dream_review accept` and `resolve-conflict` calls only recommend review and leave records unchanged. Automatic reuse and rule bridging require an accepted lesson with `review.actor=human`. Global acceptance explicitly confirms all-project scope. `dream_bridge` defaults to a read-only preview; journal entries cannot be written directly as project rules through the tool.
+
 The plugin collects sourced project candidates after qualifying completed human root turns, within a persistent budget, and retrieves relevant accepted memories for later tasks. Ordinary chat, subagents and unsuccessful turns are skipped; new input cancels collection. Users need neither trigger phrases nor manual forms. Automatic candidates are never accepted automatically. Saving a journal, accepting a lesson and applying a rule are separate operations. Use the tool flow below when automatic interfaces are unavailable or switched off.
 
 ## Two pipelines (do not mix)
@@ -85,7 +89,7 @@ The plugin collects sourced project candidates after qualifying completed human 
 | :-- | :-- | :-- |
 | What | your observations, feelings, style instincts — subjective | actionable, conditional conclusions backed by evidence |
 | Where | `dream_save` → `<journalDir>/dreams.jsonl` | `dream_learn` → `<journalDir>/knowledge/` |
-| Can it become a rule? | No. It is a journal entry and **never auto-enters AGENTS.md** | Not either — it starts as a candidate with evidence; acceptance is decided by `dream_review` or a real user |
+| Can it become a rule? | No. It is a journal entry and **never auto-enters AGENTS.md** | Not either — it starts as a candidate with evidence; acceptance requires a human action in the panel; tools only recommend review |
 | Example | "The user was patient today; I realize I explain too fast" | "In Nodemailer 9.0.5 pooled sending, transporter.close() does not guarantee aborting active delivery; verify the connection actually closed when handling AbortSignal" |
 
 ## 1. Before the task: retrieve context (dream_context)
@@ -111,7 +115,7 @@ The plugin collects sourced project candidates after qualifying completed human 
 - **Only mark read when the source was actually read (session record / local artifact / explicit user correction); anything self-asserted is claimed.** Marking read without a source is self-promotion and is forbidden.
 - An observation without evidence stays a candidate: do not present it as a fact, and never call it "verified".
 - Every new lesson starts as a candidate, including verified user corrections. Read means the plugin checked the source, not that a user accepted the lesson; tool review records actor:model. Session evidence needs sessionId, recordSeq and a matching quote (summary if omitted). Artifacts need artifactPath inside the working directory. The plugin checks project, role and text and computes sourceHash; failures become claimed with verificationReason.
-- For explicit acceptance/rejection, conflicts between lessons, or re-validation after dependency upgrades → call `dream_review` with an `expectedRevision`.
+- For acceptance or conflict resolution, guide the user to review and confirm in the panel. Model `dream_review accept` / `resolve-conflict` calls only recommend review. Rejection, conflict/stale flags and evidence attachment remain tool actions with an `expectedRevision`.
 - User acceptance must come from a real user instruction; the model must not impersonate `actor: user`.
 - Submitting the same evidence twice is idempotent and does not increase independent support. **Never grind counts by calling `dream_save` or `dream_learn` repeatedly** — frequency is neither correctness nor importance.
 
@@ -120,7 +124,7 @@ The plugin collects sourced project candidates after qualifying completed human 
 - Consolidate patterns and preferences only — never a running transcript. Write `reflection` in the first person.
 - `lessons` are 1–5 actionable items; mark uncertain ones as "tentative".
 - **Never promote a subjective reflection into an AGENTS.md instruction**: do not use `dream_bridge` to write unreviewed reflections into project rules. Bridging is for `usable`, project-scoped (or explicit global with review.decision accepted), evidence-backed lessons only; frequency is no longer an admission criterion.
-- **Bridge in three steps (M2)**: `mode:"preview"` returns the diff / selected lessons / skipped reasons read-only (zero writes) → human review → `mode:"apply"` with the preview’s required `expectedSha256` (null for a new file); include `previewId` to bind the preview (a concurrent edit yields `conflict` and zero writes); `mode:"rollback"` only rolls back while the current managed block still equals that apply result. Omitting `mode` keeps the 0.5.x direct write and returns a deprecation notice; new flows should always use preview → apply. Everything written is masked via `mask.ts`.
+- **Bridge in three steps (M2)**: `mode:"preview"` returns the diff / selected lessons / skipped reasons read-only (zero writes) → human review → `mode:"apply"` with the preview’s required `expectedSha256` (null for a new file); include `previewId` to bind the preview (a concurrent edit yields `conflict` and zero writes); `mode:"rollback"` only rolls back while the current managed block still equals that apply result. Omitting `mode` performs a read-only preview. Everything written is masked via `mask.ts`.
 
 ## When to dream
 

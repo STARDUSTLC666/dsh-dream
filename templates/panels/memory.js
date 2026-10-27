@@ -34,6 +34,9 @@ function MemoryBoard({ vm, mode, error, loading, privacy, onChanged, onRetry }) 
   const [search, setSearch] = useState(''), [group, setGroup] = useState(''), [history, setHistory] = useState(false);
   const [activeId, setActiveId] = useState(null), [selected, setSelected] = useState([]), [limit, setLimit] = useState(50);
   const [pending, setPending] = useState(false), [failure, setFailure] = useState(''), [retry, setRetry] = useState(null), [globalConfirmed, setGlobalConfirmed] = useState(false);
+// Update protection: dsh-dream.memory-board
+__stardustUpdatesGuard(React, "dsh-dream.memory-board", { busy: pending });
+
   const all = vm.rows.filter(row => mode === 'review' ? HELD_STATES.includes(row.state) : row.state === (history ? 'rejected' : 'usable'));
   const groups = [...new Map(all.map(row => [row.groupKey, row.scopeLabel + ' · ' + t(({ preference: '偏好', procedure: '流程', pitfall: '避坑', fact: '事实' })[row.kind] || row.kind)]))];
   const needle = search.trim().toLocaleLowerCase();

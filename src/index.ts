@@ -1,3 +1,4 @@
+import { registerUpdates } from '@stardustlc/dsh-updates'
 /**
  * dsh-dream —— 做梦插件：会话回放（梦原料）→ 反思 → 梦境日记（记忆巩固）。
  *
@@ -32,6 +33,8 @@ export function bundledSkillsDir(): string {
 
 /** 插件入口。 */
 export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> | null): void {
+  registerUpdates(ctx, { name: "@stardustlc/dsh-dream" })
+
   let cfg: ResolvedDreamConfig
   try {
     cfg = resolveConfig(config)

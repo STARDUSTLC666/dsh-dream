@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "回顾会话、保存反思，并把经过核验和审阅的经验用于后续任务。",
   "type": "module",
   "main": "lib/index.js",
@@ -24,7 +24,7 @@
     "docs"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs && node scripts/build-updates.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test \"test/*.test.mjs\"",
     "prepublishOnly": "pnpm run build"
@@ -34,12 +34,12 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
+      "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar"
-      ],
-      "platform": "web"
+      ]
     }
   },
   "keywords": [
@@ -54,9 +54,12 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.1-rc.3"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@stardustlc/dsh-updates": "0.1.0"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.6.0"

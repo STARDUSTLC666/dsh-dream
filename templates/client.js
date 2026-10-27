@@ -1324,6 +1324,9 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             const [feedbackNote, setFeedbackNote] = useState("");
             const [feedbackRetry, setFeedbackRetry] = useState(null);
             const [affected, setAffected] = useState(function () { return row.conflictIds[0] || ""; });
+// Update protection: dsh-dream.review-note
+__stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() || !!feedbackNote.trim() });
+
             const [pending, setPending] = useState(false);
             const [error, setError] = useState("");
             const [preview, setPreview] = useState(null);
@@ -1426,6 +1429,9 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         function RollbackControl(props) {
             const [confirm, setConfirm] = useState(false);
             const [pending, setPending] = useState(false);
+// Update protection: dsh-dream.rollback
+__stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
+
             const [error, setError] = useState("");
             const rollback = async function () {
                 if (pending)
@@ -1556,6 +1562,9 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             const [group, setGroup] = useState('');
             const [selected, setSelected] = useState([]);
             const [pending, setPending] = useState(false);
+// Update protection: dsh-dream.queue
+__stardustUpdatesGuard(React, "dsh-dream.queue", { busy: pending });
+
             const [failure, setFailure] = useState('');
             const [retry, setRetry] = useState(null);
             const [globalConfirmed, setGlobalConfirmed] = useState(false);
@@ -1755,6 +1764,9 @@ const [settingsOpen,setSettingsOpen] = useState(false);
             const [value, setValue] = useState(null);
             const [failure, setFailure] = useState(null);
             const [pending, setPending] = useState(false);
+// Update protection: dsh-dream.automatic
+__stardustUpdatesGuard(React, "dsh-dream.automatic", { busy: pending });
+
             const [chatId, setChatId] = useState('');
             const a = function (zh, en) { return languageOf() === 'en' ? en : zh; };
             useEffect(function () {

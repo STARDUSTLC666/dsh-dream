@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "回顾会话、保存反思，并把经过核验和审阅的经验用于后续任务。",
   "type": "module",
   "main": "lib/index.js",
@@ -58,7 +58,7 @@
     "dsh": ">=0.2.1-rc.3"
   },
   "dependencies": {
-    "@stardustlc/dsh-updates": "0.1.1"
+    "@stardustlc/dsh-updates": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

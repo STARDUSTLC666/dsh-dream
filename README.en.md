@@ -4,7 +4,7 @@
 
 ![dsh-dream whale girl plugin cover](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/assets/cover-whale-girl.png)
 
-Collect candidate lessons from completed tasks, review them and reuse relevant memories. Manual reflections remain available.
+Collect candidate lessons from completed tasks, then let users review and accept them for relevant future work. Supports automatic collection, contextual recall, source checks, scope and manual reflection; candidates do not become accepted memories automatically.
 
 Only lessons you accept in the panel are reused automatically. A model's `dream_review accept` recommends review and leaves the lesson unchanged. Earlier model approvals need human review again. Global acceptance requires an explicit confirmation that the lesson applies to all projects. `dream_bridge` now defaults to a read-only preview.
 
@@ -12,7 +12,7 @@ Only lessons you accept in the panel are reused automatically. A model's `dream_
 
 Feedback and contributions are welcome: report [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) or submit [pull requests](https://github.com/STARDUSTLC666/dsh-dream/pulls).
 
-Open the new native sidebar workbench after updating and restarting DSH. Settings remains available. See the [workbench guide and validation boundaries](docs/WORKBENCH.md).
+Open the workbench from the native DSH sidebar. See the [workbench guide](docs/WORKBENCH.md) for configuration and operating boundaries.
 
 ## What it does
 

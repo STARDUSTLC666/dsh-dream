@@ -6,7 +6,9 @@
 
 把完成任务中的经历整理成候选经验，供用户审阅、采纳后在相关任务中回用。支持自动整理、按需召回、来源核查、适用范围与手动复盘；候选内容不会自动变成已采纳记忆。
 
-[![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
+[![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![total downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-total-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
+
+[下载统计说明](https://github.com/STARDUSTLC666/dsh-suite/blob/npm-downloads/README.md)
 
 欢迎使用，遇到问题或有改进建议，请提交 [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) 和 [PR](https://github.com/STARDUSTLC666/dsh-dream/pulls)。
 
@@ -33,7 +35,10 @@ dsh plugin --profile desktop add @stardustlc/dsh-dream
 
 ## 开始使用
 
-正常使用 DSH 即可：完成的一轮任务出现明确偏好、纠正，或至少两次非 Dream 工具调用时，会在预算内整理候选。在「设置 → 梦境日记」查看待审阅提示，核对来源后采纳；后续相关任务自动回用。也可说：“回顾最近的任务，记录值得保留的经验。”单独生成日记。
+1. 从左侧栏打开“Dream 记忆”，按需要选择自动整理与自动取回。
+2. 正常完成实际任务；符合整理条件后查看“待审阅”，也可明确让助手复盘这次任务。
+3. 展开候选，核对来源、适用范围、条件和例外，再由你决定采纳或保留待审阅。
+4. 后续相关任务取回已确认经验作为参考；需要时在“已采纳”中修改、撤回或安排复核。
 
 自动整理使用当前会话的模型和额度，默认安静 60 秒后开始，同项目最多合并 4 轮，每天最多 4 次、间隔 10 分钟，单次最多 1200 输出 token。冷却和额度不足时轮次进入等待队列；新输入会暂停整理并保留未完成片段。队列最多保留 32 轮、24 小时，重启后可继续。普通闲聊跳过。
 

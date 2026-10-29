@@ -8,7 +8,9 @@ Collect candidate lessons from completed tasks, then let users review and accept
 
 Only lessons you accept in the panel are reused automatically. A model's `dream_review accept` recommends review and leaves the lesson unchanged. Earlier model approvals need human review again. Global acceptance requires an explicit confirmation that the lesson applies to all projects. `dream_bridge` now defaults to a read-only preview.
 
-[![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
+[![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![total downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-total-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
+
+[Download statistics](https://github.com/STARDUSTLC666/dsh-suite/blob/npm-downloads/README.md)
 
 Feedback and contributions are welcome: report [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) or submit [pull requests](https://github.com/STARDUSTLC666/dsh-dream/pulls).
 
@@ -35,7 +37,10 @@ For the web version, replace `desktop` with `web`. Restart DSH after installatio
 
 ## Start using it
 
-Use DSH normally. A completed turn qualifies when it contains an explicit preference/correction or at least two non-Dream tool calls. Within the configured budget, Dream creates candidates. Open Settings → Dream Journal to inspect their sources and accept them; relevant later tasks retrieve accepted memories automatically. You can still ask for a separate reflection and journal entry.
+1. Open Dream memory in the sidebar and choose whether to use automatic organization and recall.
+2. Complete real work and check Pending review after an eligible task, or explicitly ask for a retrospective.
+3. Expand a candidate, inspect sources, scope, conditions and exceptions, then decide whether to accept it.
+4. Recall accepted experience in relevant tasks; edit, revoke or review it in Accepted when needed.
 
 Automatic collection uses the current session's model and quota. By default, it waits for 60 quiet seconds, merges up to four turns in the same project, and allows four calls per day at least ten minutes apart, with 1200 output tokens per call. Cooldown and quota limits defer turns; new input stops auxiliary work and retains unfinished excerpts. The bounded queue keeps up to 32 turns for 24 hours and survives restart. Ordinary chat is skipped.
 

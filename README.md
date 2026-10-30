@@ -1,37 +1,41 @@
-# dsh-dream
+**简体中文** · [English](README.en.md)
 
-[English](README.en.md)
+# Dream
 
-![dsh-dream 鲸鱼娘插件封面](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/assets/cover-whale-girl.png)
-
-把完成任务中的经历整理成候选经验，供用户审阅、采纳后在相关任务中回用。支持自动整理、按需召回、来源核查、适用范围与手动复盘；候选内容不会自动变成已采纳记忆。
+**让 DSH 把做过的任务，变成下次用得上的经验。**
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![total downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-total-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
 
-[下载统计说明](https://github.com/STARDUSTLC666/dsh-suite/blob/npm-downloads/README.md)
+**[安装使用](#安装) · [使用流程](#开始使用) · [完整说明](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.zh.md)**
 
-欢迎使用，遇到问题或有改进建议，请提交 [issues](https://github.com/STARDUSTLC666/dsh-dream/issues) 和 [PR](https://github.com/STARDUSTLC666/dsh-dream/pulls)。
-
-从 DSH 原生侧栏打开工作台；配置与操作边界见[工作台说明](docs/WORKBENCH.md)。
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 640px)" srcset="https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/workflow-zh-mobile-dark.svg">
+  <source media="(max-width: 640px)" srcset="https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/workflow-zh-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/workflow-zh-dark.svg">
+  <img src="https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/workflow-zh-light.svg" alt="让 DSH 把做过的任务，变成下次用得上的经验。 · 流程示意" width="100%">
+</picture>
 
 ## 功能
 
-- 浏览梦境日记、检索经验并查看关联来源。
-- 完成任务后自动提取候选，相关新任务自动取回已采纳经验；两个开关独立控制。
-- 安静后合并整理，冷却和额度不足时保留待处理轮次；可分别控制每个聊天的使用与贡献。
-- 直接审阅、处理冲突，记录独立的使用反馈。
-- 按项目和主题批量审阅，事实到期暂停回用，复核后恢复。
-- 预览规则差异后写入 AGENTS.md，并支持回滚。
+- 实际任务结束后，按开关与额度整理候选经验。
+- 核对原文、适用范围、条件与例外，再决定采纳。
+- 在相关任务中回用已确认经验，并保留来源。
+
+## 看看怎么用
+
+![Dream review steps](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif)
+
+使用验证环境真实截图制作的步骤轮播：核对待审阅候选，再查看已采纳列表。演示人工审阅流程，不是连续录屏或效果基准。
 
 ## 安装
 
-桌面版可在「插件」面板按包名 `@stardustlc/dsh-dream` 安装。已配置 dsh 命令时也可使用：
+在 DSH 桌面版「插件」面板安装 `@stardustlc/dsh-dream`。已配置命令行时也可使用：
 
 ```bash
 dsh plugin --profile desktop add @stardustlc/dsh-dream
 ```
 
-网页版把命令中的 `desktop` 改为 `web`。安装后重启 DSH。
+网页版把 `desktop` 改为 `web`；安装后重启对应的 DSH。宿主要求以包声明 `>=0.2.1-rc.3` 为准。
 
 ## 开始使用
 
@@ -40,31 +44,32 @@ dsh plugin --profile desktop add @stardustlc/dsh-dream
 3. 展开候选，核对来源、适用范围、条件和例外，再由你决定采纳或保留待审阅。
 4. 后续相关任务取回已确认经验作为参考；需要时在“已采纳”中修改、撤回或安排复核。
 
-自动整理使用当前会话的模型和额度，默认安静 60 秒后开始，同项目最多合并 4 轮，每天最多 4 次、间隔 10 分钟，单次最多 1200 输出 token。冷却和额度不足时轮次进入等待队列；新输入会暂停整理并保留未完成片段。队列最多保留 32 轮、24 小时，重启后可继续。普通闲聊跳过。
+可以这样说：
 
-新经验始终先待审阅：展开核对原话、条件与例外，再采纳。事实默认 30 天后待复核；稳定偏好没有默认到期时间。取回只表示提供参考，不会冒充重新核验。它不自动采纳，也不写项目规则；规则写入仍需预览和应用。中英文界面跟随 DSH 语言，日记与经验正文保留原文。
+> 复盘刚才的任务，整理可复用经验并保留来源，先放到待审阅。
 
-只有你在面板确认采纳的经验才会自动复用。模型调用 `dream_review accept` 仅表示建议采纳，状态保持待审阅；旧的模型采纳记录需要你重新确认。全局经验会用于所有项目，单条或批量采纳前需勾选范围确认。`dream_bridge` 默认只读预览，不再把旧日记直接写成项目规则。
+## 开始前要知道
 
-## 依赖与配置
+候选不会自动采纳。自动整理会使用当前会话模型和额度，两个自动开关可分别控制。
 
-默认使用本机 DSH 会话与日记目录，支持隐私脱敏。自动功能通过官方会话事件和动态上下文接口接入；操作面板使用认证 Connection 通道。已验证 0.2.0-rc.2 与 0.2.1-alpha.1；缺少自动接口的宿主保留工具与技能入口。
-
-详细配置、工具参数与排错见[使用说明](docs/USAGE.md)。从源码独立开发时，Node 要求以 [package.json](package.json) 为准。
-
-## 文档
-
-- [使用与排错](docs/USAGE.md)
-- [更新记录](CHANGELOG.md)
-- [验证范围与历史记录](docs/VALIDATION.md)
-- [问题反馈与功能建议](https://github.com/STARDUSTLC666/dsh-dream/issues)
+配置、完整工具与排错见[详细使用说明](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.zh.md)。
 
 ## 插件更新
 
-需要 DSH 0.2.1-rc.3 或更新版本。更新控件直接位于原有工作台内容末尾；没有工作台的插件，位于原生插件详情页底部。检查、更新记录和偏好在原地展开，不增加独立更新页面或设置菜单。自动检查默认开启；**自动安装默认关闭**，明确授权后才会在空闲且没有未保存修改时安装兼容的稳定补丁。开关按插件独立保存，可关闭、推迟或忽略提醒；不会强制重启 DSH、升级 DSH 本体或替换本地源码安装。Suite 组件在当前页面底部明确说明并操作 Suite 整包更新。
+在工作台或原生插件详情页底部检查更新。默认自动检查，**默认不自动安装**；是否安装、何时重启由你决定。Suite 管理的组件随整包更新。[查看更新规则](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.zh.md)。
 
-旧版用户先在官方插件管理中手动更新一次，之后才会获得此入口。发布到 npm 不会直接替换用户已经安装的版本。
+## 文档
+
+- [详细使用、配置与边界](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.zh.md)
+- [更新记录](https://github.com/STARDUSTLC666/dsh-dream/blob/master/CHANGELOG.md)
+- [验证范围与历史](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/VALIDATION.md)
+
+## 反馈与贡献
+
+如果插件帮到了你，欢迎 Star，让更多人发现它。问题和建议请提交 [Issues](https://github.com/STARDUSTLC666/dsh-dream/issues)，也欢迎代码与文档 [PR](https://github.com/STARDUSTLC666/dsh-dream/pulls)。反馈时附上版本与复现步骤，并移除凭据。
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/STARDUSTLC666/dsh-dream/blob/master/LICENSE)
+
+<a id="依赖与配置"></a>

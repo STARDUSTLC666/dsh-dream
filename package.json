@@ -1,7 +1,7 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.13.6",
-  "description": "DSH 任务经验记忆：自动整理候选、人工审阅采纳、相关任务召回、来源与范围核查。欢迎提交 issues 和 PR。",
+  "version": "0.13.7",
+  "description": "让 DSH 把做过的任务，变成下次用得上的经验。 候选不会自动采纳。自动整理会使用当前会话模型和额度，两个自动开关可分别控制。 欢迎提交 issues 和 PR。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

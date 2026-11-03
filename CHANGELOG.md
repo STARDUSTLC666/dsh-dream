@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.13.7 (2026-11-03)
+
+- dream_health 不再假绿：只读检查日记目录可写性，失败项带 hint 与建议；首次使用不误报。
+- dream_health no longer reports a false green: it checks journal writability read-only, adds hints and next steps, and does not flag first use.
+- 同步共享 workbench-ui v1.1：Page 外的 Empty / Dialog / Status 自带样式与 `.dshw` 主题作用域，Status 新增 warn 色调。
+- Sync workbench-ui v1.1: Empty / Dialog / Status now carry their own styles and `.dshw` theme scope outside Page, and Status gains a warn tone.
+
 ## 0.13.6 (2026-10-30)
 
 - 原生插件列表与详情新增专门生成的鲸鱼娘图标：大头像、独立功能符号、透明留白，适合 30 / 36 px 显示；原封面保留。

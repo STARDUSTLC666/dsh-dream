@@ -12,10 +12,25 @@ export declare const DREAM_BRIDGE_ROUTE = "/_dsh/dsh-dream/bridge";
 export declare const DREAM_LIMIT_DEFAULT = 50;
 export declare const DREAM_LIMIT_MIN = 1;
 export declare const DREAM_LIMIT_MAX = 500;
+/**
+ * 反向代理白名单。两项都默认空，空列表时行为与旧版完全一致（只认回环来源 + localhost Host）。
+ * 配了反代时：来源地址进 trustedRemoteAddresses；若反代没有把 Host 改写成本机名，
+ * 公开域名再进 trustedHosts。两项是「且」关系，各管一道门，缺一项仍会被拒。
+ */
+export interface GatePolicy {
+    /** 允许的来源地址（回环之外）。 */
+    trustedRemoteAddresses: readonly string[];
+    /** 允许的 Host（localhost 之外）。 */
+    trustedHosts: readonly string[];
+}
+/** 空策略：只认回环来源与本机 Host。 */
+export declare const LOOPBACK_ONLY: GatePolicy;
+/** 从插件配置（含环境变量兜底）取白名单；未配置时等价于 LOOPBACK_ONLY。 */
+export declare function gatePolicyOf(options?: DreamWebOptions): GatePolicy;
 /** Host 头裁决：undefined = 放行，否则给出拒绝原因。 */
-export declare function hostVerdict(host: unknown): string | undefined;
+export declare function hostVerdict(host: unknown, policy?: GatePolicy): string | undefined;
 /** 来源地址裁决：undefined = 放行（请求里缺失也放行），否则给出拒绝原因。 */
-export declare function remoteVerdict(remote: unknown): string | undefined;
+export declare function remoteVerdict(remote: unknown, policy?: GatePolicy): string | undefined;
 /** GET 返回的 JSON 形状（T2 面板按这份契约渲染）。 */
 export interface DreamWebPayload {
     /** 倒序的梦境（新梦在前），受 ?q 与 ?limit 影响。 */

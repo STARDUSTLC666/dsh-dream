@@ -22,6 +22,10 @@ export interface ResolvedDreamConfig {
     autoMaxOutputTokens: number;
     autoTimeoutMs: number;
     autoIdleMs: number;
+    /** 反向代理来源地址白名单（默认空 = 只认回环）。 */
+    trustedRemoteAddresses: string[];
+    /** 反向代理 Host 白名单（默认空 = 只认 localhost）。 */
+    trustedHosts: string[];
 }
 /** 解析并校验插件配置。 */
 export declare function resolveConfig(raw?: Record<string, unknown> | null, env?: NodeJS.ProcessEnv): ResolvedDreamConfig;

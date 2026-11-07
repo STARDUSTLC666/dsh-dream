@@ -49,19 +49,56 @@ const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 /** 知识的 5 个契约状态（统计归一化时保证键齐全）。 */
 const LESSON_STATES = ['candidate', 'usable', 'disputed', 'stale', 'rejected'] as const
 
+/** Host 头归一：小写、去端口、IPv6 字面量保留方括号。 */
+function hostName(host: string): string {
+  const text = host.trim().toLowerCase()
+  return text.startsWith('[') ? text.slice(0, text.indexOf(']') + 1) : text.split(':')[0]!
+}
+
+/** 来源地址归一：小写，IPv4-mapped IPv6（::ffff:10.0.0.2）还原成 IPv4。 */
+function addressName(address: string): string {
+  const text = address.trim().toLowerCase()
+  return text.startsWith('::ffff:') ? text.slice(7) : text
+}
+
+/**
+ * 反向代理白名单。两项都默认空，空列表时行为与旧版完全一致（只认回环来源 + localhost Host）。
+ * 配了反代时：来源地址进 trustedRemoteAddresses；若反代没有把 Host 改写成本机名，
+ * 公开域名再进 trustedHosts。两项是「且」关系，各管一道门，缺一项仍会被拒。
+ */
+export interface GatePolicy {
+  /** 允许的来源地址（回环之外）。 */
+  trustedRemoteAddresses: readonly string[]
+  /** 允许的 Host（localhost 之外）。 */
+  trustedHosts: readonly string[]
+}
+
+/** 空策略：只认回环来源与本机 Host。 */
+export const LOOPBACK_ONLY: GatePolicy = { trustedRemoteAddresses: [], trustedHosts: [] }
+
+/** 从插件配置（含环境变量兜底）取白名单；未配置时等价于 LOOPBACK_ONLY。 */
+export function gatePolicyOf(options: DreamWebOptions = {}): GatePolicy {
+  const cfg = resolveConfig((options.config ?? null) as Record<string, unknown> | null)
+  return { trustedRemoteAddresses: cfg.trustedRemoteAddresses, trustedHosts: cfg.trustedHosts }
+}
+
 /** Host 头裁决：undefined = 放行，否则给出拒绝原因。 */
-export function hostVerdict(host: unknown): string | undefined {
+export function hostVerdict(host: unknown, policy: GatePolicy = LOOPBACK_ONLY): string | undefined {
   if (typeof host !== 'string' || host.trim() === '') return undefined
   const text = host.trim().toLowerCase()
-  const name = text.startsWith('[') ? text.slice(0, text.indexOf(']') + 1) : text.split(':')[0]!
-  return LOCAL_HOSTNAMES.has(text) || LOCAL_HOSTNAMES.has(name) ? undefined : `host "${host}" is not a localhost name`
+  const name = hostName(text)
+  if (LOCAL_HOSTNAMES.has(text) || LOCAL_HOSTNAMES.has(name)) return undefined
+  for (const allowed of policy.trustedHosts) if (name === hostName(allowed)) return undefined
+  return `host "${host}" is not a localhost name`
 }
 
 /** 来源地址裁决：undefined = 放行（请求里缺失也放行），否则给出拒绝原因。 */
-export function remoteVerdict(remote: unknown): string | undefined {
+export function remoteVerdict(remote: unknown, policy: GatePolicy = LOOPBACK_ONLY): string | undefined {
   if (typeof remote !== 'string' || remote.trim() === '') return undefined
-  const text = remote.trim().toLowerCase()
-  return LOOPBACK_ADDRESSES.has(text) ? undefined : `remote address "${remote}" is not a loopback address`
+  const text = addressName(remote)
+  if (LOOPBACK_ADDRESSES.has(text) || LOOPBACK_ADDRESSES.has(remote.trim().toLowerCase())) return undefined
+  for (const allowed of policy.trustedRemoteAddresses) if (text === addressName(allowed)) return undefined
+  return `remote address "${remote}" is not a loopback address`
 }
 
 /** GET 返回的 JSON 形状（T2 面板按这份契约渲染）。 */
@@ -214,14 +251,14 @@ function internalError(res: any, error: unknown): void {
  * 三道门：回环来源 → 本机 Host → 只读 GET。
  * 返回 true 表示已经拒绝并写完响应，调用方应立即返回。
  */
-function requestGate(req: any, res: any, readOnlyMessage: string): boolean {
-  const remote = remoteVerdict(req?.socket?.remoteAddress)
+function requestGate(req: any, res: any, readOnlyMessage: string, policy: GatePolicy = LOOPBACK_ONLY): boolean {
+  const remote = remoteVerdict(req?.socket?.remoteAddress, policy)
   if (remote !== undefined) {
     forbidden(res, remote)
     return true
   }
   const headers = (req?.headers ?? {}) as Record<string, unknown>
-  const host = hostVerdict(headers.host)
+  const host = hostVerdict(headers.host, policy)
   if (host !== undefined) {
     forbidden(res, host)
     return true
@@ -374,8 +411,9 @@ function readBridgeApplicationsFromStore(journalDir: string): BridgeApplicationV
 /** 组装梦境日记路由处理器；journalDir 在这一刻定下来（与插件的配置生命周期一致）。 */
 export function createDreamWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
   const journalDir = journalDirOf(options)
+  const policy = gatePolicyOf(options)
   return async (req: any, res: any): Promise<void> => {
-    if (requestGate(req, res, 'dsh-dream journal route is read-only; use GET')) return
+    if (requestGate(req, res, 'dsh-dream journal route is read-only; use GET', policy)) return
     const url = requestUrl(req?.url)
     const query = (url.searchParams.get('q') ?? '').trim()
     const limit = limitFromQuery(url.searchParams.get('limit'))
@@ -393,8 +431,9 @@ export function createDreamWebHandler(options: DreamWebOptions = {}): (req: any,
 export function createBridgeWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
   const journalDir = journalDirOf(options)
   const bridgeDir = bridgeDirOf(options, journalDir)
+  const policy = gatePolicyOf(options)
   return async (req: any, res: any): Promise<void> => {
-    if (requestGate(req, res, 'dsh-dream bridge route is read-only; use GET')) return
+    if (requestGate(req, res, 'dsh-dream bridge route is read-only; use GET', policy)) return
     try {
       let raw: unknown
       if (options.bridgeStoreFactory !== undefined) {
@@ -422,8 +461,9 @@ export function createBridgeWebHandler(options: DreamWebOptions = {}): (req: any
 /** 组装只读经验路由处理器；零写盘：目录不存在就直接返回空结果。 */
 export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
   const knowledgeDir = knowledgeDirOf(options)
+  const policy = gatePolicyOf(options)
   return async (req: any, res: any): Promise<void> => {
-    if (requestGate(req, res, 'dsh-dream knowledge route is read-only; use GET')) return
+    if (requestGate(req, res, 'dsh-dream knowledge route is read-only; use GET', policy)) return
     try {
       const reader = options.knowledgeStoreFactory !== undefined
         ? options.knowledgeStoreFactory(knowledgeDir)

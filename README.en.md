@@ -54,6 +54,18 @@ Candidates are never automatically accepted. Collection uses the current chat’
 
 Configuration, detailed tools and troubleshooting: [full reference](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.en.md).
 
+## Behind a reverse proxy
+
+The panel routes accept loopback peers and localhost Hosts only, so a browser reaching DSH through a reverse proxy gets 403. Both allow-lists are empty by default and match exactly:
+
+```yaml
+# this plugin's config in cordis.patch.yml
+trustedRemoteAddresses: ['192.0.2.10']         # example; replace with the proxy's own source address
+trustedHosts: ['dsh.example.com']             # needed when the proxy preserves the public Host
+```
+
+`DSH_DREAM_TRUSTED_REMOTE_ADDRESSES` / `DSH_DREAM_TRUSTED_HOSTS` (comma separated) work too; config wins. The two gates are ANDed: an address-only entry still fails when the Host is a public name, and the 403 message names the missing piece. A listed peer is no longer held to loopback, so list only the proxy itself and keep an authentication layer in front of it.
+
 ## Plugin updates
 
 Check updates at the bottom of the workbench or native plugin details. Automatic checks are on by default; **automatic installation is off**. You choose whether to install and when to restart. Suite-managed components update with their bundle. [Update behavior](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.en.md).

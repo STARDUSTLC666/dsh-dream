@@ -54,6 +54,18 @@ dsh plugin --profile desktop add @stardustlc/dsh-dream
 
 配置、完整工具与排错见[详细使用说明](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.zh.md)。
 
+## 反向代理部署
+
+面板路由默认只认回环来源与本机 Host，所以浏览器经反向代理访问时会得到 403。两项白名单默认空，配置后才放行，且只做精确匹配：
+
+```yaml
+# cordis.patch.yml 中本插件的 config
+trustedRemoteAddresses: ['192.0.2.10']         # 示例地址，替换为反代自己的来源地址
+trustedHosts: ['dsh.example.com']               # 浏览器地址栏里的域名（反代没改写 Host 时才需要）
+```
+
+也可用环境变量 `DSH_DREAM_TRUSTED_REMOTE_ADDRESSES` / `DSH_DREAM_TRUSTED_HOSTS`（逗号分隔），配置项优先。两项是「且」关系：只配来源、而反代又不改写 Host 时，仍会因 Host 不是本机名被拒——按 403 的提示补上第二项即可。被列入来源白名单的地址不再受回环限制，因此只该填反代自己的地址，并确保前面还有一层身份验证。
+
 ## 插件更新
 
 在工作台或原生插件详情页底部检查更新。默认自动检查，**默认不自动安装**；是否安装、何时重启由你决定。Suite 管理的组件随整包更新。[查看更新规则](https://github.com/STARDUSTLC666/dsh-dream/blob/master/docs/REFERENCE.zh.md)。

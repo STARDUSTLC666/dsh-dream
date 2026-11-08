@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.14.0 (2026-11-08)
+
+- 反向代理部署：新增 `trustedRemoteAddresses` / `trustedHosts` 两项白名单，默认空、精确匹配（大小写、端口与 IPv4-mapped 前缀归一），可用 `DSH_DREAM_TRUSTED_REMOTE_ADDRESSES` / `DSH_DREAM_TRUSTED_HOSTS` 兜底。默认仍不扩大访问范围，仍只认回环来源与本机 Host。
+- Behind a reverse proxy: new `trustedRemoteAddresses` / `trustedHosts` allow-lists — empty by default, exact match, with case/port/IPv4-mapped normalisation and matching env fallbacks. Default access remains local; malformed Host and IP values are rejected.
+
 ## 0.13.9 (2026-11-04)
 
 - 同步共享界面：嵌入设置时继承宿主底色，输入框跟随主题，空状态保持可读宽度；新版 DSH 可显示插件设置图标。

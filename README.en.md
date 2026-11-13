@@ -35,7 +35,7 @@ Open **Plugins** in the DSH desktop app and install `@stardustlc/dsh-dream`. If 
 dsh plugin --profile desktop add @stardustlc/dsh-dream
 ```
 
-For the web profile, replace `desktop` with `web`. Restart that DSH profile after installation. The package’s DSH requirement is `>=0.2.1-rc.3`.
+For the web profile, replace `desktop` with `web`. Restart that DSH profile after installation. The package’s DSH requirement is `>=0.2.2-rc.3`.
 
 ## Start using it
 

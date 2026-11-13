@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.14.1 (2026-11-14)
+
+- 适配 DSH 0.2.2-rc.3：最低 Harness 版本声明提升至 0.2.2-rc.3，运行时代码未变。
+- Support DSH 0.2.2-rc.3: raise the minimum Harness declaration to 0.2.2-rc.3; runtime code is unchanged.
+
 ## 0.14.0 (2026-11-08)
 
 - 反向代理部署：新增 `trustedRemoteAddresses` / `trustedHosts` 两项白名单，默认空、精确匹配（大小写、端口与 IPv4-mapped 前缀归一），可用 `DSH_DREAM_TRUSTED_REMOTE_ADDRESSES` / `DSH_DREAM_TRUSTED_HOSTS` 兜底。默认仍不扩大访问范围，仍只认回环来源与本机 Host。

@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "DSH 任务经验记忆：自动整理候选、人工审阅采纳、相关任务召回、来源与范围核查。欢迎提交 issues 和 PR。",
   "type": "module",
   "main": "lib/index.js",
@@ -56,7 +56,7 @@
   "license": "MIT",
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
-    "dsh": ">=0.2.1-rc.3"
+    "dsh": ">=0.2.2-rc.3"
   },
   "dependencies": {
     "@stardustlc/dsh-updates": "0.1.4"

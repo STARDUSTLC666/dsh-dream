@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.15.0 (2026-11-15)
+
+- Dream 工作台改用 DeepSeek Harness 原生控件，提供独立皮肤、三栏审阅、键盘命令面板、脱敏槽位预览和修订对比。
+- 新增 Dream 独立的 8 种界面语言选项。规则变更预览使用宿主弹窗，继续走现有的预览、应用与回滚流程。
+- Rebuild the Dream workbench with native DeepSeek Harness controls, Dream-only styles, a three-pane review layout, keyboard commands, masked evidence previews and revision comparisons.
+- Offer eight Dream interface languages. Show rule diffs in the native modal using the existing preview, apply and rollback workflow.
+
 ## 0.14.1 (2026-11-14)
 
 - 适配 DSH 0.2.2-rc.3：最低 Harness 版本声明提升至 0.2.2-rc.3，运行时代码未变。

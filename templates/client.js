@@ -4,9 +4,9 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         var exports = module.exports;
         "use strict";
         const React = require("react");
-        const W = createWorkbenchUI(React);
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useLayoutEffect, useCallback, useRef, useId } = React;
         const h = React.createElement;
+        // @dream-ui
         // Interface language follows DSH; user content and stored records keep their original text.
         let localeService;
         const EN = Object.freeze({
@@ -277,19 +277,24 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         });
         function languageOf(locale = localeService) {
             try {
-                return String(locale?.getSnapshot?.().active || '').startsWith('en') ? 'en' : 'zh';
+                return dreamLanguage || normalizeDreamLanguage(locale?.getSnapshot?.().active) || 'zh';
             }
             catch {
                 return 'zh';
             }
         }
-        function t(zh) { return languageOf() === 'en' ? (EN[zh] ?? zh) : zh; }
+        function t(zh) {
+            const language = languageOf();
+            if (language === 'zh') return zh;
+            const messages = Object.hasOwn(DREAM_MESSAGES, zh) ? DREAM_MESSAGES[zh] : undefined;
+            return messages?.[DREAM_TRANSLATION_ORDER.indexOf(language)] ?? messages?.[0] ?? EN[zh] ?? zh;
+        }
         function displayError(error) {
             const message = error?.message || String(error || '');
-            if (languageOf() !== 'en')
+            if (languageOf() === 'zh')
                 return message;
-            if (EN[message])
-                return EN[message];
+            if (EN[message] || DREAM_MESSAGES[message])
+                return t(message);
             if (!/[\u3400-\u9fff]/.test(message))
                 return message;
             const hints = {
@@ -316,7 +321,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 + (error?.status ? ' (HTTP ' + error.status + (error.code ? ', ' + error.code : '') + ')' : '');
         }
         function rollbackReasonText(reason) {
-            if (languageOf() !== 'en')
+            if (languageOf() === 'zh')
                 return reason;
             return ({ '目标文件不可读': 'Target file is unreadable', '文件不存在': 'File does not exist',
                 '管理块标记异常': 'Invalid managed block markers', '管理块已被移除': 'Managed block was removed',
@@ -324,12 +329,14 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 || (/[\u3400-\u9fff]/.test(reason) ? 'Check the target file and backup' : reason);
         }
         function scopeText(label) {
-            if (languageOf() !== 'en')
+            if (languageOf() === 'zh')
                 return label;
-            return label.replace(/^全局$/, 'Global').replace(/^工作区 /, 'Workspace ').replace(/^项目 /, 'Project ');
+            if (label === '全局') return t('全局');
+            return label.replace(/^(工作区|项目) /, (_label, scope) => t(scope) + ' ')
+                .replace(/（工作区 (.*)）$/, (_label, workspace) => ' (' + t('工作区') + ' ' + workspace + ')');
         }
         function evidenceText(summary) {
-            if (languageOf() !== 'en')
+            if (languageOf() === 'zh')
                 return summary;
             return summary
                 .replace(/^无证据（仅候选，不可作为已证实结论）$/, 'No evidence (candidate only; not an established conclusion)')
@@ -338,7 +345,13 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         }
         function useLanguage(locale) {
             const [, rerender] = useState(0);
-            useEffect(() => { const update = () => rerender(n => n + 1); update(); return locale?.subscribe?.(update); }, [locale]);
+            useEffect(() => {
+                const update = () => rerender(n => n + 1);
+                const release = locale?.subscribe?.(update);
+                languageListeners.add(update);
+                update();
+                return () => { release?.(); languageListeners.delete(update); };
+            }, [locale]);
         }
         // 相对路径按 document.baseURI 解析：反代挂在 /tools/dsh/ 这类前缀下也不会打偏。
         const ROUTE = "_dsh/dsh-dream/journal";
@@ -1234,64 +1247,56 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             catch (error) { /* 隐私模式/配额满写不进去就算了，状态只活在内存里 */ }
         }
         // ───────────────────────── 小组件 ─────────────────────────
-        function Btn(props) {
-            return h("button", {
-                type: "button",
-                className: "dshd-btn" + (props.variant === "primary" ? " primary" : "") + (props.on === true ? " on" : ""),
-                onClick: props.onClick,
-                disabled: props.disabled === true,
-                title: props.title,
-                "aria-expanded": props["aria-expanded"],
-                "aria-pressed": props.pressed === undefined ? undefined : props.pressed,
-            }, props.children);
+        function Btn({ on, pressed, variant, children, ...props }) {
+            return h(W.Button, { ...props, variant: on && !variant ? 'toolbar' : variant, 'aria-pressed': pressed }, children);
         }
         function StatTile(props) {
-            return h("div", { className: "dshd-tile" }, [
-                h("div", { className: "dshd-tile-label", key: "l" }, props.label),
-                h("div", { className: "dshd-tile-value", key: "v", title: props.title === undefined ? props.value : props.title }, props.value),
-                props.hint === "" || props.hint === undefined ? null : h("div", { className: "dshd-tile-hint", key: "h", title: props.hint }, props.hint),
+            return h("div", { className: css['dshd-tile'] }, [
+                h("div", { className: css['dshd-tile-label'], key: "l" }, props.label),
+                h("div", { className: css['dshd-tile-value'], key: "v", title: props.title === undefined ? props.value : props.title }, props.value),
+                props.hint === "" || props.hint === undefined ? null : h("div", { className: css['dshd-tile-hint'], key: "h", title: props.hint }, props.hint),
             ]);
         }
         function MoodCard(props) {
             const vm = props.vm;
-            return h("section", { className: "dshd-card" }, [
+            return h("section", { className: css['dshd-card'] }, [
                 h("h4", { key: "t" }, t("心境")),
-                h("div", { className: "dshd-mblocks", key: "blocks" }, vm.blocks.map((block) => h("span", {
+                h("div", { className: css['dshd-mblocks'], key: "blocks" }, vm.blocks.map((block) => h("span", {
                     key: block.key,
-                    className: "dshd-mblock " + block.tone,
+                    className: clsx(css['dshd-mblock'], css[block.tone]),
                     title: block.title,
                 }))),
                 vm.count === 1
-                    ? h("div", { className: "dshd-hint", key: "one" }, t("1 场梦，先不谈分布 —— 再做梦会累积。"))
+                    ? h("div", { className: css['dshd-hint'], key: "one" }, t("1 场梦，先不谈分布 —— 再做梦会累积。"))
                     : h("div", { key: "legend" }, [
-                        h("div", { className: "dshd-note", key: "cap" }, t("左 → 右：从早到晚")),
-                        h("div", { className: "dshd-legend", key: "rows" }, vm.moodRows.map((row, index) => h("div", { className: "dshd-legend-row", key: "mood-" + String(index) + "-" + row.mood }, [
-                            h("span", { className: "dshd-mblock " + toneClass(moodSlot(row.mood)), key: "d" }),
-                            h("span", { className: "dshd-legend-name", key: "n", title: row.mood }, row.mood),
-                            h("span", { className: "dshd-legend-count", key: "c" }, String(row.count) + t(" 场")),
+                        h("div", { className: css['dshd-note'], key: "cap" }, t("左 → 右：从早到晚")),
+                        h("div", { className: css['dshd-legend'], key: "rows" }, vm.moodRows.map((row, index) => h("div", { className: css['dshd-legend-row'], key: "mood-" + String(index) + "-" + row.mood }, [
+                            h("span", { className: clsx(css['dshd-mblock'], css[toneClass(moodSlot(row.mood))]), key: "d" }),
+                            h("span", { className: css['dshd-legend-name'], key: "n", title: row.mood }, row.mood),
+                            h("span", { className: css['dshd-legend-count'], key: "c" }, String(row.count) + t(" 场")),
                         ]))),
                     ]),
             ]);
         }
         function LessonCard(props) {
             const vm = props.vm;
-            return h("section", { className: "dshd-card" }, [
+            return h("section", { className: css['dshd-card'] }, [
                 h("h4", { key: "t" }, t("教训榜")),
                 vm.lessonRows.length === 0
-                    ? h("div", { className: "dshd-hint", key: "e" }, t("还没有教训 —— 记梦时带上 lessons，出现次数会在这里累积。"))
-                    : h("div", { key: "rows" }, vm.lessonRows.map((row, index) => h("div", { className: "dshd-lesson", key: "lesson-" + String(index) + "-" + row.lesson }, [
-                        h("span", { className: "dshd-rank", key: "r" }, String(row.rank)),
-                        h("span", { className: "dshd-lesson-body", key: "b" }, [
-                            h("span", { className: "dshd-lesson-text", key: "t" }, row.lesson),
-                            row.showBar ? h("span", { className: "dshd-track", key: "bar" }, h("span", { className: "dshd-fill", key: "fill", style: { width: String(row.share) + "%" } })) : null,
+                    ? h("div", { className: css['dshd-hint'], key: "e" }, t("还没有教训 —— 记梦时带上 lessons，出现次数会在这里累积。"))
+                    : h("div", { key: "rows" }, vm.lessonRows.map((row, index) => h("div", { className: css['dshd-lesson'], key: "lesson-" + String(index) + "-" + row.lesson }, [
+                        h("span", { className: css['dshd-rank'], key: "r" }, String(row.rank)),
+                        h("span", { className: css['dshd-lesson-body'], key: "b" }, [
+                            h("span", { className: css['dshd-lesson-text'], key: "t" }, row.lesson),
+                            row.showBar ? h("span", { className: css['dshd-track'], key: "bar" }, h("span", { className: css['dshd-fill'], key: "fill", style: { width: String(row.share) + "%" } })) : null,
                         ]),
-                        h("span", { className: "dshd-lesson-meta", key: "m" }, [
-                            h("span", { className: "dshd-times", key: "c" }, "×", h("b", { key: "n" }, String(row.count))),
-                            row.lastText === "" ? null : h("span", { className: "dshd-last", key: "l", title: row.lastTitle }, row.lastText),
-                            row.candidate ? h("span", { className: "dshd-badge", key: "badge" }, t("常见教训")) : null,
+                        h("span", { className: css['dshd-lesson-meta'], key: "m" }, [
+                            h("span", { className: css['dshd-times'], key: "c" }, "×", h("b", { key: "n" }, String(row.count))),
+                            row.lastText === "" ? null : h("span", { className: css['dshd-last'], key: "l", title: row.lastTitle }, row.lastText),
+                            row.candidate ? h("span", { className: css['dshd-badge'], key: "badge" }, t("常见教训")) : null,
                         ]),
                     ]))),
-                h("div", { className: "dshd-note", key: "note" }, t("次数仅表示日记里的出现频率；出现 ≥3 次标为「常见教训」。写入项目规则前仍需核验来源并审阅经验。最近时间取自 stats.lastAt；统计缺失时按本页已加载的梦现算。")),
+                h("div", { className: css['dshd-note'], key: "note" }, t("次数仅表示日记里的出现频率；出现 ≥3 次标为「常见教训」。写入项目规则前仍需核验来源并审阅经验。最近时间取自 stats.lastAt；统计缺失时按本页已加载的梦现算。")),
             ]);
         }
         /** 复制命令按钮：成功给「已复制」，剪贴板不可用时回退为可选中文本。 */
@@ -1308,13 +1313,12 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 });
             };
             const label = props.label === undefined ? t("复制命令") : props.label;
-            return h("span", { className: "dshd-copywrap" }, [
+            return h("span", { className: css['dshd-copywrap'] }, [
                 h(Btn, { key: "b", onClick: onCopy, disabled: props.disabled === true, title: props.title === undefined ? command : props.title }, copied === true ? t("已复制") : label),
-                failed === true ? h("code", { key: "cmd", className: "dshd-cmd", tabIndex: 0 }, command) : null,
-                failed === true ? h("span", { key: "hint", className: "dshd-note" }, t("剪贴板不可用：请手动选中上面的命令复制。")) : null,
+                failed === true ? h("code", { key: "cmd", className: css['dshd-cmd'], tabIndex: 0 }, command) : null,
+                failed === true ? h("span", { key: "hint", className: css['dshd-note'] }, t("剪贴板不可用：请手动选中上面的命令复制。")) : null,
             ]);
         }
-        /** 面板保持只读：先让人看清决策，再生成可直接粘贴进对话的完整命令。 */
         function ReviewControls(props) {
             const row = props.row;
             const [open, setOpen] = useState(false);
@@ -1328,20 +1332,24 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
 __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() || !!feedbackNote.trim() });
 
             const [pending, setPending] = useState(false);
+            const submitLock = useRef(false);
+            const [completed, setCompleted] = useState(false);
             const [error, setError] = useState("");
             const [preview, setPreview] = useState(null);
             const [globalConfirmed, setGlobalConfirmed] = useState(false);
             useEffect(function () { setGlobalConfirmed(false); }, [row.id, row.revision]);
             const commands = row.state === "rejected" ? [["reopen", t("重新送审")]]
-                : row.state === "disputed" ? [["resolve-conflict", t("处理冲突")], ["reject", t("驳回这条")]]
+                : row.state === "disputed" ? [["resolve-conflict", t("处理冲突")], ["reject", t("丢弃")]]
                     : row.state === "usable" ? [["mark-stale", t("标记待复核")], ["reject", t("驳回")]]
-                        : [["accept", t("采纳")], ["reject", t("驳回")], ["mark-stale", t("标记待复核")]];
+                        : [["accept", t("确认采纳")], ["reject", t("丢弃")], ["mark-stale", t("标记待复核")]];
+            const reviewBusy = pending || completed || props.batchPending;
             const effectiveAction = commands.some(function (item) { return item[0] === action; }) ? action : commands[0][0];
             const needsGlobalConfirmation = (row.isGlobal && commands.some(item => item[0] === 'accept')) || (row.state === 'disputed' && (row.isGlobal || row.hasGlobalConflicts));
             const command = reviewCommandOf(row, { action: effectiveAction, resolution: resolution, note: note, affectedIds: affected === "" ? [] : [affected] });
             const submit = async function (body, message, isPreview) {
-                if (pending)
+                if (submitLock.current || completed || props.batchPending)
                     return;
+                submitLock.current = true;
                 setPending(true);
                 setError("");
                 try {
@@ -1349,6 +1357,10 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                     if (isPreview)
                         setPreview(result);
                     else {
+                        if (body.operation === 'review') {
+                            if (body.action === 'accept' || body.action === 'reject') await props.onExit?.(body.action);
+                            setCompleted(true);
+                        }
                         setPreview(null);
                         if (props.onChanged)
                             props.onChanged(result.unchanged === true ? t("管理块内容已一致，无需写入。") : message);
@@ -1360,6 +1372,7 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                         setPreview(null);
                 }
                 finally {
+                    submitLock.current = false;
                     setPending(false);
                 }
             };
@@ -1373,20 +1386,29 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                 setFeedbackRetry({ signature: signature, id: requestId });
                 return submit({ operation: "feedback", lessonId: row.id, expectedRevision: row.revision, vote: vote, requestId: requestId, ...(feedbackNote.trim() === "" ? {} : { note: feedbackNote.trim() }) }, t("已记录使用反馈；「") + row.title + t("」的审阅状态保持原样。"));
             };
-            return h("div", { className: "dshd-review", role: "group", "aria-label": row.title + t("的操作"), onClick: function (event) { event.stopPropagation(); } }, [
-                needsGlobalConfirmation ? h('label', { key: 'global-confirm', className: 'dshd-note' }, [h('input', { type: 'checkbox', checked: globalConfirmed, disabled: pending, onChange: event => setGlobalConfirmed(event.target.checked) }), t('全局经验会用于所有项目；我已核对并同意。')]) : null,
-                h("div", { className: "dshd-kcmd", key: "buttons" }, [
+            return h("div", { className: css['dshd-review'], role: "group", "aria-label": row.title + t("的操作"), onClick: function (event) { event.stopPropagation(); } }, [
+                needsGlobalConfirmation ? h('label', { key: 'global-confirm', className: clsx(css.checkLabel, css['dshd-note']) }, [h('input', { type: 'checkbox', checked: globalConfirmed, disabled: reviewBusy, onChange: event => setGlobalConfirmed(event.target.checked) }), t('全局经验会用于所有项目；我已核对并同意。')]) : null,
+                h("div", { className: css['dshd-kcmd'], key: "buttons" }, [
                     ...commands.filter(function (item) { return item[0] !== "resolve-conflict" && item[0] !== "mark-stale"; }).map(function (item) {
-                        return h(Btn, { key: item[0], variant:item[0] === "accept" ? "primary" : undefined, disabled: pending || row.revision < 1 || (item[0] === 'accept' && row.isGlobal && !globalConfirmed), onClick: function () { review(item[0]); } }, item[1]);
+                        const shortcut = props.shortcuts && ({ accept: 'A', reject: 'D' })[item[0]];
+                        return h(Btn, {
+                            key: item[0], variant: item[0] === 'accept' ? 'primary' : undefined,
+                            icon: item[0] === 'accept' ? 'check' : item[0] === 'reject' ? 'trash' : undefined,
+                            className: item[0] === 'reject' ? css.danger : undefined,
+                            disabled: reviewBusy || row.revision < 1 || (item[0] === 'accept' && row.isGlobal && !globalConfirmed),
+                            onClick: () => review(item[0]),
+                            'data-dream-command': shortcut ? item[0] : undefined,
+                            'aria-keyshortcuts': shortcut || undefined,
+                        }, item[1]);
                     }),
-                    h(Btn, { key: "review", disabled: pending, onClick: function () { setOpen(!open); }, "aria-expanded": open }, open ? t("收起审阅") : row.state === "disputed" ? t("处理冲突") : dreamText("更多审阅操作", "More review actions")),
-                    row.bridgeable === true && row.workspaceRoot !== "" ? h(Btn, { key: "preview", disabled: pending, onClick: function () { submit({ operation: "preview", lessonId: row.id, expectedRevision: row.revision }, "", true); } }, t("预览规则变更")) : null,
+                    h(Btn, { key: "review", disabled: reviewBusy, onClick: function () { setOpen(!open); }, "aria-expanded": open }, open ? t("收起审阅") : row.state === "disputed" ? t("处理冲突") : t("更多审阅操作")),
+                    row.bridgeable === true && row.workspaceRoot !== "" ? h(Btn, { key: "preview", disabled: reviewBusy || props.masked, icon: 'diff', "data-dream-command": 'bridge-diff', onClick: function () { submit({ operation: "preview", lessonId: row.id, expectedRevision: row.revision }, "", true); } }, t("预览规则变更")) : null,
                     row.bridgeable === true && row.workspaceRoot === "" ? h(CopyCommand, { key: "preview-command", command: bridgePreviewCommandOf(row.id, row.projectId, row.workspaceRoot), label: t("复制项目预览命令") }) : null,
                 ]),
-                pending ? h("div", { key: "pending", role: "status", className: "dshd-note" }, t("正在处理…")) : null,
-                error !== "" ? h("div", { key: "error", role: "alert", className: "dshd-hint" }, [error, h(Btn, { key: "refresh", disabled: pending, onClick: function () { if (props.onChanged)
+                pending ? h("div", { key: "pending", role: "status", className: css['dshd-note'] }, t("正在处理…")) : null,
+                error !== "" ? h("div", { key: "error", role: "alert", className: css['dshd-hint'] }, [error, h(Btn, { key: "refresh", disabled: pending, onClick: function () { if (props.onChanged)
                             props.onChanged(t("已刷新经验列表。")); } }, t("刷新列表"))]) : null,
-                open ? h("div", { className: "dshd-reviewform", key: "form", onKeyDown: function (event) {
+                open ? h("div", { className: css['dshd-reviewform'], key: "form", onKeyDown: function (event) {
                         if (event.key === "Escape" && !pending) {
                             event.preventDefault();
                             event.stopPropagation();
@@ -1403,25 +1425,30 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                             ])]),
                         h("label", { key: "note" }, [t("处理依据"), h("textarea", { "aria-label": t("处理依据"), disabled: pending, rows: 2, maxLength: 500, value: note, placeholder: t("说明哪个来源支持这次决定…"), onChange: function (event) { setNote(event.target.value); } })]),
                     ]) : null,
-                    h(Btn, { key: "confirm", disabled: pending || command === "" || (!globalConfirmed && ((effectiveAction === 'accept' && row.isGlobal) || (effectiveAction === 'resolve-conflict' && (row.isGlobal || row.hasGlobalConflicts)))), onClick: function () { review(effectiveAction); }, variant: "primary" }, t("确认审阅")),
-                    h("details", { key: "fallback" }, [h("summary", { key: "summary" }, t("在对话里处理")), command === "" ? h("div", { key: "hint", className: "dshd-note" }, t("选择冲突经验并填写处理依据后即可处理。")) : h(CopyCommand, { key: "copy", command: command, label: t("复制审阅命令") })]),
+                    h(Btn, { key: "confirm", disabled: reviewBusy || command === "" || (!globalConfirmed && ((effectiveAction === 'accept' && row.isGlobal) || (effectiveAction === 'resolve-conflict' && (row.isGlobal || row.hasGlobalConflicts)))), onClick: function () { review(effectiveAction); }, variant: "primary" }, t("确认审阅")),
+                    h("details", { key: "fallback" }, [h("summary", { key: "summary" }, t("在对话里处理")), command === "" ? h("div", { key: "hint", className: css['dshd-note'] }, t("选择冲突经验并填写处理依据后即可处理。")) : h(CopyCommand, { key: "copy", command: command, label: t("复制审阅命令") })]),
                 ]) : null,
-                preview ? h("section", { key: "preview", className: "dshd-reviewform", "aria-label": t("规则变更预览") }, [
-                    h("strong", { key: "heading" }, t("规则变更预览")),
-                    h("div", { key: "target", className: "dshd-note" }, t("目标：") + preview.resolvedPath),
-                    h("pre", { key: "diff", className: "dshd-diff", tabIndex: 0 }, preview.diff || t("管理块内容已经一致，无需更改。")),
-                    h("div", { key: "help", className: "dshd-note" }, t("将按此预览重建 Dream 管理块，请核对新增和删除内容。块外内容保留，写入前创建回滚备份。")),
-                    h(Btn, { key: "apply", disabled: pending, variant: "primary", onClick: function () { submit({ operation: "apply", token: preview.token }, t("规则已应用，可在「写入记录」中回滚。")); } }, t("应用此变更")),
-                    h(Btn, { key: "cancel", disabled: pending, onClick: function () { setPreview(null); } }, t("取消预览")),
+                preview && !props.masked ? h(W.Dialog, { key: "preview", title: t("规则变更预览"), busy: pending, onClose: () => setPreview(null) }, [
+                    h("div", { key: "target", className: css['dshd-note'] }, t("目标：") + preview.resolvedPath),
+                    h("pre", { key: "diff", className: css['dshd-diff'], tabIndex: 0 }, preview.diff
+                        ? preview.diff.split('\n').map((line, index) => h('span', {
+                            key: index, className: clsx(css.diffLine, line.startsWith('+') && !line.startsWith('+++') && css.diffAdd,
+                                line.startsWith('-') && !line.startsWith('---') && css.diffRemove),
+                        }, line || '\u00a0'))
+                        : t("管理块内容已经一致，无需更改。")),
+                    h("div", { key: "help", className: css['dshd-note'] }, t("将按此预览重建 Dream 管理块，请核对新增和删除内容。块外内容保留，写入前创建回滚备份。")),
+                    h('div', { key: 'actions', className: css.actions },
+                        h(Btn, { disabled: pending, onClick: () => setPreview(null) }, t("取消预览")),
+                        h(Btn, { disabled: pending, variant: "primary", onClick: () => submit({ operation: "apply", token: preview.token }, t("规则已应用，可在「写入记录」中回滚。")) }, t("应用此变更"))),
                 ]) : null,
-                h("details", { key: "feedback", className: "dshd-feedback" }, [
+                h("details", { key: "feedback", className: css['dshd-feedback'] }, [
                     h("summary", { key: "summary" }, t("使用反馈 · 有用 ") + (row.feedback.useful || 0) + t(" · 不适用 ") + (row.feedback.notApplicable || 0)),
                     h("label", { key: "note" }, [t("场景备注（可选）"), h("textarea", { "aria-label": t("反馈场景备注"), rows: 2, disabled: pending, maxLength: 500, value: feedbackNote, placeholder: t("这次在哪个场景使用…"), onChange: function (event) { setFeedbackNote(event.target.value); } })]),
                     h(Btn, { key: "useful", disabled: pending, onClick: function () { feedback("useful"); } }, t("这次有用")),
                     h(Btn, { key: "not", disabled: pending, onClick: function () { feedback("not-applicable"); } }, t("这次不适用")),
-                    h("div", { key: "help", className: "dshd-note" }, t("记录使用情况，供之后复核；采纳与驳回由审阅决定。")),
+                    h("div", { key: "help", className: css['dshd-note'] }, t("记录使用情况，供之后复核；采纳与驳回由审阅决定。")),
                     ...(Array.isArray(row.feedback.recent) ? row.feedback.recent.slice(-3).reverse().map(function (item, index) {
-                        return h("div", { key: "recent-" + index, className: "dshd-note" }, formatDate(item.at) + " · " + (item.vote === "useful" ? t("有用") : t("不适用")) + (item.note ? " · " + item.note : ""));
+                        return h("div", { key: "recent-" + index, className: css['dshd-note'] }, formatDate(item.at) + " · " + (item.vote === "useful" ? t("有用") : t("不适用")) + (item.note ? " · " + item.note : ""));
                     }) : []),
                 ]),
             ]);
@@ -1451,251 +1478,72 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
                     setPending(false);
                 }
             };
-            return h("div", { className: "dshd-reviewform" }, [
+            return h("div", { className: css['dshd-reviewform'] }, [
                 h(Btn, { key: "start", disabled: pending, onClick: function () { setConfirm(!confirm); } }, confirm ? t("取消回滚") : t("回滚这次变更")),
                 confirm ? h("div", { key: "confirm" }, [
-                    h("p", { key: "target", className: "dshd-note" }, t("将恢复「") + props.row.target + t("」的前一个 Dream 管理块。块外内容保留；管理块已被修改时会拒绝回滚。")),
+                    h("p", { key: "target", className: css['dshd-note'] }, t("将恢复「") + props.row.target + t("」的前一个 Dream 管理块。块外内容保留；管理块已被修改时会拒绝回滚。")),
                     h(Btn, { key: "apply", variant: "primary", disabled: pending, onClick: rollback }, pending ? t("正在回滚…") : t("确认回滚管理块")),
                 ]) : null,
-                error ? h("div", { key: "error", role: "alert", className: "dshd-hint" }, error) : null,
+                error ? h("div", { key: "error", role: "alert", className: css['dshd-hint'] }, error) : null,
             ]);
         }
-        function KnowledgeRow(props) {
-            const row = props.row;
-            const privacy = props.privacy === true;
-            const [peek, setPeek] = useState(false);
-            const reveal = privacy === true ? function () { setPeek(peek !== true); } : undefined;
-            return h("div", {
-                className: "dshd-knowledge " + row.stateClass + (privacy === true && peek === true ? " dshd-peek" : ""),
-                onClick: reveal,
-                title: privacy === true ? t("隐私模式：点击此条临时查看") : undefined,
-            }, [
-                h("div", { className: "dshd-khead", key: "h" }, [
-                    h("span", { className: "dshd-kbadge", key: "b" }, row.stateLabel),
-                    h("span", { className: "dshd-ktitle", key: "t", title: row.title }, row.title),
-                ]),
-                h("div", { className: "dshd-kmeta", key: "m" }, [
-                    h("span", { className: "dshd-klast", key: "l", title: row.lastTitle }, t("最近核验：") + row.lastText),
-                    row.lastRetrievedAt ? h('span', { className: 'dshd-klast', key: 'retrieved', title: t('取回仅表示提供参考，不等于重新核验。') }, t('最近取回：') + formatDate(row.lastRetrievedAt) + ' ' + formatTime(row.lastRetrievedAt)) : null,
-                ]),
-                h("div", { className: "dshd-kbody", key: "body" }, [
-                    h("div", { key: "when" }, t("何时用：") + (row.when !== "" ? row.when : t("未标注适用条件"))),
-                    h("div", { key: "action", className: "dshd-action" }, t("怎么做：") + (row.action || t("未标注具体动作"))),
-                    h("details", { key: "details", onClick: function (event) { event.stopPropagation(); } }, [
-                        h("summary", { key: "summary" }, t("适用范围与证据")),
-                        h("div", { key: "scope" }, t("范围：") + row.scopeLabel),
-                        row.applicability !== "" ? h("div", { key: "applicability" }, t("适用：") + row.applicability) : null,
-                        row.exceptions.length > 0 ? h("div", { key: "exceptions" }, t("例外：") + row.exceptions.join("；")) : null,
-                        h("div", { key: "evidence" }, t("证据：") + row.evidenceSummary),
-                        row.evidence.length === 0 ? h("div", { key: "sources-empty", className: "dshd-note" }, t("没有关联来源记录，采纳前请核对依据。")) : h("div", { key: "sources", className: "dshd-sources" }, row.evidence.map(function (item) {
-                            return h("details", { key: item.id }, [
-                                h("summary", { key: "summary" }, t("来源记录 · ") + (item.verification === "read" ? t("已读到来源") : t("待核验")) + " · " + (item.kind === "session" ? t("会话") : item.kind === "user-correction" ? t("用户纠正") : t("本地资料"))),
-                                h("div", { key: "summary-text" }, item.summary || t("未提供摘要")),
-                                item.sessionId ? h("div", { key: "session", className: "dshd-note" }, t("会话：") + item.sessionId + (Number.isInteger(item.recordSeq) ? t(" · 记录 ") + item.recordSeq : "")) : null,
-                                h("div", { key: "date", className: "dshd-note" }, t("记录时间：") + formatDate(item.observedAt)),
-                                item.verificationReason ? h("div", { key: "reason", className: "dshd-note" }, t("核验说明：") + (item.verificationReason === 'live-session-source-verified' ? t("已核对当前会话原文；不代表结论正确。") : item.verificationReason)) : null,
-                                item.sourceHash ? h("code", { key: "hash", className: "dshd-cmd", title: item.sourceHash }, t("来源校验值：") + item.sourceHash) : null,
-                            ]);
-                        })),
-                    ]),
-                    props.showHoldReason === true && row.holdReasonLabel !== "" ? h("div", { key: "hold", className: "dshd-holdreason" }, t("为什么被扣下：") + row.holdReasonLabel) : null,
-                ]),
-                h(ReviewControls, { row: row, key: row.id + "@" + row.revision, onChanged: props.onChanged }),
-            ]);
-        }
-        function KnowledgeCard(props) {
-            const vm = props.vm;
-            const [stateFilter, setStateFilter] = useState("usable");
-            const [pageSize, setPageSize] = useState(5);
-            const reviewed = vm.rows.filter(function (row) { return row.state === stateFilter; });
-            const notice = knowledgeNoticeText(vm === null || vm === undefined ? null : vm.stats);
-            const noticeNode = notice === "" ? null : h("div", { className: "dshd-knotice", key: "notice", role: "status" }, notice);
-            const head = function (extra) {
-                return h("div", { className: "dshd-khead", key: "head" }, [
-                    h("h4", { key: "t" }, t("已审阅经验")),
-                    h("span", { className: "dshd-spacer", key: "s" }),
-                    extra,
-                ]);
-            };
-            if (props.error !== null && props.error !== undefined) {
-                return h("section", { className: "dshd-card dshd-kcard" }, [
-                    head(h(Btn, { key: "retry", onClick: props.onRetry, disabled: props.loading === true }, t("重试"))),
-                    h("div", { className: "dshd-hint", key: "e", role: "alert" }, t("读取经验失败：") + displayError(props.error)),
-                    h("div", { className: "dshd-note", key: "n" }, t("旧日记不受影响；修好后点「重试」。")),
-                ]);
-            }
-            if (props.empty === true) {
-                const empty = knowledgeEmptyState();
-                return h("section", { className: "dshd-card dshd-kcard" }, [
-                    h("h4", { key: "t" }, t("经验")),
-                    noticeNode,
-                    h("div", { className: "dshd-kempty", key: "e" }, [
-                        h("div", { className: "dshd-kempty-title", key: "t2" }, empty.title),
-                        h("p", { className: "dshd-kempty-body", key: "b" }, empty.body),
-                        h("p", { className: "dshd-note", key: "h" }, empty.hint),
-                    ]),
-                ]);
-            }
-            return h("section", { className: "dshd-card dshd-kcard" }, [
-                head(props.loading === true
-                    ? h("span", { className: "dshd-hint", key: "loading" }, t("加载中…"))
-                    : h("span", { className: "dshd-hint", key: "count" }, knowledgeCountText(vm.stats))),
-                noticeNode,
-                h("label", { className: "dshd-note", key: "filter" }, [t("查看 "), h("select", { "aria-label": t("经验状态"), value: stateFilter, onChange: function (event) { setStateFilter(event.target.value); setPageSize(5); } }, [
-                        h("option", { key: "usable", value: "usable" }, t("可用经验")), h("option", { key: "rejected", value: "rejected" }, t("已驳回历史")),
-                    ])]),
-                reviewed.length === 0 ? h("div", { className: "dshd-hint", key: "none" }, stateFilter === "usable" ? t("暂无可用经验；待核实的记录在下方。") : t("没有已驳回记录。")) : null,
-                h("div", { className: "dshd-krows", key: "rows" }, reviewed.slice(0, pageSize).map(function (row, index) {
-                    return h(KnowledgeRow, { key: row.id !== "" ? row.id : "k" + String(index), row: row, onChanged: props.onChanged, privacy: props.privacy === true });
-                })),
-                reviewed.length > pageSize ? h(Btn, { key: "next", onClick: function () { setPageSize(pageSize + 5); } }, t("显示更多经验")) : null,
-                vm.shown < vm.total
-                    ? h("div", { className: "dshd-note", key: "more" }, t("只显示最近 ") + String(vm.shown) + " / " + String(vm.total) + t(" 条经验。"))
-                    : null,
-                h("div", { className: "dshd-note", key: "note" }, t("采纳记录仍需满足当前任务的平台、版本与项目条件；来源已读不代表结论永远适用。")),
-            ]);
-        }
-        /** 「待核实」只读区块：candidate / disputed / stale + 被扣下的原因（复用 KnowledgeRow）。 */
-        function ReviewQueueCard(props) {
-            const vm = props.vm;
-            const [pageSize, setPageSize] = useState(5);
-            const [group, setGroup] = useState('');
-            const [selected, setSelected] = useState([]);
-            const [pending, setPending] = useState(false);
-// Update protection: dsh-dream.queue
-__stardustUpdatesGuard(React, "dsh-dream.queue", { busy: pending });
-
-            const [failure, setFailure] = useState('');
-            const [retry, setRetry] = useState(null);
-            const [globalConfirmed, setGlobalConfirmed] = useState(false);
-            const all = vm !== null && vm !== undefined && Array.isArray(vm.rows)
-                ? vm.rows.filter(function (row) { return HELD_STATES.indexOf(row.state) !== -1; })
-                : [];
-            const rows = group === '' ? all : all.filter(row => row.groupKey === group);
-            const groups = [...new Map(all.map(row => [row.groupKey, row.scopeLabel + ' · ' + t(({ preference: '偏好', procedure: '流程', pitfall: '避坑', fact: '事实' })[row.kind] || row.kind)]))];
-            const picked = rows.filter(row => selected.includes(row.id) && row.candidate && !row.conflictIds.length);
-            const globalSelection = picked.filter(row => row.isGlobal).map(row => row.id).join(',');
-            useEffect(function () { setGlobalConfirmed(false); }, [globalSelection]);
-            async function batch(action) {
-                if (pending || !picked.length)
-                    return;
-                const items = picked.map(row => ({ lessonId: row.id, expectedRevision: row.revision }));
-                const signature = JSON.stringify({ action, items });
-                const id = retry?.signature === signature ? retry.id : crypto.randomUUID();
-                setRetry({ signature, id });
-                setPending(true);
-                setFailure('');
-                try {
-                    await postAction({ operation: 'review-batch', action, items, requestId: id, confirmGlobal: globalConfirmed });
-                    setSelected([]);
-                    setRetry(null);
-                    props.onChanged?.(t('已完成所选候选的审阅。'));
-                }
-                catch (error) {
-                    setFailure(displayError(error));
-                }
-                finally {
-                    setPending(false);
-                }
-            }
-            const head = function (extra) {
-                return h("div", { className: "dshd-khead", key: "head" }, [
-                    h("h4", { key: "t" }, t("待核实")),
-                    h("span", { className: "dshd-spacer", key: "s" }),
-                    extra,
-                ]);
-            };
-            if (props.error !== null && props.error !== undefined) {
-                return h("section", { className: "dshd-card dshd-kcard" }, [
-                    head(h(Btn, { key: "retry", onClick: props.onRetry, disabled: props.loading === true }, t("重试"))),
-                    h("div", { className: "dshd-hint", key: "e", role: "alert" }, t("读取经验失败：") + displayError(props.error)),
-                ]);
-            }
-            if (props.loading === true && rows.length === 0) {
-                return h("section", { className: "dshd-card dshd-kcard" }, [
-                    head(h("span", { className: "dshd-hint", key: "l" }, t("加载中…"))),
-                ]);
-            }
-            return h("section", { className: "dshd-card dshd-kcard" }, [
-                head(rows.length === 0 ? null : h("span", { className: "dshd-hint", key: "c" }, String(rows.length) + t(" 条待核实"))),
-                all.length ? h('label', { key: 'groups', className: 'dshd-note' }, [t('项目与主题'), ' ', h('select', { 'aria-label': t('项目与主题'), value: group, disabled: pending, onChange: event => { setGroup(event.target.value); setSelected([]); setPageSize(5); } }, [h('option', { key: 'all', value: '' }, t('全部待核实')), ...groups.map(([key, label]) => h('option', { key, value: key }, label))])]) : null,
-                globalSelection ? h('label', { key: 'batch-global-confirm', className: 'dshd-note' }, [h('input', { type: 'checkbox', checked: globalConfirmed, disabled: pending, onChange: event => setGlobalConfirmed(event.target.checked) }), t('全局经验会用于所有项目；我已核对并同意。')]) : null,
-                picked.length ? h('div', { key: 'batch', className: 'dshd-kcmd' }, [h(Btn, { key: 'accept', disabled: pending || (!!globalSelection && !globalConfirmed) || new Set(picked.map(row => row.groupKey)).size > 1, onClick: () => batch('accept') }, t('批量采纳') + ' (' + picked.length + ')'), h(Btn, { key: 'reject', disabled: pending || new Set(picked.map(row => row.groupKey)).size > 1, onClick: () => batch('reject') }, t('批量驳回') + ' (' + picked.length + ')')]) : null,
-                failure ? h('p', { key: 'failure', role: 'alert' }, failure) : null,
-                all.length ? h('p', { key: 'batch-note', className: 'dshd-note' }, t('先展开核对来源、条件与例外；只批量处理同范围、同主题且无冲突的候选。')) : null,
-                rows.length === 0
-                    ? h("div", { className: "dshd-kempty", key: "empty" }, [
-                        h("div", { className: "dshd-kempty-title", key: "t" }, t("没有待核实的经验")),
-                        h("p", { className: "dshd-kempty-body", key: "b" }, reviewQueueEmptyState()),
-                    ])
-                    : h("div", { className: "dshd-krows", key: "rows" }, rows.slice(0, pageSize).map(function (row, index) {
-                        return h('div', { key: row.id || 'held-' + index }, [
-                            row.candidate && !row.conflictIds.length ? h('label', { key: 'select', className: 'dshd-note' }, [h('input', { type: 'checkbox', checked: selected.includes(row.id), disabled: pending || (!selected.includes(row.id) && selected.length >= 20), onChange: event => setSelected(event.target.checked ? [...selected, row.id] : selected.filter(id => id !== row.id)) }), ' ' + t('选中候选：') + row.title]) : null,
-                            h(KnowledgeRow, { key: 'row', row: row, onChanged: props.onChanged, privacy: props.privacy === true, showHoldReason: true }),
-                        ]);
-                    })),
-                rows.length > pageSize ? h(Btn, { key: "more", onClick: function () { setPageSize(pageSize + 5); } }, t("显示更多待核实经验")) : null,
-                h("div", { className: "dshd-note", key: "note" }, t("这些经验默认不会作为任务建议注入。先核对来源与适用范围，再决定采纳、驳回或继续复核。")),
-            ]);
-        }
-        /** 「写入记录」只读区块：<journalDir>/bridge/ 的桥接应用记录。 */
         function BridgeLogCard(props) {
             const vm = props.vm;
             const head = function (extra) {
-                return h("div", { className: "dshd-khead", key: "head" }, [
+                return h("div", { className: css['dshd-khead'], key: "head" }, [
                     h("h4", { key: "t" }, t("写入记录")),
-                    h("span", { className: "dshd-spacer", key: "s" }),
+                    h("span", { className: css['dshd-spacer'], key: "s" }),
                     extra,
                 ]);
             };
             if (props.error !== null && props.error !== undefined) {
-                return h("section", { className: "dshd-card dshd-kcard" }, [
+                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
                     head(h(Btn, { key: "retry", onClick: props.onRetry, disabled: props.loading === true }, t("重试"))),
-                    h("div", { className: "dshd-hint", key: "e", role: "alert" }, t("读取写入记录失败：") + displayError(props.error)),
+                    h("div", { className: css['dshd-hint'], key: "e", role: "alert" }, t("读取写入记录失败：") + displayError(props.error)),
                 ]);
             }
             if (props.loading === true) {
-                return h("section", { className: "dshd-card dshd-kcard" }, [
-                    head(h("span", { className: "dshd-hint", key: "l" }, t("加载中…"))),
+                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
+                    head(h("span", { className: css['dshd-hint'], key: "l" }, t("加载中…"))),
                 ]);
             }
             if (vm.rows.length === 0) {
                 const empty = bridgeEmptyState();
-                return h("section", { className: "dshd-card dshd-kcard" }, [
+                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
                     h("h4", { key: "t" }, t("写入记录")),
-                    h("div", { className: "dshd-kempty", key: "empty" }, [
-                        h("div", { className: "dshd-kempty-title", key: "t2" }, empty.title),
-                        h("p", { className: "dshd-kempty-body", key: "b" }, empty.body),
-                        h("p", { className: "dshd-note", key: "h" }, empty.hint),
+                    h("div", { className: css['dshd-kempty'], key: "empty" }, [
+                        h("div", { className: css['dshd-kempty-title'], key: "t2" }, empty.title),
+                        h("p", { className: css['dshd-kempty-body'], key: "b" }, empty.body),
+                        h("p", { className: css['dshd-note'], key: "h" }, empty.hint),
                     ]),
                 ]);
             }
-            return h("section", { className: "dshd-card dshd-kcard" }, [
-                head(h("span", { className: "dshd-hint", key: "c" }, String(vm.total) + t(" 次写入 · ") + String(vm.rollbackable) + t(" 次可回滚"))),
-                h("div", { className: "dshd-krows", key: "rows" }, vm.rows.map(function (row, index) {
-                    return h("div", { className: "dshd-bridge", key: row.id !== "" ? row.id : "bridge-" + String(index) }, [
-                        h("div", { className: "dshd-bridge-head", key: "h" }, [
-                            h("span", { className: "dshd-kbadge", key: "a" }, row.actionLabel),
-                            h("span", { className: "dshd-bridge-target", key: "t", title: row.target }, row.target),
-                            h("span", { className: "dshd-spacer", key: "s" }),
-                            h("span", { className: "dshd-klast", key: "at", title: row.atTitle }, row.atText),
+            return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
+                head(h("span", { className: css['dshd-hint'], key: "c" }, String(vm.total) + t(" 次写入 · ") + String(vm.rollbackable) + t(" 次可回滚"))),
+                h("div", { className: css['dshd-krows'], key: "rows" }, vm.rows.map(function (row, index) {
+                    return h("div", { className: css['dshd-bridge'], key: row.id !== "" ? row.id : "bridge-" + String(index) }, [
+                        h("div", { className: css['dshd-bridge-head'], key: "h" }, [
+                            h("span", { className: css['dshd-kbadge'], key: "a" }, row.actionLabel),
+                            h("span", { className: css['dshd-bridge-target'], key: "t", title: row.target }, row.target),
+                            h("span", { className: css['dshd-spacer'], key: "s" }),
+                            h("span", { className: css['dshd-klast'], key: "at", title: row.atTitle }, row.atText),
                         ]),
-                        h("div", { className: "dshd-bridge-meta", key: "m" }, [
+                        h("div", { className: css['dshd-bridge-meta'], key: "m" }, [
                             h("span", { key: "lessons", title: row.lessonsText }, t("经验：") + row.lessonsText),
                             row.beforeShort === "" ? null : h("span", { key: "before" }, t("前哈希：") + row.beforeShort),
                             row.afterShort === "" ? null : h("span", { key: "after" }, t("后哈希：") + row.afterShort),
-                            h("span", { key: "rb", className: row.rollbackable === true ? "dshd-rollback-ok" : "dshd-rollback-no" }, row.rollbackText),
+                            h("span", { key: "rb", className: row.rollbackable ? css['dshd-rollback-ok'] : css['dshd-rollback-no'] }, row.rollbackText),
                         ]),
                         h("details", { key: "backup" }, [
                             h("summary", { key: "summary" }, t("备份标识与回滚命令")),
-                            h("code", { key: "id", className: "dshd-cmd" }, row.id),
-                            row.rollbackable === true ? h("code", { key: "command", className: "dshd-cmd", tabIndex: 0 }, bridgeRollbackCommandOf(row)) : null,
+                            h("code", { key: "id", className: css['dshd-cmd'] }, row.id),
+                            row.rollbackable === true ? h("code", { key: "command", className: css['dshd-cmd'], tabIndex: 0 }, bridgeRollbackCommandOf(row)) : null,
                         ]),
                         row.rollbackable === true ? h(RollbackControl, { key: "rollback", row: row, onChanged: props.onChanged }) : null,
                     ]);
                 })),
-                vm.shown < vm.total ? h("div", { className: "dshd-note", key: "more" }, t("只显示最近 ") + String(vm.shown) + " / " + String(vm.total) + t(" 条记录。")) : null,
-                h("div", { className: "dshd-note", key: "note" }, t("回滚恢复对应备份的 Dream 管理块；块外内容保留，外部修改的管理块会停止回滚。")),
+                vm.shown < vm.total ? h("div", { className: css['dshd-note'], key: "more" }, t("只显示最近 ") + String(vm.shown) + " / " + String(vm.total) + t(" 条记录。")) : null,
+                h("div", { className: css['dshd-note'], key: "note" }, t("回滚恢复对应备份的 Dream 管理块；块外内容保留，外部修改的管理块会停止回滚。")),
             ]);
         }
         function DreamCard(props) {
@@ -1707,30 +1555,30 @@ __stardustUpdatesGuard(React, "dsh-dream.queue", { busy: pending });
             const timeText = formatDate(dream.at) + (formatTime(dream.at) === "" ? "" : " " + formatTime(dream.at));
             const clickCard = privacy ? function () { setPeek(peek !== true); } : undefined;
             return h("article", {
-                className: "dshd-dream dshd-mood-" + String(moodSlot(dream.mood)) + (privacy && peek === true ? " dshd-peek" : ""),
+                className: clsx(css['dshd-dream'], css['dshd-mood-' + moodSlot(dream.mood)], privacy && peek && css['dshd-peek']),
                 onClick: clickCard,
                 title: privacy ? t("隐私模式：点击卡片临时查看") : undefined,
             }, [
-                h("header", { className: "dshd-dream-head", key: "h" }, [
-                    h("time", { className: "dshd-time", key: "t", dateTime: dream.at === "" ? undefined : dream.at, title: dream.at === "" ? timeText : timeText + " · " + dream.at }, timeText),
-                    dreamAgo(dream, props.now) === "" ? null : h("span", { className: "dshd-ago", key: "a" }, dreamAgo(dream, props.now)),
-                    h("span", { className: "dshd-mood", key: "m", title: t("心境：") + dream.mood }, [
-                        h("i", { className: "dshd-mooddot " + toneClass(moodSlot(dream.mood)), key: "d" }),
+                h("header", { className: css['dshd-dream-head'], key: "h" }, [
+                    h("time", { className: css['dshd-time'], key: "t", dateTime: dream.at === "" ? undefined : dream.at, title: dream.at === "" ? timeText : timeText + " · " + dream.at }, timeText),
+                    dreamAgo(dream, props.now) === "" ? null : h("span", { className: css['dshd-ago'], key: "a" }, dreamAgo(dream, props.now)),
+                    h("span", { className: css['dshd-mood'], key: "m", title: t("心境：") + dream.mood }, [
+                        h("i", { className: clsx(css['dshd-mooddot'], css[toneClass(moodSlot(dream.mood))]), key: "d" }),
                         dream.mood,
                     ]),
-                    h("span", { className: "dshd-spacer", key: "s" }),
+                    h("span", { className: css['dshd-spacer'], key: "s" }),
                     collapsible ? h("button", {
                         type: "button",
-                        className: "dshd-linkbtn",
+                        className: css['dshd-linkbtn'],
                         key: "btn",
                         onClick: function (event) { if (event !== undefined && event.stopPropagation !== undefined)
                             event.stopPropagation(); setExpanded(expanded !== true); },
                     }, expanded === true ? t("收起") : t("展开全文")) : null,
                 ]),
-                h("div", { className: "dshd-reflection" + (collapsible && expanded !== true ? " dshd-clamp" : ""), key: "r" }, inlineNodes(dream.reflection, "reflection-" + String(props.index))),
-                dream.lessons.length === 0 ? null : h("ol", { className: "dshd-lessons", key: "l" }, dream.lessons.map((lesson, index) => h("li", { key: "li-" + String(index) + "-" + lesson }, [
-                    h("span", { className: "dshd-num", key: "n" }, String(index + 1)),
-                    h("span", { className: "dshd-lesson-li", key: "t" }, inlineNodes(lesson, "lesson-" + String(props.index) + "-" + String(index))),
+                h("div", { className: clsx(css['dshd-reflection'], collapsible && !expanded && css['dshd-clamp']), key: "r" }, inlineNodes(dream.reflection, "reflection-" + String(props.index))),
+                dream.lessons.length === 0 ? null : h("ol", { className: css['dshd-lessons'], key: "l" }, dream.lessons.map((lesson, index) => h("li", { key: "li-" + String(index) + "-" + lesson }, [
+                    h("span", { className: css['dshd-num'], key: "n" }, String(index + 1)),
+                    h("span", { className: css['dshd-lesson-li'], key: "t" }, inlineNodes(lesson, "lesson-" + String(props.index) + "-" + String(index))),
                 ]))),
             ]);
         }
@@ -1739,137 +1587,34 @@ __stardustUpdatesGuard(React, "dsh-dream.queue", { busy: pending });
                 h("path", { key: "p", d: "M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z" }),
             ]);
             if (props.query !== undefined && props.query !== "") {
-                return h("div", { className: "dshd-empty" }, [
+                return h("div", { className: css['dshd-empty'] }, [
                     moon,
                     h("h3", { key: "t" }, t("没有找到「") + props.query + t("」相关的梦")),
                     h("p", { key: "p" }, t("换个关键词试试，或者清空搜索看全部梦境。")),
                     props.onClear ? h("div", { key: "a" }, h(Btn, { onClick: props.onClear }, t("清空搜索"))) : null,
                 ]);
             }
-            return h("div", { className: "dshd-empty" }, [
+            return h("div", { className: css['dshd-empty'] }, [
                 moon,
                 h("h3", { key: "t" }, t("还没有梦境日记")),
                 h("p", { key: "p" }, t("自动整理的内容在「经验」页待审阅；日记可让助手复盘时单独生成。")),
-                h("div", { className: "dshd-chips", key: "c" }, [
-                    h("span", { className: "dshd-chip", key: "s1" }, t("对 agent 说「做个梦」")),
-                    h("span", { className: "dshd-chip", key: "s2" }, "dream_digest → dream_save"),
+                h("div", { className: css['dshd-chips'], key: "c" }, [
+                    h("span", { className: css['dshd-chip'], key: "s1" }, t("对 agent 说「做个梦」")),
+                    h("span", { className: css['dshd-chip'], key: "s2" }, "dream_digest → dream_save"),
                 ]),
             ]);
         }
         function Skeleton() {
-            return h("div", null, [0, 1, 2].map((index) => h("div", { className: "dshd-skel", key: String(index) })));
-        }
-        function AutomaticMemoryCard(props) {
-const [settingsOpen,setSettingsOpen] = useState(false);
-            const [value, setValue] = useState(null);
-            const [failure, setFailure] = useState(null);
-            const [pending, setPending] = useState(false);
-// Update protection: dsh-dream.automatic
-__stardustUpdatesGuard(React, "dsh-dream.automatic", { busy: pending });
-
-            const [chatId, setChatId] = useState('');
-            const a = function (zh, en) { return languageOf() === 'en' ? en : zh; };
-            useEffect(function () {
-                let alive = true, timer;
-                const controller = new AbortController();
-                async function refresh() {
-                    try {
-                        const response = await fetch(routeUrlFor('api/dsh-dream/automatic', ''), { credentials: 'same-origin', signal: controller.signal });
-                        if (!response.ok)
-                            throw new Error(a('自动功能状态暂时无法读取，请刷新重试。', 'Automatic memory status is unavailable. Refresh to retry.'));
-                        const payload = await response.json();
-                        if (alive) {
-                            setValue(payload.automatic);
-                            setFailure(null);
-                        }
-                    }
-                    catch (error) {
-                        if (alive)
-                            setFailure(error);
-                    }
-                    if (alive)
-                        timer = setTimeout(refresh, 15000);
-                }
-                refresh();
-                return function () { alive = false; clearTimeout(timer); controller.abort(); };
-            }, [props.reloadToken]);
-            async function change(body) {
-                setPending(true);
-                setFailure(null);
-                try {
-                    const result = await postAction(body);
-                    setValue(result.automatic);
-                }
-                catch (error) {
-                    setFailure(error);
-                }
-                finally {
-                    setPending(false);
-                }
-            }
-            const toggle = (key, next) => change({ operation: 'automatic', [key]: next });
-            const reasons = {
-                saved: a('已保存新候选，等待审阅', 'New candidates saved; review required'),
-                merged: a('已合并重复经验', 'Duplicate lessons merged'),
-                'nothing-useful': a('没有可复用的新经验', 'No reusable new lessons'),
-                'ordinary-chat': a('普通闲聊，已跳过', 'Ordinary chat skipped'),
-                'no-source': a('缺少可见来源，已跳过', 'No visible sources; skipped'),
-                'daily-budget': a('今天的整理预算已用完', 'Daily consolidation budget reached'),
-                cooldown: a('冷却中，轮次保留等待整理', 'Cooling down; queued turns retained'),
-                queued: a('已加入队列，安静后合并整理', 'Queued; consolidate after quiet time'),
-                disabled: a('自动整理已暂停', 'Automatic collection paused'),
-                unfinished: a('任务未正常完成，已跳过', 'Turn did not complete normally; skipped'),
-                'no-model': a('当前会话尚无可用模型', 'No model route for this session'),
-                recording: a('正在整理候选经验', 'Collecting candidate lessons'),
-                timeout: a('整理超时，本次已停止', 'Consolidation timed out and stopped'),
-                cancelled: a('已暂停辅助调用，未完成轮次保留', 'Auxiliary call stopped; unfinished turns retained'),
-                superseded: a('已有新任务，旧轮次不再整理', 'New work superseded this turn; skipped'),
-                'model-error': a('模型返回失败或无法核验，请检查 DSH 模型连接', 'Model output failed or could not be verified. Check the DSH model connection.'),
-                'input-limit': a('内容超过预算，已跳过', 'Input exceeds the budget; skipped'),
-            };
-            const last = value && value.last;
-            const chats = value?.sessions || [];
-            const chosenId = chats.some(row => row.sessionId === chatId) ? chatId : (chats[0]?.sessionId || '');
-            const chat = chats.find(row => row.sessionId === chosenId);
-            const minutes = Math.max(0, Number(value && value.cooldownMinutes) || 0);
-            const seconds = Math.ceil(minutes * 60);
-            const interval = minutes < 1 ? String(seconds) + a(' 秒', seconds === 1 ? ' second' : ' seconds') : new Intl.NumberFormat(languageOf() === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 2 }).format(minutes) + a(' 分钟', minutes === 1 ? ' minute' : ' minutes');
-            return h('div', {className:'dream-auto'},
-  h(W.Switch, {label:dreamText('自动整理','Auto collect'),checked:value?.enabled === true,disabled:pending || !value,onChange:event=>toggle('enabled',event.target.checked)}),
-  h(W.Switch, {label:dreamText('自动取回','Auto recall'),checked:value?.retrievalEnabled === true,disabled:pending || !value,onChange:event=>toggle('retrievalEnabled',event.target.checked)}),
-  h(W.IconButton, {icon:'settings',label:dreamText('自动记忆与预算','Automatic memory and limits'),onClick:()=>setSettingsOpen(true)}),
-  settingsOpen ? h(W.Dialog, {title:dreamText('自动记忆与预算','Automatic memory and limits'),closeLabel:dreamText('关闭','Close'),onClose:()=>setSettingsOpen(false)}, h('div', {className:'dream-settings-content'}, [h('p', { key: 'intro' }, a('任务结束后整理可复用经验，不用记住“做梦”口令。新经验先待审阅，不自动修改项目规则。', 'Collect reusable lessons after tasks, without a trigger phrase. New lessons await review; project rules are not changed automatically.')),
-failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
-!value ? (failure ? null : h('p', { key: 'loading' }, a('正在读取状态…', 'Loading status…'))) : h('div', { key: 'controls' }, [
-                    h('p', { key: 'status', role: 'status' }, value.problem ? a('状态异常，请检查 DSH 日志。', 'Status error. Check the DSH logs.') : value.available ? (value.running ? a('正在整理', 'Consolidating') : value.enabled === false ? a('全局默认已暂停；聊天独立设置仍生效', 'Global collection is paused; chat overrides still apply') : a('已就绪，等待符合条件的任务', 'Ready; waiting for a qualifying task')) : a('当前宿主服务尚未就绪；手动工具仍可使用。', 'Host services are not ready; manual tools remain available.')),
-                    h('label', { key: 'collect', style: { display: 'block', marginBottom: '8px' } }, [
-                        h('input', { key: 'input', type: 'checkbox', checked: value.enabled === true, disabled: pending, onChange: event => toggle('enabled', event.target.checked) }),
-                        ' ' + a('默认自动整理候选经验', 'Collect candidate lessons by default'),
-                    ]),
-                    h('label', { key: 'retrieve', style: { display: 'block' } }, [
-                        h('input', { key: 'input', type: 'checkbox', checked: value.retrievalEnabled === true, disabled: pending, onChange: event => toggle('retrievalEnabled', event.target.checked) }),
-                        ' ' + a('默认自动取回已采纳经验', 'Retrieve accepted lessons by default'),
-                    ]),
-                    h('p', { key: 'budget' }, a('今天已调用模型 ', 'Model calls today: ') + String(value.callsToday ?? 0) + ' / ' + String(value.maxCallsPerDay ?? 0) + a(' 次；每次间隔至少 ', '; at least ') + interval + a('。', ' between calls.')),
-                    h('p', { key: 'queue' }, a('待整理 ', 'Queued turns: ') + (value.pendingTurns ?? 0) + a(' 轮；安静 ', '; quiet time: ') + (value.idleSeconds ?? 60) + a(' 秒后，同项目最多合并 ', ' seconds; up to ') + (value.maxBatchTurns ?? 4) + a(' 轮。', ' turns per project in a batch.')),
-                    h(Btn, { key: 'review', onClick: props.onReview }, a('待审阅 ', 'Awaiting review: ') + String(value.candidates ?? 0)),
-                    h('details', { key: 'advanced', className: 'dshd-note' }, [
-                        h('summary', { key: 'summary', style: { cursor: 'pointer', marginTop: '10px' } }, a('聊天设置与整理预算', 'Chat controls and consolidation limits')),
-                        h(Btn, { key: 'flush', disabled: pending || !value.available || value.mainTaskRunning || !value.pendingTurns, onClick: () => change({ operation: 'automatic-flush' }) }, a('现在整理待处理轮次', 'Consolidate queued turns now')),
-                        h('p', { key: 'retention', className: 'dshd-note' }, a('手动整理仍遵守冷却和每日预算。待处理片段最多保留 24 小时、32 轮；过期 ', 'Manual consolidation respects cooldown and daily budget. Pending excerpts keep for up to 24 hours / 32 turns; expired: ') + (value.expiredTurns ?? 0) + a(' 轮，超出容量 ', '; overflow: ') + (value.overflowTurns ?? 0) + a(' 轮。', ' turns.')),
-                        chat ? h('div', { key: 'chat', className: 'dshd-reviewform' }, [
-                            h('label', { key: 'select' }, [a('聊天记忆设置', 'Chat memory settings'), h('select', { 'aria-label': a('聊天记忆设置', 'Chat memory settings'), value: chosenId, disabled: pending, onChange: event => setChatId(event.target.value) }, chats.map(row => h('option', { key: row.sessionId, value: row.sessionId }, (row.cwd || '') + ' · ' + row.sessionId.slice(0, 8))))]),
-                            ...[['use', a('使用记忆', 'Use memory')], ['contribute', a('贡献记忆', 'Contribute memory')]].map(([key, label]) => h('label', { key }, [label, h('select', { 'aria-label': label, disabled: pending, value: chat[key] === null ? 'inherit' : String(chat[key]), onChange: event => change({ operation: 'automatic-chat', sessionId: chosenId, [key]: event.target.value === 'inherit' ? null : event.target.value === 'true' }) }, [h('option', { key: 'inherit', value: 'inherit' }, a('跟随全局', 'Follow global default')), h('option', { key: 'true', value: 'true' }, a('仅此聊天开启', 'Enable for this chat')), h('option', { key: 'false', value: 'false' }, a('仅此聊天关闭', 'Disable for this chat'))])])),
-                            h('p', { key: 'note', className: 'dshd-note' }, a('两个选项独立保存；关闭贡献会移除该聊天尚未整理的片段，已有经验仍保留。', 'Both controls persist independently. Disabling contribution removes pending excerpts for this chat; existing lessons remain.')),
-                        ]) : null,
-                        h('p', { key: 'cost', className: 'dshd-note' }, a('沿用当前会话模型，会消耗模型额度；普通闲聊跳过。每次最多 ', 'Uses the current session model and its quota; ordinary chat is skipped. Up to ') + String(value.maxOutputTokens ?? 0) + a(' 个输出 token。', ' output tokens per call.')),
-                    ]),
-                    last ? h('p', { key: 'last' }, a('最近检查：', 'Last check: ') + formatDate(new Date(last.at).toISOString()) + ' ' + formatTime(new Date(last.at).toISOString()) + ' · ' + (reasons[last.reason] || a('已检查', 'Checked'))) : null,
-                ])])) : null);
+            return h("div", null, [0, 1, 2].map((index) => h("div", { className: css['dshd-skel'], key: String(index) })));
         }
         // ───────────────────────── 主面板 ─────────────────────────
         function DreamPanel({workbench=false}={}) {
             const [activeTab, setActiveTab] = useState("review");
+            const root = useRef(null);
+            const moveCandidate = useRef(null);
+            const tabId = useId();
+            const [skin, setSkin] = useDreamStyle(root);
+            const [paletteActions, setPaletteActions] = useState(null);
             const [dreams, setDreams] = useState([]);
             const [stats, setStats] = useState(null);
             const [loading, setLoading] = useState(true);
@@ -1883,12 +1628,80 @@ failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
             const [filters, setFilters] = useState({ moods: [], withLessons: false });
             const [filterOpen, setFilterOpen] = useState(false);
             const [limit, setLimit] = useState(DEFAULT_LIMIT);
-            const [knowledge, setKnowledge] = useState(null);
+            const [knowledge, setKnowledge] = useState(() => ({ data: null, revisions: new Map() }));
             const [knowledgeLoading, setKnowledgeLoading] = useState(true);
             const [knowledgeError, setKnowledgeError] = useState(null);
             const [bridge, setBridge] = useState(null);
             const [bridgeLoading, setBridgeLoading] = useState(true);
             const [bridgeError, setBridgeError] = useState(null);
+            const reload = useCallback(() => setReloadToken(value => value + 1), []);
+            const automation = useAutomaticMemory(reloadToken, reload);
+            const openPalette = useCallback(() => {
+                const buttons = [...root.current.querySelectorAll('[data-dream-command]:enabled')];
+                setPaletteActions(buttons.map(button => ({
+                    id: button.dataset.dreamCommand,
+                    label: button.textContent.trim(),
+                    shortcut: button.getAttribute('aria-keyshortcuts'),
+                    run: () => { if (button.isConnected) button.click(); },
+                })));
+            }, []);
+            function changeTab(value) {
+                if (value === activeTab) return;
+                runViewTransition(root.current, () => { setFilterOpen(false); setActiveTab(value); });
+            }
+            useEffect(() => {
+                if (!filterOpen) return;
+                const panel = root.current;
+                const doc = panel.ownerDocument;
+                function outside(event) {
+                    if (!event.target.closest?.('[data-dream-journal-filter]')) setFilterOpen(false);
+                }
+                function escape(event) {
+                    if (event.key !== 'Escape' || !panel.contains(event.target)) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setFilterOpen(false);
+                    panel.querySelector('[data-dream-journal-filter] > button')?.focus();
+                }
+                doc.addEventListener('pointerdown', outside);
+                doc.addEventListener('keydown', escape, true);
+                return () => {
+                    doc.removeEventListener('pointerdown', outside);
+                    doc.removeEventListener('keydown', escape, true);
+                };
+            }, [filterOpen]);
+            useEffect(() => {
+                const panel = root.current;
+                const doc = panel.ownerDocument;
+                function handle(event) {
+                    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || !panel.getClientRects().length || panel.closest('[inert], [hidden]')) return;
+                    const focused = doc.activeElement;
+                    if (!panel.contains(focused) && !(workbench && focused === doc.body)) return;
+                    const topLayer = [...doc.querySelectorAll('[aria-modal="true"], [role="menu"]')].at(-1);
+                    if (topLayer && !topLayer.contains(panel)) return;
+                    const key = event.key.toLowerCase();
+                    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && key === 'k') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (!event.repeat) openPalette();
+                        return;
+                    }
+                    if (activeTab !== 'review' || event.altKey || event.ctrlKey || event.metaKey || focused?.closest(editableSelector)) return;
+                    if ((key === 'j' || key === 'k') && moveCandidate.current?.(key === 'j' ? 1 : -1)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    } else if (!event.repeat && (key === 'a' || key === 'd')) {
+                        const command = panel.querySelector(key === 'a' ? '[data-dream-command="accept"]:enabled' : '[data-dream-command="reject"]:enabled');
+                        if (command) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            command.click();
+                        }
+                    }
+                }
+                doc.addEventListener('keydown', handle, true);
+                return () => doc.removeEventListener('keydown', handle, true);
+            }, [activeTab, workbench, openPalette]);
             // 搜索防抖：连续打字只发一次请求；回车立即生效。
             useEffect(function () {
                 const timer = setTimeout(function () { setQuery(queryInput.trim()); }, SEARCH_DEBOUNCE_MS);
@@ -1913,7 +1726,7 @@ failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
                     setLoading(false);
                 });
                 return function () { alive = false; };
-            }, [query, reloadToken]);
+            }, [query, limit, reloadToken]);
             // 经验区块独立取数：知识路由挂了但日记读不出来时，经验仍能显示（反之亦然）。
             useEffect(function () {
                 let alive = true;
@@ -1922,14 +1735,13 @@ failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
                 fetchKnowledge().then(function (payload) {
                     if (alive !== true)
                         return;
-                    setKnowledge(payload);
+                    setKnowledge(previous => historyAfter(previous, payload));
                     setKnowledgeLoading(false);
                 }).catch(function (failure) {
                     if (alive !== true)
                         return;
                     setKnowledgeError(failure instanceof Error ? failure : new Error(String(failure)));
                     setKnowledgeLoading(false);
-                    setKnowledge(null);
                 });
                 return function () { alive = false; };
             }, [reloadToken]);
@@ -1953,14 +1765,13 @@ failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
                 return function () { alive = false; };
             }, [reloadToken]);
             const vm = viewModelOf(dreams, stats, now);
-            const knowledgeVm = knowledge === null ? { rows: [], total: 0, shown: 0, stats: null } : normalizeKnowledge(knowledge, now);
+            const knowledgeVm = normalizeKnowledge(knowledge.data, now);
             const bridgeVm = bridge === null ? { rows: [], total: 0, shown: 0, rollbackable: 0 } : normalizeBridgeRecords(bridge, now);
             const pristine = vm.count === 0 && query === "";
             const filterCount = filterCountOf(filters);
             const visibleDreams = applyFilters(dreams, filters);
             const showFilterButton = shouldShowFilters(vm.count) || filterCount > 0;
             const canLoadMore = needsOlderDreams(vm.count, vm.total) && limit < MORE_LIMIT;
-            const reload = function () { setReloadToken(function (value) { return value + 1; }); };
             const clearSearch = function () { setQueryInput(""); setQuery(""); };
             const togglePrivacy = function () {
                 const next = privacy !== true;
@@ -1982,25 +1793,6 @@ failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
             const onChanged = function (message) { setActionNotice(message); setReloadToken(function (value) { return value + 1; }); };
             const showKnowledge = function () { if (knowledgeLoading !== true)
                 setReloadToken(function (value) { return value + 1; }); };
-            const knowledgeCard = h(KnowledgeCard, {
-                key: "knowledge",
-                vm: knowledgeVm,
-                loading: knowledgeLoading === true,
-                error: knowledgeError,
-                empty: knowledgeError === null && knowledgeLoading !== true && knowledgeVm.rows.length === 0,
-                privacy: privacy === true,
-                onRetry: showKnowledge,
-                onChanged: onChanged,
-            });
-            const reviewQueueCard = h(ReviewQueueCard, {
-                key: "review-queue",
-                vm: knowledgeVm,
-                loading: knowledgeLoading === true,
-                error: knowledgeError,
-                privacy: privacy === true,
-                onRetry: showKnowledge,
-                onChanged: onChanged,
-            });
             const showBridge = function () { if (bridgeLoading !== true)
                 setReloadToken(function (value) { return value + 1; }); };
             const bridgeLogCard = h(BridgeLogCard, {
@@ -2011,90 +1803,57 @@ failure ? h('p', { key: 'error', role: 'alert' }, displayError(failure)) : null,
                 onRetry: showBridge,
                 onChanged: onChanged,
             });
-            // 筛选 popover：点面板外任意处收起；纯 node 冒烟没有事件系统就跳过。
-            useEffect(function () {
-                if (filterOpen !== true)
-                    return function () { };
-                if (typeof document === "undefined" || document === null || typeof document.addEventListener !== "function")
-                    return function () { };
-                const onDown = function (event) {
-                    const pop = document.querySelector(".dshd-filterpop");
-                    if (pop !== null && typeof pop.contains === "function" && pop.contains(event.target) === true)
-                        return;
-                    setFilterOpen(false);
-                };
-                const onKey = function (event) {
-                    if (event.key !== "Escape")
-                        return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.stopImmediatePropagation();
-                    setFilterOpen(false);
-                    const trigger = document.querySelector(".dshd-filter button");
-                    if (trigger && typeof trigger.focus === "function")
-                        trigger.focus();
-                };
-                document.addEventListener("mousedown", onDown);
-                document.addEventListener("keydown", onKey, true);
-                return function () { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey, true); };
-            }, [filterOpen]);
-            const searchIcon = h("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", key: "i" }, [
-                h("circle", { key: "c", cx: 11, cy: 11, r: 7 }),
-                h("path", { key: "l", d: "M20 20l-3.2-3.2" }),
-            ]);
-            const toolbar = h("div", { className: "dshd-toolbar", key: "toolbar" }, [pristine || activeTab !== "journal" ? null : h("div", { className: "dshd-search", key: "search" }, [
-                    searchIcon,
-                    h("input", {
+            const toolbar = h("div", { className: css['dshd-toolbar'], key: "toolbar" }, [pristine || activeTab !== "journal" ? null : h("div", { className: css['dshd-search'], key: "search" }, [
+                    h(W.Search, {
                         key: "search-input",
-                        className: "dshd-input",
-                        type: "text",
+                        type: "search",
                         value: queryInput,
-                        placeholder: t("搜索反思与教训…"),
-                        "aria-label": t("搜索梦境"),
+                        label: t("搜索反思与教训…"),
                         onChange: function (event) { setQueryInput(event.target.value); },
                         onKeyDown: function (event) { if (event.key === "Enter")
                             setQuery(event.target.value.trim()); },
                     }),
-                    queryInput === "" ? null : h("button", {
+                    queryInput === "" ? null : h(W.IconButton, {
                         key: "clear-search",
-                        type: "button",
-                        className: "dshd-clear",
-                        "aria-label": t("清空搜索"),
+                        icon: 'close',
+                        label: t("清空搜索"),
+                        variant: 'ghost',
                         onClick: clearSearch,
-                    }, "×"),
+                    }),
                 ]),
-h("span", { className: "dshd-spacer", key: "spacer" }),
-pristine || activeTab !== "journal" ? null : h("span", { className: "dshd-hint", key: "count" }, loading === true
+h("span", { className: css['dshd-spacer'], key: "spacer" }),
+pristine || activeTab !== "journal" ? null : h("span", { className: css['dshd-hint'], key: "count" }, loading === true
                     ? t("加载中…")
                     : countTextOf(query, vm.total, vm.count, filterCount, visibleDreams.length)),
-showFilterButton === true && activeTab === "journal" ? h("div", { className: "dshd-filter", key: "filter" }, [
+showFilterButton === true && activeTab === "journal" ? h("div", { className: css['dshd-filter'], key: "filter", 'data-dream-journal-filter': true }, [
                     h(Btn, {
                         key: "btn",
                         on: filterCount > 0,
                         pressed: filterCount > 0,
+                        'aria-expanded': filterOpen,
                         onClick: function () { setFilterOpen(filterOpen !== true); },
                         title: t("筛选作用于已加载窗口，不影响全量统计"),
                     }, t("筛选") + (filterCount > 0 ? " · " + String(filterCount) : "") + " ▾"),
-                    filterOpen === true ? h("div", { className: "dshd-filterpop", key: "pop", role: "group", "aria-label": t("筛选梦境") }, [
-                        h("div", { className: "dshd-filtertitle", key: "title" }, t("筛选当前已加载的 ") + String(vm.count) + t(" 场，不影响全量统计")),
+                    filterOpen === true ? h(nativeUI().MenuSurface, { className: clsx(css['dshd-filterpop'], css.surface), key: "pop", role: "group", 'data-window-drag-exclude': true, "aria-label": t("筛选梦境") }, [
+                        h("div", { className: css['dshd-filtertitle'], key: "title" }, t("筛选当前已加载的 ") + String(vm.count) + t(" 场，不影响全量统计")),
                         h("div", { key: "moods" }, vm.moodRows.map(function (row) {
                             const on = filters.moods.indexOf(row.mood) !== -1;
-                            return h("button", {
+                            return h(nativeUI().Pill, {
                                 key: "mood-" + row.mood,
-                                type: "button",
-                                className: "dshd-chipbtn" + (on === true ? " on" : ""),
+                                className: css.filterPill,
+                                active: on,
                                 "aria-pressed": on === true ? "true" : "false",
                                 onClick: function () { toggleMoodFilter(row.mood); },
                             }, row.mood);
                         })),
-                        h("div", { key: "only" }, h("button", {
-                            type: "button",
-                            className: "dshd-chipbtn" + (filters.withLessons === true ? " on" : ""),
+                        h("div", { key: "only" }, h(nativeUI().Pill, {
+                            className: css.filterPill,
+                            active: filters.withLessons,
                             "aria-pressed": filters.withLessons === true ? "true" : "false",
                             onClick: toggleOnlyLessons,
                         }, t("只看有教训的梦"))),
-                        h("div", { className: "dshd-filterfoot", key: "foot" }, [
-                            h("button", { key: "clearbtn", type: "button", className: "dshd-linkbtn", onClick: clearFilters, disabled: filterCount === 0 }, t("清空筛选")),
+                        h("div", { className: css['dshd-filterfoot'], key: "foot" }, [
+                            h("button", { key: "clearbtn", type: "button", className: css['dshd-linkbtn'], onClick: clearFilters, disabled: filterCount === 0 }, t("清空筛选")),
                             h(Btn, { key: "done", onClick: function () { setFilterOpen(false); } }, t("完成")),
                         ]),
                     ]) : null,
@@ -2106,20 +1865,27 @@ pristine ? null : h(Btn, {
                     pressed: privacy === true,
                     title: t("显示层模糊；DOM 仍为明文，不改文件、不加密"),
                 }, privacy === true ? t("隐私模式：开") : t("隐私模式"))]);
-            const errorBox = error === null ? null : h("div", { className: "dshd-alert error", role: "alert", key: "error" }, [
+            const errorBox = error === null ? null : h("div", { className: clsx(css['dshd-alert'], css.error), role: "alert", key: "error" }, [
                 h("span", { key: "m" }, t("读取梦境日记失败：") + displayError(error)),
-                h("span", { className: "dshd-spacer", key: "s" }),
+                h("span", { className: css['dshd-spacer'], key: "s" }),
                 h(Btn, { key: "retry", onClick: reload, variant: "primary" }, t("重试")),
             ]);
             const body = function () {
-                if (activeTab === 'review' || activeTab === 'knowledge') return h(MemoryBoard, {vm:knowledgeVm,mode:activeTab === 'review' ? 'review' : 'accepted',error:knowledgeError,loading:knowledgeLoading,privacy,onRetry:showKnowledge,onChanged});
-                if (activeTab === 'bridge') return bridgeLogCard;
+                if (activeTab === 'review' || activeTab === 'knowledge') return h(MemoryBoard, {
+                    key: activeTab, vm: knowledgeVm, revisions: knowledge.revisions, reviewMode: activeTab === 'review',
+                    error: knowledgeError, loading: knowledgeLoading, privacy, onRetry: showKnowledge, onChanged,
+                    moveRef: moveCandidate, automation,
+                });
+                if (activeTab === 'bridge') return h('div', { className: css.documentPage }, bridgeLogCard);
+                if (activeTab === 'settings') return h(DreamSettings, {
+                    automation, privacy, onPrivacyChange: togglePrivacy, onReview: () => { changeTab('review'); reload(); },
+                });
                 if (loading === true && vm.count === 0)
                     return h(Skeleton, { key: "skeleton" });
                 if (vm.count === 0) {
                     if (error !== null)
                         return h("div", { key: "failed-wrap" }, [
-                            h("div", { className: "dshd-empty", key: "failed" }, [
+                            h("div", { className: css['dshd-empty'], key: "failed" }, [
                                 h("h3", { key: "t" }, t("暂时读不到梦境日记")),
                                 h("p", { key: "p" }, t("等宿主路由就绪后点上面的「重试」；如果一直失败，看一眼 DSH 日志里有没有 [dsh-dream] 告警。")),
                             ]),
@@ -2128,185 +1894,49 @@ pristine ? null : h(Btn, {
                 }
                 return h("div", { key: "content" }, [
                     vm.showTiles
-                        ? h("div", { className: "dshd-tiles", key: "tiles" }, [
+                        ? h("div", { className: css['dshd-tiles'], key: "tiles" }, [
                             h(StatTile, { key: "total", label: t("梦境总数"), value: String(vm.total) + t(" 场"), hint: vm.total > vm.count ? t("本页显示最近 ") + String(vm.count) + t(" 场") : t("全部梦境日记") }),
                             h(StatTile, { key: "span", label: t("时间跨度"), value: vm.spanText, hint: vm.spanHint, title: vm.spanFull }),
                             h(StatTile, { key: "latest", label: t("最近一场"), value: vm.latestText, hint: vm.latestDate }),
                             h(StatTile, { key: "mood", label: t("心境"), value: String(vm.moodCount) + t(" 种"), hint: vm.moodCount === 0 ? "" : t("最常见：") + vm.moodRows[0].mood }),
                         ])
-                        : h("div", { className: "dshd-headline", key: "headline" }, vm.headline),
-                    h("div", { className: "dshd-two", key: "two" }, [
+                        : h("div", { className: css['dshd-headline'], key: "headline" }, vm.headline),
+                    h("div", { className: css['dshd-two'], key: "two" }, [
                         h(MoodCard, { key: "mood", vm: vm }),
                         h(LessonCard, { key: "lessons", vm: vm }),
                     ]),
-                    h("div", { className: "dshd-listhead", key: "listhead" }, [
+                    h("div", { className: css['dshd-listhead'], key: "listhead" }, [
                         h("h4", { key: "t" }, query === "" && filterCount === 0 ? t("梦境时间线") : (query === "" ? t("筛选结果") : t("搜索结果"))),
-                        h("span", { className: "dshd-hint", key: "n" }, listHintOf(query, vm.count, filterCount, visibleDreams.length)),
+                        h("span", { className: css['dshd-hint'], key: "n" }, listHintOf(query, vm.count, filterCount, visibleDreams.length)),
                     ]),
                     visibleDreams.length === 0 && filterCount > 0
-                        ? h("div", { className: "dshd-filterempty", key: "filtered" }, [
+                        ? h("div", { className: css['dshd-filterempty'], key: "filtered" }, [
                             h("span", { key: "t" }, t("没有符合筛选的梦（筛选作用于已加载的 ") + String(vm.count) + t(" 场）。")),
-                            h("span", { className: "dshd-spacer", key: "s" }),
+                            h("span", { className: css['dshd-spacer'], key: "s" }),
                             h(Btn, { key: "clearbtn", onClick: clearFilters }, t("清空筛选")),
                         ])
-                        : h("div", { className: "dshd-timeline", key: "timeline" }, visibleDreams.map(function (dream, index) {
+                        : h("div", { className: css['dshd-timeline'], key: "timeline" }, visibleDreams.map(function (dream, index) {
                             return h(DreamCard, { key: (dream.id !== "" ? dream.id : "dream") + "#" + String(index), dream: dream, now: now, privacy: privacy, index: index });
                         })),
                 ]);
             };
-            return h(W.Page, {workbench,title:dreamText('Dream 记忆','Dream memory'),subtitle:dreamText('审阅、复用和管理任务经验。','Review, reuse and manage task experience.'),className:'dshd-root dream-workbench' + (privacy ? ' dshd-privacy' : ''),
- actions:h(React.Fragment,null,h(AutomaticMemoryCard,{reloadToken,onReview:()=>{setActiveTab('review');reload();}}),h(W.Button,{variant:'ghost',onClick:togglePrivacy,'aria-pressed':privacy,title:t('显示层模糊；DOM 仍为明文，不改文件、不加密')},privacy?t('隐私模式：开'):t('隐私模式')),h(W.IconButton,{icon:'refresh',label:t('刷新'),onClick:reload,disabled:loading || knowledgeLoading}))},
- h('style',null,DREAM_WORKBENCH_CSS),
- h(W.Status,null,actionNotice),
- h(W.Tabs,{label:dreamText('Dream 视图','Dream views'),value:activeTab,onChange:value=>{setFilterOpen(false);setActiveTab(value);},items:[
- {id:'review',label:dreamText('待审阅','Awaiting review'),count:knowledgeVm.rows.filter(row=>HELD_STATES.includes(row.state)).length},
- {id:'knowledge',label:dreamText('已采纳','Accepted')},{id:'journal',label:t('日记')},{id:'bridge',label:dreamText('规则记录','Rule history')}]},
- activeTab === 'journal' ? h('div',{className:'dream-journal'},errorBox,toolbar,body(),h('div',{className:'dshd-footer'},h('span',null,footerTextOf(query,limit,vm.total,vm.count)),canLoadMore?h(W.Button,{onClick:showMore,disabled:loading},t('显示更早的梦')):null)) : body(),
- privacy ? h('p',{className:'w-muted',role:'status'},t('隐私模式：显示层模糊；DOM 仍为明文，不改文件、不加密。点击卡片可临时查看。')) : null));
+            const reviewCount = knowledgeVm.rows.filter(row => HELD_STATES.includes(row.state)).length;
+            return h(W.Page, {
+                root, workbench, activeTab, changeTab, tabId, skin, setSkin, paletteActions, openPalette,
+                closePalette: () => setPaletteActions(null), privacy, togglePrivacy, automation, actionNotice, reviewCount,
+            }, activeTab === 'journal' ? h('div', { className: css.documentPage }, errorBox, toolbar, body(),
+                h('div', { className: css['dshd-footer'] },
+                    h('span', null, footerTextOf(query, limit, vm.total, vm.count)),
+                    canLoadMore ? h(W.Button, { onClick: showMore, disabled: loading }, t('显示更早的梦')) : null)) : body());
         }
         function DreamSection({locale,workbench=false}={}) { useLanguage(locale); return h(DreamPanel,{workbench}); }
-        /* @ui-css-start */
-        const CSS = [
-            ".dshd-root{color:var(--dsw-alias-label-primary,#111);font-size:13px;line-height:1.6}",
-            ".dshd-shell{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.08));border-radius:14px;padding:14px 16px;container-type:inline-size}",
-            ".dshd-sub{color:var(--dsw-alias-label-tertiary,#6b7280);font-size:12px;margin:4px 0 12px}",
-            ".dshd-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}",
-            ".dshd-search{position:relative;display:flex;align-items:center;flex:1;min-width:180px}",
-            ".dshd-search svg{position:absolute;left:9px;color:var(--dsw-alias-label-tertiary,#6b7280);pointer-events:none}",
-            ".dshd-input{width:100%;box-sizing:border-box;background:var(--dsw-specific-input-major,var(--dsw-alias-bg-layer-2,rgba(0,0,0,.03)));border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:9px;padding:6px 28px 6px 30px;font:inherit;color:inherit}",
-            ".dshd-input:focus{outline:2px solid var(--dsw-alias-state-business-primary,#2563eb);outline-offset:-1px}",
-            ".dshd-clear{position:absolute;right:5px;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#6b7280);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px}",
-            ".dshd-clear:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary,#111) 8%,transparent);color:var(--dsw-alias-label-primary,#111)}",
-            ".dshd-spacer{flex:1}",
-            ".dshd-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1));background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#111);border-radius:9px;padding:5px 11px;font-size:12px;cursor:pointer;transition:background .12s,border-color .12s}",
-            ".dshd-btn:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-label-primary,#111) 6%,transparent)}",
-            ".dshd-btn:disabled{opacity:.5;cursor:not-allowed}",
-            ".dshd-btn.primary{background:var(--dsw-alias-button-primary-fill,#2563eb);border-color:transparent;color:#fff}",
-            ".dshd-btn.primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#1d4ed8)}",
-            ".dshd-btn.on{border-color:var(--dsw-alias-state-warn-primary,#f59e0b);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 18%,transparent)}",
-            ".dshd-filter{position:relative}",
-            ".dshd-filterpop{position:absolute;right:0;top:calc(100% + 6px);z-index:6;width:min(280px,86vw);background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:12px;padding:10px 11px;box-shadow:var(--dsw-elevation-prominent,0 10px 28px rgba(0,0,0,.18))}",
-            ".dshd-filtertitle{font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);margin-bottom:7px}",
-            ".dshd-chipbtn{display:inline-flex;align-items:center;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));background:transparent;color:var(--dsw-alias-label-primary,#111);border-radius:999px;padding:2px 9px;font-size:12px;cursor:pointer;margin:0 6px 6px 0}",
-            ".dshd-chipbtn.on{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#2563eb) 14%,transparent);border-color:var(--dsw-alias-state-business-primary,#2563eb)}",
-            ".dshd-filterfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px}",
-            ".dshd-filterempty{display:flex;align-items:center;gap:8px;border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.03));color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            ".dshd-hint{color:var(--dsw-alias-label-tertiary,#6b7280);font-size:12px}",
-            ".dshd-note{font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);margin-top:8px}",
-            ".dshd-headline{font-size:13px;font-weight:600;margin:0 0 10px}",
-            ".dshd-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px}",
-            ".dshd-tile{background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.03));border-radius:11px;padding:9px 11px;min-width:0}",
-            ".dshd-tile-label{font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            ".dshd-tile-value{font-size:17px;font-weight:600;margin-top:1px;overflow-wrap:anywhere;line-height:1.35}",
-            ".dshd-tile-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-            ".dshd-two{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:10px;margin-bottom:16px}",
-            ".dshd-card{background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.03));border-radius:12px;padding:11px 12px;min-width:0}",
-            ".dshd-card h4{margin:0 0 8px;font-size:13px;font-weight:600}",
-            ".dshd-mblocks{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:8px}",
-            ".dshd-mblock{display:inline-block;width:12px;height:12px;border-radius:3px;flex:0 0 auto;background:var(--dsw-alias-state-business-primary,#2563eb)}",
-            ".dshd-tone-1{background:var(--dsw-alias-state-success-primary,#16a34a)}",
-            ".dshd-tone-2{background:var(--dsw-alias-state-warn-primary,#f59e0b)}",
-            ".dshd-tone-3{background:var(--dsw-alias-state-error-primary,#dc2626)}",
-            ".dshd-legend{display:flex;flex-direction:column;gap:4px}",
-            ".dshd-legend-row{display:flex;align-items:center;gap:7px;font-size:12px}",
-            ".dshd-legend-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-            ".dshd-legend-count{color:var(--dsw-alias-label-tertiary,#6b7280);font-size:11px;font-variant-numeric:tabular-nums}",
-            ".dshd-lesson{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px dashed var(--dsw-alias-border-l2,rgba(0,0,0,.08));flex-wrap:wrap}",
-            ".dshd-lesson:last-child{border-bottom:0;padding-bottom:0}",
-            ".dshd-rank{flex:0 0 auto;width:18px;height:18px;border-radius:6px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1));color:var(--dsw-alias-label-tertiary,#6b7280);font-size:11px;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}",
-            ".dshd-lesson-body{flex:1;min-width:140px;display:flex;flex-direction:column;gap:4px}",
-            ".dshd-lesson-meta{flex:0 0 auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
-            ".dshd-last{font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);white-space:nowrap}",
-            ".dshd-lesson-text{font-size:12px;word-break:break-word}",
-            ".dshd-track{display:block;height:6px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary,#111) 8%,transparent);overflow:hidden}",
-            ".dshd-fill{display:block;height:100%;border-radius:999px;background:var(--dsw-alias-state-business-primary,#2563eb);min-width:6px}",
-            ".dshd-times{flex:0 0 auto;font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);font-variant-numeric:tabular-nums}",
-            ".dshd-times b{color:var(--dsw-alias-label-primary,#111)}",
-            ".dshd-badge{flex:0 0 auto;font-size:11px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 18%,transparent);color:var(--dsw-alias-label-primary,#111);white-space:nowrap}",
-            ".dshd-listhead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:2px 0 8px}",
-            ".dshd-listhead h4{margin:0;font-size:13px;font-weight:600}",
-            ".dshd-timeline{display:flex;flex-direction:column;gap:8px}",
-            ".dshd-dream{background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.03));border-radius:12px;padding:10px 12px;border-left:3px solid var(--dsw-alias-state-business-primary,#2563eb);min-width:0}",
-            ".dshd-dream.dshd-mood-1{border-left-color:var(--dsw-alias-state-success-primary,#16a34a)}",
-            ".dshd-dream.dshd-mood-2{border-left-color:var(--dsw-alias-state-warn-primary,#f59e0b)}",
-            ".dshd-dream.dshd-mood-3{border-left-color:var(--dsw-alias-state-error-primary,#dc2626)}",
-            ".dshd-dream-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px}",
-            ".dshd-time{font-size:12px;color:var(--dsw-alias-label-tertiary,#6b7280);font-variant-numeric:tabular-nums}",
-            ".dshd-ago{font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            ".dshd-mood{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary,#111) 6%,transparent);color:var(--dsw-alias-label-primary,#111);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-            ".dshd-mooddot{width:6px;height:6px;border-radius:999px;flex:0 0 auto;background:var(--dsw-alias-state-business-primary,#2563eb)}",
-            ".dshd-linkbtn{border:0;background:transparent;color:var(--dsw-alias-state-business-primary,#2563eb);font-size:12px;cursor:pointer;padding:1px 4px;border-radius:6px}",
-            ".dshd-linkbtn:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#2563eb) 10%,transparent)}",
-            ".dshd-reflection{white-space:pre-wrap;word-break:break-word}",
-            ".dshd-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;max-height:6.4em}",
-            ".dshd-lessons{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}",
-            ".dshd-lessons li{display:flex;gap:7px;align-items:flex-start;font-size:12px}",
-            ".dshd-num{flex:0 0 auto;min-width:17px;height:17px;border-radius:5px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#2563eb) 14%,transparent);color:var(--dsw-alias-state-business-primary,#2563eb);font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}",
-            ".dshd-lesson-li{flex:1;min-width:0;word-break:break-word}",
-            ".dshd-privacy .dshd-reflection,.dshd-privacy .dshd-lessons{filter:blur(4px)}",
-            ".dshd-privacy .dshd-dream.dshd-peek .dshd-reflection,.dshd-privacy .dshd-dream.dshd-peek .dshd-lessons{filter:none}",
-            ".dshd-alert{display:flex;gap:8px;align-items:center;border-radius:10px;padding:8px 10px;font-size:12px;margin-bottom:10px;background:color-mix(in srgb,var(--dsw-alias-label-primary,#111) 5%,transparent)}",
-            ".dshd-alert.error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#dc2626) 12%,transparent);color:var(--dsw-alias-state-error-primary,#dc2626)}",
-            ".dshd-empty{padding:28px 18px;text-align:center;color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            ".dshd-empty svg{color:var(--dsw-alias-label-tertiary,#6b7280);opacity:.75}",
-            ".dshd-empty h3{color:var(--dsw-alias-label-primary,#111);margin:8px 0 6px;font-size:15px}",
-            ".dshd-empty p{margin:0 auto 10px;max-width:430px;font-size:12px}",
-            ".dshd-chips{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}",
-            ".dshd-chip{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.05));border-radius:999px;padding:2px 9px;color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            ".dshd-skel{height:58px;border-radius:12px;margin-bottom:8px;background:linear-gradient(90deg,var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04)) 25%,color-mix(in srgb,var(--dsw-alias-label-primary,#111) 10%,transparent) 37%,var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04)) 63%);background-size:400% 100%;animation:dshd-shimmer 1.4s ease infinite}",
-            "@keyframes dshd-shimmer{0%{background-position:100% 0}100%{background-position:0 0}}",
-            ".dshd-footer{margin-top:12px;display:flex;align-items:center;gap:8px;justify-content:space-between;color:var(--dsw-alias-label-tertiary,#6b7280);font-size:11px;flex-wrap:wrap}",
-            ".dshd-kcard{margin:2px 0 14px}",
-            ".dshd-khead{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}",
-            ".dshd-khead h4{margin:0;font-size:13px;font-weight:600}",
-            ".dshd-krows{display:flex;flex-direction:column;gap:7px}",
-            ".dshd-knowledge{border-left:3px solid var(--dsw-alias-label-tertiary,#6b7280);background:var(--dsw-alias-bg-layer-1,#fff);border-radius:9px;padding:8px 10px;min-width:0}",
-            ".dshd-knowledge.dshd-kstate-candidate{border-left-color:var(--dsw-alias-state-warn-primary,#f59e0b)}",
-            ".dshd-knowledge.dshd-kstate-disputed{border-left-color:var(--dsw-alias-state-error-primary,#dc2626);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#dc2626) 6%,var(--dsw-alias-bg-layer-1,#fff))}",
-            ".dshd-knowledge.dshd-kstate-usable{border-left-color:var(--dsw-alias-state-success-primary,#16a34a)}",
-            ".dshd-knowledge.dshd-kstate-stale,.dshd-knowledge.dshd-kstate-rejected,.dshd-knowledge.dshd-kstate-unknown{border-left-color:var(--dsw-alias-label-tertiary,#6b7280);opacity:.86}",
-            ".dshd-kbadge{flex:0 0 auto;font-size:11px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-label-primary,#111) 8%,transparent);white-space:nowrap}",
-            ".dshd-kstate-candidate .dshd-kbadge{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 22%,transparent)}",
-            ".dshd-kstate-disputed .dshd-kbadge{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#dc2626) 20%,transparent);color:var(--dsw-alias-state-error-primary,#dc2626)}",
-            ".dshd-kstate-usable .dshd-kbadge{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#16a34a) 18%,transparent)}",
-            ".dshd-ktitle{font-size:12px;font-weight:600;word-break:break-word}",
-            ".dshd-kmeta{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);margin-top:2px}",
-            ".dshd-kbody{margin-top:5px;display:flex;flex-direction:column;gap:3px;font-size:12px;word-break:break-word}",
-            ".dshd-kempty{padding:14px 10px;text-align:center;color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            ".dshd-kempty-title{color:var(--dsw-alias-label-primary,#111);font-weight:600;font-size:13px;margin-bottom:4px}",
-            ".dshd-kempty-body{margin:0 auto 5px;max-width:460px;font-size:12px}",
-            ".dshd-knotice{font-size:11px;color:var(--dsw-alias-label-primary,#111);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 14%,transparent);border-radius:8px;padding:5px 8px;margin-bottom:7px}",
-            ".dshd-privacy .dshd-kbody{filter:blur(4px)}",
-            ".dshd-privacy .dshd-knowledge.dshd-peek .dshd-kbody{filter:none}",
-            ".dshd-kcmd{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}",
-            ".dshd-tabs{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}",
-            ".dshd-action{font-weight:500;white-space:pre-wrap}",
-            ".dshd-kbody details summary,.dshd-bridge-row details summary{cursor:pointer;color:var(--dsw-alias-label-tertiary,#6b7280);font-size:11px}",
-            ".dshd-reviewform{margin-top:8px;padding:9px;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:8px}",
-            ".dshd-reviewform label{display:flex;flex-direction:column;gap:3px;margin-bottom:6px;font-size:12px}",
-            ".dshd-reviewform .dshd-btn,.dshd-feedback .dshd-btn{margin:4px 5px 0 0}",
-            ".dshd-diff{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;padding:10px;border-radius:6px;font:11px/1.65 ui-monospace,Consolas,monospace;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));color:inherit}",
-            ".dshd-feedback{margin-top:8px;font-size:12px}.dshd-feedback summary{cursor:pointer}.dshd-feedback label{display:flex;flex-direction:column;gap:4px;margin-top:8px}.dshd-feedback textarea{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:6px;padding:6px;max-width:100%;box-sizing:border-box}",
-            ".dshd-sources{padding:6px 0}.dshd-sources details{margin-top:6px}.dshd-reviewform{min-width:0}",
-            ".dshd-privacy .dshd-feedback,.dshd-privacy .dshd-diff{filter:blur(4px)}.dshd-privacy .dshd-knowledge.dshd-peek .dshd-feedback,.dshd-privacy .dshd-knowledge.dshd-peek .dshd-diff{filter:none}",
-            ".dshd-reviewform select,.dshd-reviewform textarea,.dshd-kcard select{background:var(--dsw-alias-bg-layer-1,#fff);color:inherit;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:6px;max-width:100%;padding:4px;font:inherit;box-sizing:border-box}",
-            ".dshd-copywrap{display:inline-flex;flex-direction:column;gap:3px;max-width:100%;align-items:flex-start}",
-            ".dshd-cmd{display:block;font-family:ui-monospace,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.04));border-radius:6px;padding:4px 7px;user-select:text;cursor:text;color:inherit;max-width:100%}",
-            ".dshd-holdreason{font-size:11px;color:var(--dsw-alias-state-warn-primary,#f59e0b);margin-top:4px}",
-            ".dshd-bridge{background:var(--dsw-alias-bg-layer-1,#fff);border-radius:9px;padding:8px 10px;border-left:3px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));min-width:0}",
-            ".dshd-bridge-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}",
-            ".dshd-bridge-target{font-size:12px;font-weight:600;word-break:break-all;min-width:0}",
-            ".dshd-bridge-meta{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--dsw-alias-label-tertiary,#6b7280);margin-top:3px}",
-            ".dshd-rollback-ok{color:var(--dsw-alias-state-success-primary,#16a34a)}",
-            ".dshd-rollback-no{color:var(--dsw-alias-label-tertiary,#6b7280)}",
-            "@container (max-width:620px){.dshd-two{grid-template-columns:1fr}.dshd-toolbar .dshd-hint{display:none}}",
-            "@media(max-width:640px){[role=dialog]:has(.dshd-root){display:flex;flex-direction:column}[role=dialog]:has(.dshd-root)>nav{display:flex;flex-direction:row;align-items:center;flex-shrink:0;gap:6px;width:auto;max-width:100%;height:auto;padding:10px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12))}[role=dialog]:has(.dshd-root)>nav>*{flex-shrink:0}[role=dialog]:has(.dshd-root)>nav>div:has(>button){display:flex;flex-direction:row;gap:6px}[role=dialog]:has(.dshd-root)>nav button{width:auto;flex-shrink:0}[role=dialog]:has(.dshd-root)>div{min-width:0;min-height:0;flex:1}.dshd-reviewform,.dshd-feedback{max-width:100%}}"
-        ].join("");
-        /* @ui-css-end */
         // ───────────────────────── 挂载 ─────────────────────────
         const inject = ["slots", "locale"];
         function apply(ctx) {
-W.register(ctx,{id:'dsh-dream.workbench',label:()=>dreamText('Dream 记忆','Dream memory'),icon:'book',component:DreamSection,inject:()=>({locale:localeService}),order:50});
+            dreamLanguage = loadDreamLanguage();
+            registerWorkbench(ctx, {
+                id: 'dsh-dream.workbench', label: () => t('Dream 记忆'), component: DreamSection, inject: () => ({ locale: localeService }),
+            });
 
             try {
                 localeService = ctx.get?.("locale") || ctx.locale;
@@ -2322,7 +1952,7 @@ W.register(ctx,{id:'dsh-dream.workbench',label:()=>dreamText('Dream 记忆','Dre
                     const style = document.createElement("style");
                     style.dataset.plugin = "dsh-dream";
                     style.dataset.pluginCss = id;
-                    style.textContent = CSS;
+                    style.textContent = styleText;
                     document.head.appendChild(style);
                     return function () { style.remove(); };
                 }, "dsh-dream: styles");
@@ -2334,7 +1964,7 @@ W.register(ctx,{id:'dsh-dream.workbench',label:()=>dreamText('Dream 记忆','Dre
                         name: "settings.section",
                         id: "dsh-dream",
                         order: 55,
-                        label: function () { return dreamText("Dream 记忆", "Dream memory"); },
+                        label: () => t('Dream 记忆'),
                         inject: function () { return { locale: localeService }; },
                     }, DreamSection);
                 });

@@ -19,7 +19,7 @@ function RedactionSlot({ type }) {
   const [open, setOpen] = useState(false);
   const name = t(SECRET_LABELS[type] ?? type);
   return h(nativeUI().Pill, {
-    className: css.redaction, active: open, 'aria-expanded': open,
+    className: css['redacted-token'], 'data-revealed': open, 'aria-expanded': open,
     onClick: () => setOpen(value => !value),
   }, '[' + t(open ? '掩码预览' : '已脱敏') + '·' + name + (open ? ' ••••••••]' : ']'));
 }
@@ -31,9 +31,14 @@ function EvidenceText({ text }) {
 
 function ReviewBlock({ index, title, children }) {
   return h('section', {
-    className: clsx(css.verifyCard, css.spotlight, css.stagger), style: { '--stagger-idx': index },
+    className: css['verify-block'], style: { '--stagger-idx': index },
     ...spotlightHandlers,
-  }, h('h3', null, title), children);
+  }, h('h3', { className: css['verify-head'] }, title), children);
+}
+
+function ScopeBadge({ row }) {
+  return h(nativeUI().Tag, { tone: 'info', className: css.scopeBadge },
+    h('span', { className: css.scopeCaption, title: row.scopeLabel }, row.projectId || row.scopeLabel));
 }
 
 function historyAfter(previous, payload) {
@@ -92,50 +97,56 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
   const previous = base ? normalizeKnowledge({ lessons: [base] }, new Date(), 1).rows[0] : null;
   const canCompare = previous || (reviewMode && row.revision >= 1);
   const compareLabel = previous ? t('修订对比') : t('审阅变更预览');
+  const sourcesRead = row.evidence.length > 0 && row.evidence.every(source => source.verification === 'read');
+  const toolbar = h('div', { className: css.meta },
+    h(ScopeBadge, { row }),
+    h('span', null, 'v' + row.revision),
+    privacy ? h(W.Button, { variant: 'ghost', size: 'sm', onClick: () => setPeek(!peek), 'aria-pressed': peek },
+      t(peek ? '重新模糊' : '临时查看内容')) : null);
   return h('article', { className: clsx(css.inspectorContent, masked && css.masked) },
-    h('header', { className: css.inspectorHeader },
-      h('div', { className: css.inspectorTitle },
-        h('h2', { tabIndex: -1, 'data-dream-detail-title': true, className: css.privateText }, row.title),
-        h('div', { className: css.meta }, h(W.Icon, { name: 'folder' }),
-          h('span', { className: css.scopeCaption, title: row.scopeLabel }, row.scopeLabel),
-          h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel), h('span', null, 'v' + row.revision))),
-      h('div', { className: css.actions },
-        privacy ? h(W.Button, { variant: 'ghost', onClick: () => setPeek(!peek), 'aria-pressed': peek },
-          t(peek ? '重新模糊' : '临时查看内容')) : null,
+    h(ReviewControls, { row, key: row.id + '@' + row.revision, shortcuts: reviewMode, masked, batchPending, onChanged, onExit, toolbar },
+      h('div', { className: css['review-stepper'] },
+        h('span', { className: clsx(css['step-chip'], sourcesRead && css.stepDone) },
+          h(W.Icon, { name: sourcesRead ? 'check' : 'info', size: 13 }), t(sourcesRead ? '已读到来源' : '待核验')),
+        h('span', { className: css['step-sep'], 'aria-hidden': true }, '→'),
+        h('span', { className: css['step-chip'] }, t('适用范围')),
+        h('span', { className: css['step-sep'], 'aria-hidden': true }, '→'),
+        h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel),
         canCompare ? h(W.Button, {
           icon: 'diff', size: 'sm', disabled: masked, onClick: () => setDiffOpen(true),
-          'data-dream-command': 'diff',
-        }, compareLabel) : null)),
-    h('div', { className: clsx(css.verification, css.privateText) },
-      h(ReviewBlock, { index: 0, title: t('来源与证据') },
-        row.evidence.length ? row.evidence.map(source => h('div', { key: source.id, className: css.evidence },
-          h('blockquote', { className: css.quote }, h(EvidenceText, { text: source.summary || t('未提供摘要') })),
-          h('details', null, h('summary', null, t('查看来源记录')),
-            h('p', { className: css.muted }, (source.verification === 'read' ? t('已读到来源') : t('待核验')) + ' · ' + t(source.kind === 'session' ? '会话' : source.kind === 'user-correction' ? '用户纠正' : '本地资料')),
-            source.sessionId ? h('p', { className: css.muted }, t('会话：') + source.sessionId + (source.recordSeq != null ? t(' · 记录 ') + source.recordSeq : '')) : null,
-            h('p', { className: css.muted }, t('记录时间：') + formatDate(source.observedAt)),
-            source.verificationReason ? h('p', { className: css.muted }, source.verificationReason === 'live-session-source-verified' ? t('已核对当前会话原文；不代表结论正确。') : source.verificationReason) : null,
-            source.sourceHash ? h('code', { className: css.sourceHash }, t('来源校验值：') + source.sourceHash) : null))) : null,
-        row.evidence.length ? h('details', { className: css.evidenceSummary },
-          h('summary', null, t('证据摘要')),
-          h('p', { className: css.muted }, h(EvidenceText, { text: row.evidenceSummary }))) :
-          h('p', { className: css.muted }, t(row.state === 'usable' ? '未关联来源记录，使用前请核对依据。' : '没有关联来源记录，采纳前请核对依据。'))),
-      h(ReviewBlock, { index: 1, title: t('建议行动') }, h('p', null, row.action || t('未标注具体动作'))),
-      h(ReviewBlock, { index: 2, title: t('范围、条件与例外') },
-        h('dl', { className: css.scopeFacts },
-          h('dt', null, t('适用范围')), h('dd', null, row.scopeLabel),
-          h('dt', null, t('适用条件')), h('dd', null, row.when || t('未标注适用条件')),
-          row.applicability ? h(React.Fragment, null, h('dt', null, t('适用环境')), h('dd', null, row.applicability)) : null,
-          h('dt', null, t('例外与补充')), h('dd', null, row.exceptions.length ? row.exceptions.join(' · ') : t('未记录例外'))),
-        h('p', { className: css.muted, title: row.lastTitle }, t('最近核验：') + row.lastText),
-        row.lastRetrievedAt ? h('p', { className: css.muted, title: t('取回仅表示提供参考，不等于重新核验。') }, t('最近取回：') + formatDate(row.lastRetrievedAt) + ' ' + formatTime(row.lastRetrievedAt)) : null)),
-    row.holdReasonLabel ? h(W.Status, null, t('为什么被扣下：') + row.holdReasonLabel) : null,
-    h(ReviewControls, { row, key: row.id + '@' + row.revision, shortcuts: reviewMode, masked, batchPending, onChanged, onExit }),
+          'data-dream-command': 'diff', className: css.diffShortcut,
+        }, compareLabel) : null),
+      h('div', { className: css.privateText },
+        h(ReviewBlock, { index: 0, title: t('建议行动') },
+          h('h2', { tabIndex: -1, 'data-dream-detail-title': true, className: css.inspectorTitle }, row.title),
+          h('p', null, row.action || t('未标注具体动作'))),
+        h(ReviewBlock, { index: 1, title: t('来源与证据') },
+          row.evidence.length ? row.evidence.map(source => h('div', { key: source.id, className: css.evidence },
+            h('blockquote', { className: css['evidence-quote'] }, h(EvidenceText, { text: source.summary || t('未提供摘要') })),
+            h('details', null, h('summary', null, t('查看来源记录')),
+              h('p', { className: css.muted }, (source.verification === 'read' ? t('已读到来源') : t('待核验')) + ' · ' + t(source.kind === 'session' ? '会话' : source.kind === 'user-correction' ? '用户纠正' : '本地资料')),
+              source.sessionId ? h('p', { className: css.muted }, t('会话：') + source.sessionId + (source.recordSeq != null ? t(' · 记录 ') + source.recordSeq : '')) : null,
+              h('p', { className: css.muted }, t('记录时间：') + formatDate(source.observedAt)),
+              source.verificationReason ? h('p', { className: css.muted }, source.verificationReason === 'live-session-source-verified' ? t('已核对当前会话原文；不代表结论正确。') : source.verificationReason) : null,
+              source.sourceHash ? h('code', { className: css.sourceHash }, t('来源校验值：') + source.sourceHash) : null))) : null,
+          row.evidence.length ? h('details', { className: css.evidenceSummary },
+            h('summary', null, t('证据摘要')),
+            h('p', { className: css.muted }, h(EvidenceText, { text: row.evidenceSummary }))) :
+            h('p', { className: css.muted }, t(row.state === 'usable' ? '未关联来源记录，使用前请核对依据。' : '没有关联来源记录，采纳前请核对依据。'))),
+        h(ReviewBlock, { index: 2, title: t('范围、条件与例外') },
+          h('dl', { className: css.scopeFacts },
+            h('dt', null, t('适用范围')), h('dd', null, row.scopeLabel),
+            h('dt', null, t('适用条件')), h('dd', null, row.when || t('未标注适用条件')),
+            row.applicability ? h(React.Fragment, null, h('dt', null, t('适用环境')), h('dd', null, row.applicability)) : null,
+            h('dt', null, t('例外与补充')), h('dd', null, row.exceptions.length ? row.exceptions.join(' · ') : t('未记录例外'))),
+          h('p', { className: css.muted, title: row.lastTitle }, t('最近核验：') + row.lastText),
+          row.lastRetrievedAt ? h('p', { className: css.muted, title: t('取回仅表示提供参考，不等于重新核验。') }, t('最近取回：') + formatDate(row.lastRetrievedAt) + ' ' + formatTime(row.lastRetrievedAt)) : null)),
+      row.holdReasonLabel ? h(W.Status, null, t('为什么被扣下：') + row.holdReasonLabel) : null),
     diffOpen && !masked ? h(LessonDiffDialog, { row, base: previous, onClose: () => setDiffOpen(false) }) : null);
 }
 
 function ColumnDivider({ splitRef, listId, listRef, detailRef }) {
-  const [width, setWidth] = useState(316);
+  const [width, setWidth] = useState(340);
   const drag = useRef(null);
   const left = useRef(0);
   useLayoutEffect(() => {
@@ -172,7 +183,7 @@ function ColumnDivider({ splitRef, listId, listRef, detailRef }) {
     event.preventDefault();
   }
   return h('div', {
-    className: css.divider, tabIndex: 0, role: 'separator', 'aria-orientation': 'vertical', 'aria-controls': listId,
+    className: css['pane-resizer'], tabIndex: 0, role: 'separator', 'aria-orientation': 'vertical', 'aria-controls': listId,
     'aria-label': t('调整候选列表宽度'), 'aria-valuenow': width, 'aria-valuemin': LIST_MIN_WIDTH, 'aria-valuemax': LIST_MAX_WIDTH,
     onKeyDown: keys, onPointerDown: start,
     onPointerMove: event => { if (event.pointerId === drag.current) resize(event.clientX - left.current); },
@@ -193,7 +204,7 @@ function playRowExit(node, action) {
       resolve();
     }
     function onEnd(event) {
-      if (event.target === node && event.animationName.includes('exit')) done();
+      if (event.target === node && /dshAdoptSweep|dshDiscardCollapse/.test(event.animationName)) done();
     }
     node.addEventListener('animationend', onEnd);
     node.addEventListener('animationcancel', onEnd);
@@ -202,7 +213,7 @@ function playRowExit(node, action) {
 
 function CandidateRow({ row, index, active, selected, disabled, onSelect, onOpen, privacy }) {
   return h('div', {
-    className: clsx(css.candidate, css.stagger, css.spotlight, privacy && css.maskedRow),
+    className: clsx(css['cand-row'], privacy && css.maskedRow),
     'data-dream-row': row.id, 'data-active': active, style: { '--stagger-idx': Math.min(index, 12) }, ...spotlightHandlers,
   },
   onSelect ? h('input', {
@@ -210,11 +221,11 @@ function CandidateRow({ row, index, active, selected, disabled, onSelect, onOpen
     'aria-label': privacy ? t('选中候选') : t('选中候选：') + row.title, className: css.batchCheckbox,
   }) : null,
   h('button', { type: 'button', 'aria-pressed': active, onClick: onOpen, className: css.candidateButton },
-    h('span', { className: css.candidateTitle }, row.title),
-    h('span', { className: css.candidateMeta },
-      h('span', { className: css.scopeCaption, title: row.scopeLabel }, row.scopeLabel),
-      h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel)),
-    h('span', { className: css.candidateExcerpt }, row.when || row.action)));
+    h('span', { className: css['cand-title'] }, row.title),
+    h('span', { className: css['cand-summary'] }, row.action || row.when),
+    h('span', { className: css['cand-tags'] },
+      h(ScopeBadge, { row }),
+      h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel))));
 }
 
 function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onChanged, onRetry, moveRef, automation }) {
@@ -239,8 +250,20 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   __stardustUpdatesGuard(React, "dsh-dream.memory-board", { busy: pending });
 
   const all = vm.rows.filter(row => reviewMode ? HELD_STATES.includes(row.state) : row.state === (history ? 'rejected' : 'usable'));
-  const groups = [...new Map(all.map(row => [row.groupKey, row.scopeLabel + ' · ' + t(LESSON_KINDS[row.kind] ?? row.kind)]))];
-  const groupFilter = groups.some(([key]) => key === group) ? group : '';
+  const groups = new Map();
+  for (const row of all) {
+    const option = groups.get(row.groupKey);
+    if (option) option.count++;
+    else {
+      const kind = t(LESSON_KINDS[row.kind] ?? row.kind);
+      groups.set(row.groupKey, {
+        label: row.scopeLabel + ' · ' + kind,
+        shortLabel: (row.projectId || row.scopeLabel) + ' · ' + kind,
+        count: 1,
+      });
+    }
+  }
+  const groupFilter = groups.has(group) ? group : '';
   const needle = search.trim().toLocaleLowerCase();
   const rows = all.filter(row => (!groupFilter || row.groupKey === groupFilter) &&
     (!needle || [row.title, row.when, row.action, row.scopeLabel].join(' ').toLocaleLowerCase().includes(needle)));
@@ -263,6 +286,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     if (!focusNext.current) return;
     focusNext.current = false;
     if (detailRef.current?.getClientRects().length && !listRef.current?.getClientRects().length) {
+      splitRef.current.parentElement.scrollTop = 0;
       detailRef.current.querySelector('[data-dream-detail-title]')?.focus({ preventScroll: true });
     } else if (active) {
       const node = rowNode(active.id);
@@ -330,7 +354,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     h('span', null, t('项目与主题')),
     h('select', { value: groupFilter, disabled: pending, onChange: event => changeGroup(event.target.value) },
       h('option', { value: '' }, t('全部项目与主题')),
-      groups.map(([key, label]) => h('option', { key, value: key }, label))));
+      Array.from(groups, ([key, { label }]) => h('option', { key, value: key }, label))));
   const listEmpty = error ? h(W.Empty, { title: t('暂时读不到经验'), action: h(W.Button, { onClick: onRetry, disabled: loading }, t('重试')) }, displayError(error))
     : loading && !all.length ? h(W.Empty, { title: t('加载中…') })
     : !rows.length ? h(W.Empty, {
@@ -339,16 +363,29 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     }) : null;
 
   return h('div', {
-    className: css.board, ref: splitRef, 'data-review': reviewMode, 'data-detail': mobileDetail,
+    className: css['workbench-grid'], ref: splitRef, 'data-review': reviewMode, 'data-detail': mobileDetail,
   },
-    reviewMode ? h('aside', { className: css.rail, 'aria-label': t('审阅筛选与自动记忆') },
-      h('section', { className: clsx(css.settingsCard, css.spotlight), ...spotlightHandlers },
-        h('h2', null, t('自动记忆')), h(AutomaticSwitches, { automation }),
-        h('p', { className: css.muted }, t('候选经验由你确认采纳。')),
-        h(W.Status, { tone: 'error' }, automation.failure ? displayError(automation.failure) : null)),
-      scopePicker) : null,
-    h('section', { className: css.candidatePane, ref: listRef, id: listId, 'aria-label': t(reviewMode ? '候选经验' : '已采纳') },
-      h('div', { className: css.listToolbar },
+    reviewMode ? h('aside', { className: css['pane-rail'], 'aria-label': t('审阅筛选与自动记忆') },
+      h('div', { className: css['rail-scroll'] },
+        h('section', { className: css['control-card'], ...spotlightHandlers },
+          h(AutomaticSwitches, { automation }),
+          h('p', { className: css.muted }, t('候选经验由你确认采纳。')),
+          h(W.Status, { tone: 'error' }, automation.failure ? displayError(automation.failure) : null)),
+        h('div', { className: css.scopeFilters, role: 'group', 'aria-label': t('项目与主题') },
+          h('h2', { className: css['section-head'] }, t('项目与主题')),
+          [['', { label: t('全部项目与主题'), count: all.length }], ...groups].map(([key, { label, shortLabel, count }]) =>
+            h(W.Button, {
+              key, variant: 'ghost', size: 'sm', disabled: pending, className: css['nav-item'],
+              'aria-pressed': groupFilter === key, title: label, onClick: () => changeGroup(key),
+            }, h('span', { className: css.scopeCaption }, shortLabel || label),
+            h('span', { className: css['count-pill'] }, count)))),
+        h('div', { className: css.mobileScope }, scopePicker)),
+      h('footer', { className: css['rail-footer'] },
+        h('span', null, h('kbd', null, 'J'), '/', h('kbd', null, 'K'), ' ', t('切换候选')),
+        h('span', null, h('kbd', null, 'A'), ' ', t('确认采纳')),
+        h('span', null, h('kbd', null, 'D'), ' ', t('丢弃')))) : null,
+    h('section', { className: css['pane-list'], ref: listRef, id: listId, 'aria-label': t(reviewMode ? '候选经验' : '已采纳') },
+      h('div', { className: css['list-toolbar'] },
         h(W.Search, {
           type: 'search', label: t('搜索经验'), value: search, disabled: pending,
           onChange: event => { setSearch(event.target.value); setLimit(LIST_PAGE_SIZE); setActiveId(null); },
@@ -368,7 +405,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
           h(W.Button, { variant: 'primary', disabled: pending || !sameGroup || !!globalSelection && !confirmed, onClick: () => batch('accept') }, t('批量采纳')),
           h(W.Button, { disabled: pending || !sameGroup, onClick: () => batch('reject') }, t('批量驳回'))),
         h(W.Status, { tone: 'error' }, failure)) : null,
-      h('div', { className: css.candidateList, 'aria-busy': loading || pending }, listEmpty ||
+      h('div', { className: css['candidate-scroll'], 'aria-busy': loading || pending }, listEmpty ||
         visible.map((row, index) => h(CandidateRow, {
           key: row.id, row, index, active: row.id === active?.id, selected: selected.includes(row.id), privacy,
           onOpen: () => select(row),
@@ -379,11 +416,9 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
           } : null,
         })),
         visible.length < rows.length ? h(W.Button, { className: css.more, onClick: () => setLimit(limit + LIST_PAGE_SIZE) }, t('显示更多经验')) : null),
-      h('footer', { className: css.listFooter },
-        h('span', null, t('显示') + ' ' + visible.length + ' / ' + rows.length),
-        reviewMode ? h('span', { title: t('切换候选') }, h('kbd', null, 'J'), ' ', h('kbd', null, 'K')) : null)),
+      h('footer', { className: css.listFooter }, t('显示') + ' ' + visible.length + ' / ' + rows.length)),
     h(ColumnDivider, { splitRef, listId, listRef, detailRef }),
-    h('section', { className: css.inspector, ref: detailRef, 'aria-label': t('经验详情') },
+    h('section', { className: css['pane-inspector'], ref: detailRef, 'aria-label': t('经验详情') },
       mobileDetail ? h(W.Button, { className: css.back, variant: 'ghost', icon: 'left', onClick: () => {
         mobileReturn.current = active.id;
         setActiveId(null);

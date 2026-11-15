@@ -1386,13 +1386,13 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                 setFeedbackRetry({ signature: signature, id: requestId });
                 return submit({ operation: "feedback", lessonId: row.id, expectedRevision: row.revision, vote: vote, requestId: requestId, ...(feedbackNote.trim() === "" ? {} : { note: feedbackNote.trim() }) }, t("已记录使用反馈；「") + row.title + t("」的审阅状态保持原样。"));
             };
-            return h("div", { className: css['dshd-review'], role: "group", "aria-label": row.title + t("的操作"), onClick: function (event) { event.stopPropagation(); } }, [
-                needsGlobalConfirmation ? h('label', { key: 'global-confirm', className: clsx(css.checkLabel, css['dshd-note']) }, [h('input', { type: 'checkbox', checked: globalConfirmed, disabled: reviewBusy, onChange: event => setGlobalConfirmed(event.target.checked) }), t('全局经验会用于所有项目；我已核对并同意。')]) : null,
-                h("div", { className: css['dshd-kcmd'], key: "buttons" }, [
+            return h(React.Fragment, null,
+              h("header", { className: css['inspector-toolbar'] }, props.toolbar,
+                h("div", { className: css.actions, role: "group", "aria-label": row.title + t("的操作") }, [
                     ...commands.filter(function (item) { return item[0] !== "resolve-conflict" && item[0] !== "mark-stale"; }).map(function (item) {
                         const shortcut = props.shortcuts && ({ accept: 'A', reject: 'D' })[item[0]];
                         return h(Btn, {
-                            key: item[0], variant: item[0] === 'accept' ? 'primary' : undefined,
+                            key: item[0], size: 'sm', variant: item[0] === 'accept' ? 'primary' : undefined,
                             icon: item[0] === 'accept' ? 'check' : item[0] === 'reject' ? 'trash' : undefined,
                             className: item[0] === 'reject' ? css.danger : undefined,
                             disabled: reviewBusy || row.revision < 1 || (item[0] === 'accept' && row.isGlobal && !globalConfirmed),
@@ -1401,10 +1401,12 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                             'aria-keyshortcuts': shortcut || undefined,
                         }, item[1]);
                     }),
-                    h(Btn, { key: "review", disabled: reviewBusy, onClick: function () { setOpen(!open); }, "aria-expanded": open }, open ? t("收起审阅") : row.state === "disputed" ? t("处理冲突") : t("更多审阅操作")),
-                    row.bridgeable === true && row.workspaceRoot !== "" ? h(Btn, { key: "preview", disabled: reviewBusy || props.masked, icon: 'diff', "data-dream-command": 'bridge-diff', onClick: function () { submit({ operation: "preview", lessonId: row.id, expectedRevision: row.revision }, "", true); } }, t("预览规则变更")) : null,
+                    h(Btn, { key: "review", size: 'sm', disabled: reviewBusy, onClick: function () { setOpen(!open); }, "aria-expanded": open }, open ? t("收起审阅") : row.state === "disputed" ? t("处理冲突") : t("更多审阅操作")),
+                    row.bridgeable === true && row.workspaceRoot !== "" ? h(Btn, { key: "preview", size: 'sm', disabled: reviewBusy || props.masked, icon: 'diff', "data-dream-command": 'bridge-diff', onClick: function () { submit({ operation: "preview", lessonId: row.id, expectedRevision: row.revision }, "", true); } }, t("预览规则变更")) : null,
                     row.bridgeable === true && row.workspaceRoot === "" ? h(CopyCommand, { key: "preview-command", command: bridgePreviewCommandOf(row.id, row.projectId, row.workspaceRoot), label: t("复制项目预览命令") }) : null,
-                ]),
+                ])),
+              h("div", { className: css['inspector-scroll'] }, [
+                needsGlobalConfirmation ? h('label', { key: 'global-confirm', className: clsx(css.checkLabel, css['dshd-note']) }, [h('input', { type: 'checkbox', checked: globalConfirmed, disabled: reviewBusy, onChange: event => setGlobalConfirmed(event.target.checked) }), t('全局经验会用于所有项目；我已核对并同意。')]) : null,
                 pending ? h("div", { key: "pending", role: "status", className: css['dshd-note'] }, t("正在处理…")) : null,
                 error !== "" ? h("div", { key: "error", role: "alert", className: css['dshd-hint'] }, [error, h(Btn, { key: "refresh", disabled: pending, onClick: function () { if (props.onChanged)
                             props.onChanged(t("已刷新经验列表。")); } }, t("刷新列表"))]) : null,
@@ -1428,6 +1430,7 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                     h(Btn, { key: "confirm", disabled: reviewBusy || command === "" || (!globalConfirmed && ((effectiveAction === 'accept' && row.isGlobal) || (effectiveAction === 'resolve-conflict' && (row.isGlobal || row.hasGlobalConflicts)))), onClick: function () { review(effectiveAction); }, variant: "primary" }, t("确认审阅")),
                     h("details", { key: "fallback" }, [h("summary", { key: "summary" }, t("在对话里处理")), command === "" ? h("div", { key: "hint", className: css['dshd-note'] }, t("选择冲突经验并填写处理依据后即可处理。")) : h(CopyCommand, { key: "copy", command: command, label: t("复制审阅命令") })]),
                 ]) : null,
+                h(React.Fragment, { key: 'checks' }, props.children),
                 preview && !props.masked ? h(W.Dialog, { key: "preview", title: t("规则变更预览"), busy: pending, onClose: () => setPreview(null) }, [
                     h("div", { key: "target", className: css['dshd-note'] }, t("目标：") + preview.resolvedPath),
                     h("pre", { key: "diff", className: css['dshd-diff'], tabIndex: 0 }, preview.diff
@@ -1451,7 +1454,7 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                         return h("div", { key: "recent-" + index, className: css['dshd-note'] }, formatDate(item.at) + " · " + (item.vote === "useful" ? t("有用") : t("不适用")) + (item.note ? " · " + item.note : ""));
                     }) : []),
                 ]),
-            ]);
+              ]));
         }
         function RollbackControl(props) {
             const [confirm, setConfirm] = useState(false);

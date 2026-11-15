@@ -160,9 +160,9 @@ function useDreamStyle(transitionRef) {
 
 function SkinSwitcher({ value, onChange }) {
   const { Pill } = nativeUI();
-  return h('div', { className: css.skinSwitcher, role: 'group', 'aria-label': t('工作台皮肤') },
+  return h('div', { className: css['style-switcher-pill'], role: 'group', 'aria-label': t('工作台皮肤') },
     DREAM_STYLES.map(style => h(Pill, {
-      key: style.value, className: css.skin, active: value === style.value,
+      key: style.value, className: css['style-preset-btn'],
       'aria-pressed': value === style.value, 'data-style': style.value, onClick: () => onChange(style.value),
     }, t(style.label))));
 }
@@ -226,7 +226,6 @@ function DreamChrome({
   root, workbench, activeTab, changeTab, tabId, skin, setSkin, paletteActions, openPalette, closePalette,
   privacy, togglePrivacy, automation, actionNotice, reviewCount, children,
 }) {
-  const [view, updates] = React.Children.toArray(children);
   const panelId = tabId + '-panel';
   const tabs = DREAM_TABS.map(([value, label]) => ({
     value, id: tabId + '-' + value, panelId,
@@ -240,30 +239,35 @@ function DreamChrome({
     ...DREAM_STYLES.map(style => ({ id: style.value, label: t(style.label), run: () => setSkin(style.value) })),
   ] : null;
   return h('section', {
-    ref: root, className: clsx(css.shell, privacy && css['dshd-privacy']),
+    ref: root, className: clsx(css['app-shell'], privacy && css['dshd-privacy']),
     'data-ds-style': skin, 'data-main': workbench,
   },
     h('header', { className: css.topbar },
-      h('div', { className: css.brand }, h('span', { className: css.brandIcon }, h(Icon, { name: 'sparkle' })),
-        h('h1', null, t('Dream 记忆'))),
-      h(nativeUI().SegmentedTabs, {
-        label: t('Dream 视图'), value: activeTab, onChange: changeTab, items: tabs, size: 'sm', className: css.tabs,
-      }),
-      h('div', { className: css.topActions },
+      h('div', { className: css['topbar-left'] },
+        h('div', { className: css['plugin-brand'] },
+          h('span', { className: css['plugin-badge'], 'aria-hidden': true },
+            h('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
+              h('path', { d: 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z' }),
+              h('path', { d: 'M19 3v4M21 5h-4' }))),
+          h('h1', null, t('Dream 记忆'))),
+        h(nativeUI().SegmentedTabs, {
+          label: t('Dream 视图'), value: activeTab, onChange: changeTab, items: tabs, size: 'sm', className: css['view-tabs'],
+        })),
+      h('div', { className: css['topbar-right'] },
         h(Button, {
           onClick: openPalette, size: 'sm', 'aria-label': t('命令面板'), title: t('命令面板'),
           'aria-haspopup': 'dialog', 'aria-keyshortcuts': 'Meta+K Control+K',
         }, h('kbd', null, shortcut)),
-        h(SkinSwitcher, { value: skin, onChange: setSkin }),
-        h(IconButton, { icon: 'shield', size: 'sm', label: t('隐私模式'), 'aria-pressed': privacy, onClick: togglePrivacy }),
         h(Button, {
           icon: 'sparkle', size: 'sm', variant: 'primary', disabled: !automation.canFlush,
           onClick: () => automation.change({ operation: 'automatic-flush' }),
           'data-dream-command': 'flush', title: t('现在整理待处理轮次'),
-        }, t('立即整理')))),
+        }, t('立即整理')),
+        h(SkinSwitcher, { value: skin, onChange: setSkin }),
+        h(IconButton, { icon: 'shield', size: 'sm', label: t('隐私模式'), 'aria-pressed': privacy, onClick: togglePrivacy }))),
     actionNotice ? h('div', { className: css.pageStatus }, h(Status, { tone: 'success' }, actionNotice)) : null,
-    h('section', { id: panelId, role: 'tabpanel', 'aria-labelledby': tabId + '-' + activeTab, className: css.tabPanel },
-      view, activeTab === 'settings' && updates ? h('div', { className: css.updatesRegion }, updates) : null),
+    h('div', { id: panelId, role: 'tabpanel', 'aria-labelledby': tabId + '-' + activeTab, className: css['workspace-body'] },
+      children),
     privacy ? h('p', { className: clsx(css.muted, css.privacyStatus), role: 'status' },
       t('隐私模式：显示层模糊；DOM 仍为明文，不改文件、不加密。点击卡片可临时查看。')) : null,
     commands ? h(CommandPalette, { commands, onClose: closePalette }) : null);

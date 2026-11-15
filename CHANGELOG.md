@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.15.1 (2026-11-16)
+
+- 将原版 HTML 的顶栏、三栏审阅、四套皮肤和动效直接移植到 Dream 工作台。范围筛选、审阅按钮与核查卡片接入现有数据和宿主控件。
+- Port the original HTML workbench layout, four styles and motion into Dream. Scope filters, review actions and verification cards use existing Dream data and native Harness controls.
+
 ## 0.15.0 (2026-11-15)
 
 - Dream 工作台改用 DeepSeek Harness 原生控件，提供独立皮肤、三栏审阅、键盘命令面板、脱敏槽位预览和修订对比。

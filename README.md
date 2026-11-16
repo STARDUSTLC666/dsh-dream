@@ -23,7 +23,7 @@
 
 ## 看看怎么用
 
-![在 Dream 工作台核对候选来源、确认采纳并查看已采纳经验](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif?v=0.15.1)
+![在 Dream 工作台核对候选来源、确认采纳并查看已采纳经验](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/16c2cc44cff0e89310e858f3be93a1593e1c52ad/docs/assets/intro/review-steps.gif)
 
 演示画面来自 Dream 0.15.1 的工作台。展开候选核对来源与适用范围，确认采纳后到「已采纳」查看这条经验。
 

@@ -23,7 +23,7 @@
 
 ## Review before reuse
 
-![Review a candidate, accept it, and find it in the accepted list in Dream](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif?v=0.15.1)
+![Review a candidate, accept it, and find it in the accepted list in Dream](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/16c2cc44cff0e89310e858f3be93a1593e1c52ad/docs/assets/intro/review-steps.gif)
 
 Captured in the Dream 0.15.1 workbench. Open a candidate, check its source and scope, accept it, and find it in **Accepted**.
 

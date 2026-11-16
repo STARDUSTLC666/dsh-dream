@@ -23,9 +23,9 @@
 
 ## 看看怎么用
 
-![Dream review steps](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif)
+![在 Dream 工作台核对候选来源、确认采纳并查看已采纳经验](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif?v=0.15.1)
 
-使用验证环境真实截图制作的步骤轮播：核对待审阅候选，再查看已采纳列表。演示人工审阅流程，不是连续录屏或效果基准。
+演示画面来自 Dream 0.15.1 的工作台。展开候选核对来源与适用范围，确认采纳后到「已采纳」查看这条经验。
 
 ## 安装
 

@@ -23,9 +23,9 @@
 
 ## Review before reuse
 
-![Dream review steps](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif)
+![Review a candidate, accept it, and find it in the accepted list in Dream](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/docs/assets/intro/review-steps.gif?v=0.15.1)
 
-A step carousel made from real validation screenshots (Chinese UI): inspect a candidate, then inspect the accepted list. This demonstrates manual review; it is not a continuous recording or a benchmark.
+Captured in the Dream 0.15.1 workbench. Open a candidate, check its source and scope, accept it, and find it in **Accepted**.
 
 ## Install
 

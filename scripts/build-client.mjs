@@ -10,7 +10,7 @@ const templates = join(root, 'templates')
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
 const require = createRequire(import.meta.url)
 const classes = {}
-const sheets = []
+const sheets = [read(join(templates, 'dsh-themes-motion.css')).trim()]
 
 for (const file of readdirSync(templates).filter(name => name.endsWith('.module.css')).sort()) {
   const from = join(templates, file)
@@ -32,8 +32,12 @@ const clsxPath = require.resolve('clsx')
 const license = read(join(dirname(clsxPath), '..', 'license')).trim()
 const source = read(join(templates, 'client.js'))
 const panels = join(templates, 'panels')
-const components = [read(join(templates, 'i18n.js')), read(join(templates, 'workbench-ui.js')),
-  ...readdirSync(panels).filter(name => name.endsWith('.js')).sort().map(name => read(join(panels, name)))]
+const components = [
+  read(join(templates, 'dsh-style-switcher.js')),
+  read(join(templates, 'i18n.js')),
+  read(join(templates, 'workbench-ui.js')),
+  ...readdirSync(panels).filter(name => name.endsWith('.js')).sort().map(name => read(join(panels, name))),
+]
 const marker = '// @dream-ui'
 if (!source.includes(marker)) throw new Error('Dream UI source marker missing')
 const output = `// Generated from templates/ by scripts/build-client.mjs. Edit the sources.

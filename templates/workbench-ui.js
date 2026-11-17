@@ -1,64 +1,128 @@
-const DREAM_STYLE_KEY = 'dsh-dream-ui-style';
-const styleListeners = new Set();
-const DREAM_STYLES = [
-  { value: 'dsh-native', label: 'DSH 原生' },
-  { value: 'mac-island', label: 'Arc 浮岛' },
-  { value: 'raycast', label: 'Raycast 聚光' },
-  { value: 'bento', label: 'Bento 卡片' },
-];
-const icons = {
-  book: 'IconChecklistOutlineRegular',
-  check: 'IconCheckOutlineRegular',
-  close: 'IconCloseOutlineRegular',
-  diff: 'IconCompareSplitOutlineRegular',
-  folder: 'IconFolderOpenOutlineRegular',
-  info: 'IconInfoOutlineRegular',
-  left: 'IconChevronLeftOutlineRegular',
-  refresh: 'IconRefreshOutlineRegular',
-  search: 'IconSearchOutlineRegular',
-  settings: 'IconSettingsOutlineRegular',
-  shield: 'IconShieldOutlineRegular',
-  sparkle: 'IconSparkleRegular',
-  trash: 'IconTrashOutlineRegular',
-};
-let primitives;
 function nativeUI() {
-  return primitives ??= require('@deepseek-ai/dsh-client-ui-primitives');
+  return resolveHostPrimitives(React, require);
 }
 
-function Icon({ name, size = 16, ...props }) {
-  const Component = nativeUI()[icons[name]];
-  return Component ? h(Component, { size, 'aria-hidden': true, ...props }) : null;
+function safeFlushSync(fn) {
+  try {
+    const ReactDOM = require('react-dom');
+    if (typeof ReactDOM?.flushSync === 'function') {
+      ReactDOM.flushSync(fn);
+      return;
+    }
+  } catch {
+    // Fallback when react-dom is not mounted in lightweight test harnesses.
+  }
+  fn();
 }
 
-function Button({ icon, variant = 'outline', className, children, ...props }) {
+function Icon({ name, size = 16, spinning = false, ...props }) {
+  return renderDshIcon(React, { name, size, spinning, ...props });
+}
+
+function Button({ icon, spinning = false, variant = 'outline', className, children, type = 'button', ...props }) {
+  const hostVariant = variant === 'danger' ? 'ghost' : variant === 'toolbar' ? 'outline' : variant;
   return h(nativeUI().Button, {
-    ...props, variant, className: clsx(css.control, variant === 'primary' && css.primary, className),
-    icon: icon ? h(Icon, { name: icon }) : undefined,
+    type,
+    ...props,
+    'aria-busy': spinning ? 'true' : props['aria-busy'],
+    variant: hostVariant,
+    className: clsx(
+      css.control,
+      variant === 'primary' && css.primary,
+      variant === 'danger' && css.danger,
+      variant === 'toolbar' && css.toolbarActive,
+      className,
+    ),
+    icon: icon ? h(Icon, { name: icon, size: 15, spinning }) : undefined,
   }, children);
 }
 
-function IconButton({ label, className, ...props }) {
-  return h(Button, { ...props, className: clsx(css.iconButton, className), 'aria-label': label, title: label });
+function IconButton({ label, className, variant = 'ghost', ...props }) {
+  return h(Button, { ...props, variant, className: clsx(css.iconButton, className), 'aria-label': label, title: label });
 }
 
 function Search({ label, className, ...props }) {
   return h(nativeUI().Input, {
-    ...props, 'aria-label': label, placeholder: label, className: clsx(css.search, className),
-    icon: h(Icon, { name: 'search' }),
+    ...props,
+    'aria-label': label,
+    placeholder: label,
+    className: clsx(css.search, className),
+    icon: h(Icon, { name: 'search', size: 15 }),
   });
+}
+
+function Checkbox({ label, hiddenLabel = false, checked, disabled, onChange, className, title, ...props }) {
+  return h(nativeUI().Checkbox, {
+    ...props,
+    checked: Boolean(checked),
+    disabled,
+    label,
+    title: title || (hiddenLabel && typeof label === 'string' ? label : undefined),
+    className: clsx(css.checkbox, hiddenLabel && 'dsh-checkbox-icon', className),
+    onChange: next => onChange?.(typeof next === 'boolean' ? next : Boolean(next?.target?.checked)),
+  });
+}
+
+function SegmentedControl({ id, label, value, options, onChange, disabled = false, className }) {
+  return h(nativeUI().SegmentedControl, {
+    id,
+    label,
+    value,
+    options,
+    disabled,
+    onChange,
+    className: clsx(css.segmented, className),
+  });
+}
+
+function ChoiceMenu({ id, label, value, items, onChange, disabled = false, className, align = 'start' }) {
+  const [open, setOpen] = useState(false);
+  const [skin] = useDshStyle(React);
+  const P = nativeUI();
+  const current = items.find(item => item.id === value) || items[0];
+  return h('div', { className: clsx(css.choiceWrap, className), 'data-window-drag-exclude': '' },
+    h(P.Menu, {
+      open: Boolean(open && !disabled && items.length > 0),
+      dshStyle: skin,
+      portal: !P.isFallback,
+      compact: true,
+      autoFocus: true,
+      minWidthFromAnchor: true,
+      align,
+      selectedId: value,
+      items,
+      onClose: () => setOpen(false),
+      onSelect: nextId => { setOpen(false); if (nextId !== value) onChange?.(nextId); },
+      anchor: h(Button, {
+        id,
+        size: 'sm',
+        disabled: disabled || items.length === 0,
+        className: css.choiceButton,
+        'aria-label': label + (current ? ' · ' + current.label : ''),
+        'aria-haspopup': 'menu',
+        'aria-expanded': Boolean(open && !disabled),
+        onClick: () => setOpen(prev => !prev),
+        onKeyDown: event => {
+          if (!open && (event?.key === 'ArrowDown' || event?.key === 'ArrowUp')) {
+            event.preventDefault?.();
+            setOpen(true);
+          }
+        },
+      }, h('span', { ref: open ? createOverlaySyncRef(skin) : undefined, className: css.choiceLabel }, current?.label || label), h(Icon, { name: 'down', size: 13 })),
+    }),
+  );
 }
 
 function Switch({ label, checked, onChange, disabled }) {
   return h('div', { className: css.switchRow },
     h('span', null, label),
-    h(nativeUI().Switch, { label, checked, onChange, disabled }));
+    h(nativeUI().Switch, { label, checked: Boolean(checked), onChange, disabled }));
 }
 
 function Status({ tone = 'info', children }) {
   if (!children) return null;
   return h('div', { className: clsx(css.status, tone === 'error' && css.statusError), role: tone === 'error' ? 'alert' : 'status' },
-    h(Icon, { name: tone === 'success' ? 'check' : 'info' }), h('div', null, children));
+    h(Icon, { name: tone === 'success' ? 'check' : 'info', size: 16 }), h('div', null, children));
 }
 
 function Empty({ title, children, action, icon = 'book' }) {
@@ -67,15 +131,30 @@ function Empty({ title, children, action, icon = 'book' }) {
     children ? h('p', { className: css.muted }, children) : null, action);
 }
 
-function Dialog({ title, onClose, busy, className, children }) {
+function Dialog({ title, onClose, busy, className, children, style: styleProp }) {
+  const [syncedStyle] = useDshStyle(React);
+  const activeStyle = normalizeDshStyle(styleProp ?? syncedStyle);
   const { Modal, MenuSurface } = nativeUI();
+  const close = () => { if (!busy) onClose?.(); };
   return h(Modal, {
-    open: true, onClose: () => { if (!busy) onClose(); }, title, headless: true,
-    shortcutModal: 'dsh-dream', className: clsx(css.modal, className),
-  }, h(MenuSurface, { className: clsx(css.surface, css.modalSurface), 'data-window-drag-exclude': true },
+    open: true,
+    dshStyle: activeStyle,
+    onClose: close,
+    title,
+    closeLabel: t('关闭'),
+    headless: true,
+    backdropBlur: false,
+    shortcutModal: 'dsh-dream',
+    className: clsx(css.modal, className),
+  }, h('div', {
+    ref: createOverlaySyncRef(activeStyle),
+    'data-dsh-style': activeStyle,
+    'data-window-drag-exclude': '',
+    className: css.modalFrame,
+  }, h(MenuSurface, { className: clsx(css.surface, css.modalSurface), 'data-window-drag-exclude': '' },
     h('header', { className: css.modalHeader }, h('h2', null, title),
-      h(IconButton, { icon: 'close', label: t('关闭'), size: 'sm', variant: 'ghost', disabled: busy, onClick: onClose })),
-    h('div', { className: css.modalBody }, children)));
+      h(IconButton, { icon: 'close', label: t('关闭'), size: 'sm', variant: 'ghost', disabled: busy, onClick: close })),
+    h('div', { className: css.modalBody, 'aria-busy': busy || undefined }, children))));
 }
 
 function registerWorkbench(ctx, { id, label, component, inject, order = 50 }) {
@@ -87,16 +166,7 @@ function registerWorkbench(ctx, { id, label, component, inject, order = 50 }) {
   }, function WorkbenchIcon({ size }) { return h(Icon, { name: 'sparkle', size }); }));
 }
 
-const W = { Button, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, Status, Switch };
-
-function validDreamStyle(value) {
-  return DREAM_STYLES.find(style => style.value === value)?.value || DREAM_STYLES[0].value;
-}
-
-function loadDreamStyle() {
-  try { return validDreamStyle(window.localStorage.getItem(DREAM_STYLE_KEY)); }
-  catch { return DREAM_STYLES[0].value; }
-}
+const DreamStyleSwitcher = createStyleSwitcherComponent(React, require);
 
 const viewTransitions = new WeakMap();
 
@@ -106,7 +176,6 @@ function runViewTransition(node, update) {
     update();
     return;
   }
-  const { flushSync } = require('react-dom');
   const previous = viewTransitions.get(node);
   previous?.transition.skipTransition();
   previous?.commit();
@@ -114,7 +183,7 @@ function runViewTransition(node, update) {
   function commit() {
     if (applied) return;
     applied = true;
-    if (node.isConnected) flushSync(update);
+    if (node.isConnected) safeFlushSync(update);
   }
   try {
     node.dataset.dreamTransition = 'true';
@@ -134,37 +203,40 @@ function runViewTransition(node, update) {
 }
 
 function useDreamStyle(transitionRef) {
-  const [style, setStyle] = useState(loadDreamStyle);
+  const [style, setStyleState] = useState(() => readDshStyle());
   useEffect(() => {
-    function onStorage(event) {
-      if (event.key === DREAM_STYLE_KEY && event.newValue !== event.oldValue) {
-        runViewTransition(transitionRef.current, () => setStyle(validDreamStyle(event.newValue)));
-      }
-    }
-    styleListeners.add(setStyle);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      styleListeners.delete(setStyle);
-      window.removeEventListener('storage', onStorage);
-    };
+    const current = readDshStyle();
+    setStyleState(prev => (prev === current ? prev : current));
+    return subscribeDshStyle(next => {
+      runViewTransition(transitionRef?.current, () => {
+        setStyleState(prev => (prev === next ? prev : next));
+      });
+    });
   }, [transitionRef]);
   function change(next) {
-    if (next === style) return;
-    runViewTransition(transitionRef.current, () => {
-      for (const receive of styleListeners) receive(next);
-      try { window.localStorage.setItem(DREAM_STYLE_KEY, next); } catch { /* Storage may be disabled. */ }
+    const normalized = normalizeDshStyle(next);
+    if (normalized === style) return normalized;
+    runViewTransition(transitionRef?.current, () => {
+      const applied = writeDshStyle(normalized);
+      setStyleState(applied);
     });
+    return normalized;
   }
   return [style, change];
 }
 
 function SkinSwitcher({ value, onChange }) {
-  const { Pill } = nativeUI();
-  return h('div', { className: css['style-switcher-pill'], role: 'group', 'aria-label': t('工作台皮肤') },
-    DREAM_STYLES.map(style => h(Pill, {
-      key: style.value, className: css['style-preset-btn'],
-      'aria-pressed': value === style.value, 'data-style': style.value, onClick: () => onChange(style.value),
-    }, t(style.label))));
+  const lang = languageOf();
+  return h(DreamStyleSwitcher, {
+    id: 'dream-style-switcher',
+    style: value,
+    onChange,
+    lang,
+    compact: true,
+    formatAriaLabel: preset => t('界面风格') + '：' + t(preset.zh),
+    formatTriggerLabel: (preset, compact) => t(compact ? preset.zhShort : preset.zh),
+    formatOptionLabel: preset => lang === 'zh' ? preset.zh + ' (' + preset.enShort + ')' : t(preset.zh),
+  });
 }
 
 function followPointer(event) {
@@ -183,18 +255,17 @@ function clearSpotlight({ currentTarget }) {
 const spotlightHandlers = { onPointerMove: followPointer, onPointerLeave: clearSpotlight };
 const editableSelector = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
 
-function CommandPalette({ commands, onClose }) {
+function CommandPalette({ commands, onClose, skin }) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
-  const id = useId();
+  const id = typeof useId === 'function' ? useId() : 'dream-cmd';
   const matches = commands.filter(item => item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   function invoke(command) {
-    const { flushSync } = require('react-dom');
-    flushSync(onClose);
+    safeFlushSync(onClose);
     command.run();
   }
   function onKeyDown(event) {
-    if (!matches.length || event.isComposing || event.nativeEvent.isComposing) return;
+    if (!matches.length || event.isComposing || event.nativeEvent?.isComposing) return;
     switch (event.key) {
       case 'ArrowDown': setIndex((index + 1) % matches.length); break;
       case 'ArrowUp': setIndex((index + matches.length - 1) % matches.length); break;
@@ -203,7 +274,7 @@ function CommandPalette({ commands, onClose }) {
     }
     event.preventDefault();
   }
-  return h(Dialog, { title: t('命令面板'), onClose },
+  return h(Dialog, { title: t('命令面板'), onClose, style: skin },
     h(Search, {
       label: t('搜索命令…'), value: query, onKeyDown,
       onChange: event => { setQuery(event.target.value); setIndex(0); },
@@ -232,23 +303,30 @@ function DreamChrome({
     label: h('span', { className: css.tabLabel }, t(label),
       value === 'review' && reviewCount > 0 ? h('span', { className: css.tabCount }, reviewCount) : null),
   }));
-  const shortcut = /Mac/i.test(window.navigator.platform) ? '⌘K' : 'Ctrl+K';
+  const shortcut = /Mac/i.test(typeof window !== 'undefined' ? String(window.navigator?.platform || '') : '') ? '⌘K' : 'Ctrl+K';
   const commands = paletteActions ? [
     ...paletteActions,
-    ...DREAM_TABS.map(([value, label]) => ({ id: value, label: t(label), run: () => changeTab(value) })),
-    ...DREAM_STYLES.map(style => ({ id: style.value, label: t(style.label), run: () => setSkin(style.value) })),
+    ...DREAM_TABS.map(([value, label]) => ({ id: 'tab:' + value, label: t(label), run: () => changeTab(value) })),
+    ...DSH_STYLES.map(preset => ({
+      id: 'style:' + preset.id,
+      label: t('界面风格') + ' · ' + t(preset.zh),
+      run: () => setSkin(preset.id),
+    })),
   ] : null;
+  const needsInlineCss = typeof document === 'undefined' || typeof document.querySelector !== 'function'
+    || document.querySelector("style[data-plugin-css='dsh-dream/client']") === null;
   return h('section', {
-    ref: root, className: clsx(css['app-shell'], privacy && css['dshd-privacy']),
-    'data-ds-style': skin, 'data-main': workbench,
+    ref: root,
+    className: clsx(css['app-shell'], privacy && css['dshd-privacy']),
+    'data-dsh-style': skin,
+    'data-main': String(Boolean(workbench)),
   },
+    needsInlineCss ? h('style', { 'data-dsh-dream-inline': 'true' }, styleText) : null,
     h('header', { className: css.topbar },
       h('div', { className: css['topbar-left'] },
         h('div', { className: css['plugin-brand'] },
           h('span', { className: css['plugin-badge'], 'aria-hidden': true },
-            h('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
-              h('path', { d: 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z' }),
-              h('path', { d: 'M19 3v4M21 5h-4' }))),
+            h(Icon, { name: 'moon', size: 14 })),
           h('h1', null, t('Dream 记忆'))),
         h(nativeUI().SegmentedTabs, {
           label: t('Dream 视图'), value: activeTab, onChange: changeTab, items: tabs, size: 'sm', className: css['view-tabs'],
@@ -259,7 +337,7 @@ function DreamChrome({
           'aria-haspopup': 'dialog', 'aria-keyshortcuts': 'Meta+K Control+K',
         }, h('kbd', null, shortcut)),
         h(Button, {
-          icon: 'sparkle', size: 'sm', variant: 'primary', disabled: !automation.canFlush,
+          icon: 'sparkle', spinning: Boolean(automation.value?.running), size: 'sm', variant: 'primary', disabled: !automation.canFlush,
           onClick: () => automation.change({ operation: 'automatic-flush' }),
           'data-dream-command': 'flush', title: t('现在整理待处理轮次'),
         }, t('立即整理')),
@@ -270,5 +348,7 @@ function DreamChrome({
       children),
     privacy ? h('p', { className: clsx(css.muted, css.privacyStatus), role: 'status' },
       t('隐私模式：显示层模糊；DOM 仍为明文，不改文件、不加密。点击卡片可临时查看。')) : null,
-    commands ? h(CommandPalette, { commands, onClose: closePalette }) : null);
+    commands ? h(CommandPalette, { commands, onClose: closePalette, skin }) : null);
 }
+
+const W = { Button, Checkbox, ChoiceMenu, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Status, Switch };

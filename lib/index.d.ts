@@ -19,6 +19,10 @@ export interface DreamPluginContext {
             source?: string;
         }): () => void;
     };
+    effect?(fn: () => (() => void) | void, label?: string): void;
+    logger?: {
+        warn?(message: string): void;
+    };
     on?(event: string, listener: () => void): () => void;
     /** cordis 的依赖注入（宿主必给；headless 测试夹具可能没有）。 */
     inject?(services: string[], callback: (scopedCtx: unknown) => void): void;

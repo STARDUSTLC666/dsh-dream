@@ -1251,7 +1251,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             return h(W.Button, { ...props, variant: on && !variant ? 'toolbar' : variant, 'aria-pressed': pressed }, children);
         }
         function StatTile(props) {
-            return h("div", { className: css['dshd-tile'] }, [
+            return h("div", { className: css['dshd-tile'], 'data-dsh-card': '' }, [
                 h("div", { className: css['dshd-tile-label'], key: "l" }, props.label),
                 h("div", { className: css['dshd-tile-value'], key: "v", title: props.title === undefined ? props.value : props.title }, props.value),
                 props.hint === "" || props.hint === undefined ? null : h("div", { className: css['dshd-tile-hint'], key: "h", title: props.hint }, props.hint),
@@ -1259,7 +1259,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         }
         function MoodCard(props) {
             const vm = props.vm;
-            return h("section", { className: css['dshd-card'] }, [
+            return h("section", { className: css['dshd-card'], 'data-dsh-card': '' }, [
                 h("h4", { key: "t" }, t("心境")),
                 h("div", { className: css['dshd-mblocks'], key: "blocks" }, vm.blocks.map((block) => h("span", {
                     key: block.key,
@@ -1280,7 +1280,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         }
         function LessonCard(props) {
             const vm = props.vm;
-            return h("section", { className: css['dshd-card'] }, [
+            return h("section", { className: css['dshd-card'], 'data-dsh-card': '' }, [
                 h("h4", { key: "t" }, t("教训榜")),
                 vm.lessonRows.length === 0
                     ? h("div", { className: css['dshd-hint'], key: "e" }, t("还没有教训 —— 记梦时带上 lessons，出现次数会在这里累积。"))
@@ -1314,7 +1314,14 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             };
             const label = props.label === undefined ? t("复制命令") : props.label;
             return h("span", { className: css['dshd-copywrap'] }, [
-                h(Btn, { key: "b", onClick: onCopy, disabled: props.disabled === true, title: props.title === undefined ? command : props.title }, copied === true ? t("已复制") : label),
+                h(Btn, {
+                    key: "b",
+                    icon: copied === true ? 'check' : 'copy',
+                    'data-copied': copied === true ? 'true' : undefined,
+                    onClick: onCopy,
+                    disabled: props.disabled === true,
+                    title: props.title === undefined ? command : props.title,
+                }, copied === true ? t("已复制") : label),
                 failed === true ? h("code", { key: "cmd", className: css['dshd-cmd'], tabIndex: 0 }, command) : null,
                 failed === true ? h("span", { key: "hint", className: css['dshd-note'] }, t("剪贴板不可用：请手动选中上面的命令复制。")) : null,
             ]);
@@ -1401,14 +1408,14 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                             'aria-keyshortcuts': shortcut || undefined,
                         }, item[1]);
                     }),
-                    h(Btn, { key: "review", size: 'sm', disabled: reviewBusy, onClick: function () { setOpen(!open); }, "aria-expanded": open }, open ? t("收起审阅") : row.state === "disputed" ? t("处理冲突") : t("更多审阅操作")),
+                    h(Btn, { key: "review", size: 'sm', icon: 'down', disabled: reviewBusy, onClick: function () { setOpen(!open); }, "aria-expanded": open }, open ? t("收起审阅") : row.state === "disputed" ? t("处理冲突") : t("更多审阅操作")),
                     row.bridgeable === true && row.workspaceRoot !== "" ? h(Btn, { key: "preview", size: 'sm', disabled: reviewBusy || props.masked, icon: 'diff', "data-dream-command": 'bridge-diff', onClick: function () { submit({ operation: "preview", lessonId: row.id, expectedRevision: row.revision }, "", true); } }, t("预览规则变更")) : null,
                     row.bridgeable === true && row.workspaceRoot === "" ? h(CopyCommand, { key: "preview-command", command: bridgePreviewCommandOf(row.id, row.projectId, row.workspaceRoot), label: t("复制项目预览命令") }) : null,
                 ])),
               h("div", { className: css['inspector-scroll'] }, [
-                needsGlobalConfirmation ? h('label', { key: 'global-confirm', className: clsx(css.checkLabel, css['dshd-note']) }, [h('input', { type: 'checkbox', checked: globalConfirmed, disabled: reviewBusy, onChange: event => setGlobalConfirmed(event.target.checked) }), t('全局经验会用于所有项目；我已核对并同意。')]) : null,
+                needsGlobalConfirmation ? h(W.Checkbox, { key: 'global-confirm', className: clsx(css.checkLabel, css['dshd-note']), checked: globalConfirmed, disabled: reviewBusy, onChange: checked => setGlobalConfirmed(checked), label: t('全局经验会用于所有项目；我已核对并同意。') }) : null,
                 pending ? h("div", { key: "pending", role: "status", className: css['dshd-note'] }, t("正在处理…")) : null,
-                error !== "" ? h("div", { key: "error", role: "alert", className: css['dshd-hint'] }, [error, h(Btn, { key: "refresh", disabled: pending, onClick: function () { if (props.onChanged)
+                error !== "" ? h("div", { key: "error", role: "alert", className: css['dshd-hint'] }, [error, h(Btn, { key: "refresh", icon: 'refresh', disabled: pending, onClick: function () { if (props.onChanged)
                             props.onChanged(t("已刷新经验列表。")); } }, t("刷新列表"))]) : null,
                 open ? h("div", { className: css['dshd-reviewform'], key: "form", onKeyDown: function (event) {
                         if (event.key === "Escape" && !pending) {
@@ -1500,19 +1507,19 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
                 ]);
             };
             if (props.error !== null && props.error !== undefined) {
-                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
-                    head(h(Btn, { key: "retry", onClick: props.onRetry, disabled: props.loading === true }, t("重试"))),
+                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']), 'data-dsh-card': '' }, [
+                    head(h(Btn, { key: "retry", icon: 'refresh', onClick: props.onRetry, disabled: props.loading === true }, t("重试"))),
                     h("div", { className: css['dshd-hint'], key: "e", role: "alert" }, t("读取写入记录失败：") + displayError(props.error)),
                 ]);
             }
             if (props.loading === true) {
-                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
+                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']), 'data-dsh-card': '' }, [
                     head(h("span", { className: css['dshd-hint'], key: "l" }, t("加载中…"))),
                 ]);
             }
             if (vm.rows.length === 0) {
                 const empty = bridgeEmptyState();
-                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
+                return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']), 'data-dsh-card': '' }, [
                     h("h4", { key: "t" }, t("写入记录")),
                     h("div", { className: css['dshd-kempty'], key: "empty" }, [
                         h("div", { className: css['dshd-kempty-title'], key: "t2" }, empty.title),
@@ -1521,10 +1528,10 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
                     ]),
                 ]);
             }
-            return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']) }, [
+            return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']), 'data-dsh-card': '' }, [
                 head(h("span", { className: css['dshd-hint'], key: "c" }, String(vm.total) + t(" 次写入 · ") + String(vm.rollbackable) + t(" 次可回滚"))),
                 h("div", { className: css['dshd-krows'], key: "rows" }, vm.rows.map(function (row, index) {
-                    return h("div", { className: css['dshd-bridge'], key: row.id !== "" ? row.id : "bridge-" + String(index) }, [
+                    return h("div", { className: css['dshd-bridge'], 'data-dsh-row': '', key: row.id !== "" ? row.id : "bridge-" + String(index) }, [
                         h("div", { className: css['dshd-bridge-head'], key: "h" }, [
                             h("span", { className: css['dshd-kbadge'], key: "a" }, row.actionLabel),
                             h("span", { className: css['dshd-bridge-target'], key: "t", title: row.target }, row.target),
@@ -1559,6 +1566,7 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
             const clickCard = privacy ? function () { setPeek(peek !== true); } : undefined;
             return h("article", {
                 className: clsx(css['dshd-dream'], css['dshd-mood-' + moodSlot(dream.mood)], privacy && peek && css['dshd-peek']),
+                'data-dsh-card': '',
                 onClick: clickCard,
                 title: privacy ? t("隐私模式：点击卡片临时查看") : undefined,
             }, [
@@ -1828,7 +1836,7 @@ h("span", { className: css['dshd-spacer'], key: "spacer" }),
 pristine || activeTab !== "journal" ? null : h("span", { className: css['dshd-hint'], key: "count" }, loading === true
                     ? t("加载中…")
                     : countTextOf(query, vm.total, vm.count, filterCount, visibleDreams.length)),
-showFilterButton === true && activeTab === "journal" ? h("div", { className: css['dshd-filter'], key: "filter", 'data-dream-journal-filter': true }, [
+showFilterButton === true && activeTab === "journal" ? h("div", { className: css['dshd-filter'], key: "filter", 'data-dream-journal-filter': true, 'data-window-drag-exclude': '' }, [
                     h(Btn, {
                         key: "btn",
                         on: filterCount > 0,
@@ -1836,8 +1844,8 @@ showFilterButton === true && activeTab === "journal" ? h("div", { className: css
                         'aria-expanded': filterOpen,
                         onClick: function () { setFilterOpen(filterOpen !== true); },
                         title: t("筛选作用于已加载窗口，不影响全量统计"),
-                    }, t("筛选") + (filterCount > 0 ? " · " + String(filterCount) : "") + " ▾"),
-                    filterOpen === true ? h(nativeUI().MenuSurface, { className: clsx(css['dshd-filterpop'], css.surface), key: "pop", role: "group", 'data-window-drag-exclude': true, "aria-label": t("筛选梦境") }, [
+                    }, t("筛选") + (filterCount > 0 ? " · " + String(filterCount) : ""), h(W.Icon, { name: 'down', size: 13 })),
+                    filterOpen === true ? h(nativeUI().MenuSurface, { ref: createOverlaySyncRef(skin), 'data-dsh-style': skin, className: clsx(css['dshd-filterpop'], css.surface), key: "pop", role: "group", 'data-window-drag-exclude': '', "aria-label": t("筛选梦境") }, [
                         h("div", { className: css['dshd-filtertitle'], key: "title" }, t("筛选当前已加载的 ") + String(vm.count) + t(" 场，不影响全量统计")),
                         h("div", { key: "moods" }, vm.moodRows.map(function (row) {
                             const on = filters.moods.indexOf(row.mood) !== -1;
@@ -1881,7 +1889,7 @@ pristine ? null : h(Btn, {
                 });
                 if (activeTab === 'bridge') return h('div', { className: css.documentPage }, bridgeLogCard);
                 if (activeTab === 'settings') return h(DreamSettings, {
-                    automation, privacy, onPrivacyChange: togglePrivacy, onReview: () => { changeTab('review'); reload(); },
+                    automation, privacy, onPrivacyChange: togglePrivacy, skin, setSkin, onReview: () => { changeTab('review'); reload(); },
                 });
                 if (loading === true && vm.count === 0)
                     return h(Skeleton, { key: "skeleton" });
@@ -2037,6 +2045,12 @@ pristine ? null : h(Btn, {
             localLastAtFor: localLastAtFor,
             viewModelOf: viewModelOf,
             DEFAULT_LIMIT: DEFAULT_LIMIT,
+            DSH_STYLES: DSH_STYLES,
+            DSH_STYLE_STORAGE_KEY: DSH_STYLE_STORAGE_KEY,
+            DSH_STYLE_EVENT: DSH_STYLE_EVENT,
+            readDshStyle: readDshStyle,
+            writeDshStyle: writeDshStyle,
+            normalizeDshStyle: normalizeDshStyle,
         };
         return module.exports;
     } });

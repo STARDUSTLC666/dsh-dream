@@ -98,11 +98,12 @@ function AutomaticSwitches({ automation }) {
 function SettingCard({ title, wide, index, children }) {
   return h('section', {
     className: clsx(css['settings-card'], wide && css.settingsWide),
+    'data-dsh-card': '',
     style: { '--stagger-idx': index }, ...spotlightHandlers,
   }, h('h2', null, title), children);
 }
 
-function DreamSettings({ automation, privacy, onPrivacyChange, onReview }) {
+function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, setSkin }) {
   const [chatId, setChatId] = useState('');
   const { value, pending, failure, change, canFlush } = automation;
   const chats = value?.sessions || [];
@@ -110,6 +111,11 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview }) {
   const lastDate = Number.isFinite(value?.last?.at) ? new Date(value.last.at).toISOString() : '';
   const interval = Math.ceil(Math.max(0, Number(value?.cooldownMinutes) || 0) * 60);
   const format = new Intl.NumberFormat(languageOf());
+  const styleOptions = DSH_STYLES.map(preset => ({
+    value: preset.id,
+    label: t(preset.zhShort),
+    title: t(preset.zh),
+  }));
   return h('div', { className: css.settingsPage },
     h(SettingCard, { title: t('自动记忆与预算'), index: 0, wide: !chat },
       h(AutomaticSwitches, { automation }),
@@ -132,7 +138,7 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview }) {
         h('p', { className: css.muted }, t('沿用会话模型和整理预算。待处理片段最多保留 24 小时、32 轮。')),
         lastDate ? h('p', { className: css.muted }, t('最近检查') + ' · ' + formatDate(lastDate) + ' ' + formatTime(lastDate) + ' · ' + t(AUTOMATIC_REASONS[value.last.reason] ?? '已检查')) : null,
         h('div', { className: css.actions },
-          h(W.Button, { icon: 'sparkle', variant: 'primary', disabled: !canFlush, onClick: () => change({ operation: 'automatic-flush' }) }, t('现在整理待处理轮次')),
+          h(W.Button, { icon: 'sparkle', spinning: Boolean(value.running), variant: 'primary', disabled: !canFlush, onClick: () => change({ operation: 'automatic-flush' }) }, t('现在整理待处理轮次')),
           h(W.Button, { onClick: onReview }, t('待审阅') + ' · ' + format.format(value.candidates ?? 0)))) :
         failure ? null : h('p', { className: css.muted }, t('正在读取状态…'))),
     chat ? h(SettingCard, { title: t('聊天记忆设置'), index: 1 },
@@ -150,6 +156,15 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview }) {
       h('option', { value: 'false' }, t('仅此聊天关闭'))))),
       h('p', { className: css.muted }, t('两个选项独立保存；关闭贡献会移除该聊天尚未整理的片段，已有经验仍保留。'))) : null,
     h(SettingCard, { title: t('显示与脱敏'), index: 2 },
+      h('div', { className: css.scopePicker },
+        h('span', null, t('界面风格')),
+        h(W.SegmentedControl, {
+          id: 'dream-settings-style',
+          label: t('界面风格'),
+          value: skin,
+          options: styleOptions,
+          onChange: setSkin,
+        })),
       h('label', { className: css.scopePicker }, t('界面语言'), h('select', {
         'aria-label': t('界面语言'), value: dreamLanguage, onChange: event => setDreamLanguage(event.target.value),
       }, h('option', { value: '' }, t('跟随 DSH')),

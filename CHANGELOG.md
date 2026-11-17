@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.16.0 (2026-11-18)
+
+- 升级 Dream 工作台界面与动效并深度适配 DeepSeek Harness `>=0.2.2-rc.3`：统一 5 套可切换界面风格（原生清透 / 米白纸感 / Claude 暖书卷 / 8-Bit 像素 / 晴空薄荷，覆盖顶栏、命令面板、设置与 8 种界面语言）并支持跨插件同步，深色模式采用柔和透气岩板色。
+- 接入宿主原生控件（延迟按需解析与弹窗/菜单样式同步）、主工作台顶栏与侧栏安全留白、按钮按压与 SVG 小图标微交互动效，以及 Cordis 4 `ctx.effect` 热重载卸载清理。
+- Upgrade the Dream workbench UI and motion with deep DeepSeek Harness `>=0.2.2-rc.3` integration: unify five switchable visual themes (`harness`, `cream`, `claude`, `pixel8bit`, `mint`) across the header, command palette, settings, and all eight UI languages, with cross-plugin sync and a soft breathable slate dark mode.
+- Wire lazy native host UI primitives with portaled modal/menu style sync, main-view frame clearances, tactile button and SVG icon micro-animations, reduced-motion support, and Cordis 4 `ctx.effect` unload cleanup.
+
 ## 0.15.2 (2026-11-17)
 
 - 在工作台单独检查和安装兼容版本。自动安装默认关闭，可为该插件开启空闲时的稳定补丁更新。

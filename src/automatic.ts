@@ -376,7 +376,14 @@ export class AutomaticDream {
 
 export function installAutomaticDream(ctx: any, cfg: ResolvedDreamConfig): void {
   const runtime = new AutomaticDream(cfg)
-  const dispose = runtime.register()
+  const rawDispose = runtime.register()
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    rawDispose()
+  }
+  if (typeof ctx.effect === 'function') ctx.effect(() => dispose, 'dsh-dream: automatic')
   ctx.on?.('dispose', dispose)
   if (typeof ctx.inject !== 'function') return
   ctx.inject(['sessions', 'agents', 'llm', 'systemPrompt'], (host: any) => {

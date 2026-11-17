@@ -176,10 +176,19 @@ export function installDreamActions(ctx: any, options: Options = {}): void {
   const fetch = createDreamActionHandler(options)
   ctx.inject(['connection'], (host: any) => {
     if (typeof host.connection?.fetch?.register !== 'function') return
-    host.connection.fetch.register({ path: DREAM_ACTION_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch })
+    const removeAction = host.connection.fetch.register({ path: DREAM_ACTION_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch })
     const cfg = { ...resolveConfig(options.config as Record<string, unknown>), ...(options.journalDir === undefined ? {} : { journalDir: options.journalDir }) }
-    host.connection.fetch.register({ path: DREAM_AUTOMATIC_ROUTE, methods: ['GET'], requestBody: 'buffered', fetch: async () => json(200, {
+    const removeAuto = host.connection.fetch.register({ path: DREAM_AUTOMATIC_ROUTE, methods: ['GET'], requestBody: 'buffered', fetch: async () => json(200, {
       ok: true, automatic: automaticRuntime(cfg)?.status() ?? { available: false, enabled: false, retrievalEnabled: false, problem: 'unavailable' },
     }) })
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      if (typeof removeAuto === 'function') removeAuto()
+      if (typeof removeAction === 'function') removeAction()
+    }
+    if (typeof host.effect === 'function') host.effect(() => release, 'dsh-dream: connection routes')
+    else host.on?.('dispose', release)
   })
 }

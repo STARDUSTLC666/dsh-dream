@@ -21,6 +21,8 @@ export const inject = ['tools', 'skills']
 export interface DreamPluginContext {
   tools: { register(definition: DreamToolDefinition): () => void }
   skills?: { register(definition: { name: string; description: string; content: string; resourceBase: { kind: 'directory'; path: string }; source?: string }): () => void }
+  effect?(fn: () => (() => void) | void, label?: string): void
+  logger?: { warn?(message: string): void }
   on?(event: string, listener: () => void): () => void
   /** cordis 的依赖注入（宿主必给；headless 测试夹具可能没有）。 */
   inject?(services: string[], callback: (scopedCtx: unknown) => void): void
@@ -39,7 +41,9 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
   try {
     cfg = resolveConfig(config)
   } catch (error) {
-    console.warn('[dsh-dream] ' + (error instanceof Error ? error.message : String(error)))
+    const msg = '[dsh-dream] ' + (error instanceof Error ? error.message : String(error))
+    if (typeof ctx.logger?.warn === 'function') ctx.logger.warn(msg)
+    else console.warn(msg)
     cfg = resolveConfig(null)
   }
 
@@ -66,7 +70,9 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
         source: 'runtime',
       }))
     } catch (error) {
-      console.warn('[dsh-dream] 做梦协议技能加载失败：' + (error instanceof Error ? error.message : String(error)))
+      const msg = '[dsh-dream] 做梦协议技能加载失败：' + (error instanceof Error ? error.message : String(error))
+      if (typeof ctx.logger?.warn === 'function') ctx.logger.warn(msg)
+      else console.warn(msg)
     }
   }
   // 面板同源路由：宿主有 webServer 才由 web.ts 用 ctx.inject 挂上；headless 夹具没有 inject 就跳过。
@@ -75,10 +81,17 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
     installDreamActions(ctx, { config: cfg })
   }
   installAutomaticDream(ctx, cfg)
+  let disposed = false
+  const disposeAll = () => {
+    if (disposed) return
+    disposed = true
+    for (const dispose of disposers.splice(0).reverse()) dispose?.()
+  }
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => disposeAll, 'dsh-dream: lifecycle')
+  }
   if (typeof ctx.on === 'function') {
-    ctx.on('dispose', () => {
-      for (const dispose of disposers) dispose()
-    })
+    ctx.on('dispose', disposeAll)
   }
 }
 

@@ -31,7 +31,7 @@ function EvidenceText({ text }) {
 
 function ReviewBlock({ index, title, children }) {
   return h('section', {
-    className: css['verify-block'], style: { '--stagger-idx': index },
+    className: css['verify-block'], 'data-dsh-card': '', style: { '--stagger-idx': index },
     ...spotlightHandlers,
   }, h('h3', { className: css['verify-head'] }, title), children);
 }
@@ -118,7 +118,7 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
         }, compareLabel) : null),
       h('div', { className: css.privateText },
         h(ReviewBlock, { index: 0, title: t('建议行动') },
-          h('h2', { tabIndex: -1, 'data-dream-detail-title': true, className: css.inspectorTitle }, row.title),
+          h('h2', { tabIndex: -1, 'data-dream-detail-title': true, 'data-dsh-editorial-heading': '', className: css.inspectorTitle }, row.title),
           h('p', null, row.action || t('未标注具体动作'))),
         h(ReviewBlock, { index: 1, title: t('来源与证据') },
           row.evidence.length ? row.evidence.map(source => h('div', { key: source.id, className: css.evidence },
@@ -151,6 +151,7 @@ function ColumnDivider({ splitRef, listId, listRef, detailRef }) {
   const left = useRef(0);
   useLayoutEffect(() => {
     const list = listRef.current;
+    if (!list || typeof ResizeObserver !== 'function') return;
     const observer = new ResizeObserver(() => setWidth(list.offsetWidth));
     observer.observe(list);
     return () => observer.disconnect();
@@ -193,7 +194,7 @@ function ColumnDivider({ splitRef, listId, listRef, detailRef }) {
 
 function playRowExit(node, action) {
   if (!node?.isConnected) return Promise.resolve();
-  if (node.ownerDocument.defaultView.matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
+  if (node.ownerDocument?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
   node.dataset.exit = action;
   return new Promise(resolve => {
     const timer = setTimeout(done, 430);
@@ -214,12 +215,20 @@ function playRowExit(node, action) {
 function CandidateRow({ row, index, active, selected, disabled, onSelect, onOpen, privacy }) {
   return h('div', {
     className: clsx(css['cand-row'], privacy && css.maskedRow),
-    'data-dream-row': row.id, 'data-active': active, style: { '--stagger-idx': Math.min(index, 12) }, ...spotlightHandlers,
+    'data-dream-row': row.id,
+    'data-dsh-row': '',
+    'data-selected': String(Boolean(active)),
+    'data-active': String(Boolean(active)),
+    style: { '--stagger-idx': Math.min(index, 12) },
+    ...spotlightHandlers,
   },
-  onSelect ? h('input', {
-    type: 'checkbox', checked: selected, disabled, onChange: event => onSelect(event.target.checked),
-    'aria-label': privacy ? t('选中候选') : t('选中候选：') + row.title, className: css.batchCheckbox,
-  }) : null,
+  onSelect ? h('div', { className: css.batchCheckbox }, h(W.Checkbox, {
+    checked: selected,
+    disabled,
+    hiddenLabel: true,
+    label: privacy ? t('选中候选') : t('选中候选：') + row.title,
+    onChange: onSelect,
+  })) : null,
   h('button', { type: 'button', 'aria-pressed': active, onClick: onOpen, className: css.candidateButton },
     h('span', { className: css['cand-title'] }, row.title),
     h('span', { className: css['cand-summary'] }, row.action || row.when),
@@ -245,7 +254,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   const detailRef = useRef(null);
   const focusNext = useRef(false);
   const mobileReturn = useRef(null);
-  const listId = useId();
+  const listId = typeof useId === 'function' ? useId() : 'dream-list';
   // Update protection for a batch in flight.
   __stardustUpdatesGuard(React, "dsh-dream.memory-board", { busy: pending });
 
@@ -276,7 +285,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   const mobileDetail = activeId !== null && active !== undefined;
 
   function rowNode(id) {
-    return Array.from(listRef.current?.querySelectorAll('[data-dream-row]') || []).find(node => node.dataset.dreamRow === id);
+    return Array.from(listRef.current?.querySelectorAll?.('[data-dream-row]') || []).find(node => node.dataset.dreamRow === id);
   }
   function select(row, focus = true) {
     focusNext.current = focus;
@@ -285,20 +294,20 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   useLayoutEffect(() => {
     if (!focusNext.current) return;
     focusNext.current = false;
-    if (detailRef.current?.getClientRects().length && !listRef.current?.getClientRects().length) {
-      splitRef.current.parentElement.scrollTop = 0;
-      detailRef.current.querySelector('[data-dream-detail-title]')?.focus({ preventScroll: true });
+    if (detailRef.current?.getClientRects?.().length && !listRef.current?.getClientRects?.().length) {
+      if (splitRef.current?.parentElement) splitRef.current.parentElement.scrollTop = 0;
+      detailRef.current.querySelector?.('[data-dream-detail-title]')?.focus({ preventScroll: true });
     } else if (active) {
       const node = rowNode(active.id);
-      node?.querySelector('button')?.focus({ preventScroll: true });
-      node?.scrollIntoView({ block: 'nearest' });
+      node?.querySelector?.('button')?.focus({ preventScroll: true });
+      node?.scrollIntoView?.({ block: 'nearest' });
     }
   }, [activeId, active?.id, limit]);
   useLayoutEffect(() => {
     if (activeId === null && mobileReturn.current) {
       const node = rowNode(mobileReturn.current);
       mobileReturn.current = null;
-      (node?.querySelector('button') || listRef.current?.querySelector('input[type="search"]'))?.focus({ preventScroll: true });
+      (node?.querySelector?.('button') || listRef.current?.querySelector?.('input[type="search"]'))?.focus({ preventScroll: true });
     }
   }, [activeId]);
   useLayoutEffect(() => {
@@ -309,7 +318,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
       const next = (current + direction + rows.length) % rows.length;
       if (next >= limit) setLimit(Math.ceil((next + 1) / LIST_PAGE_SIZE) * LIST_PAGE_SIZE);
       if (rows[next].id !== activeId) select(rows[next]);
-      else rowNode(rows[next].id)?.scrollIntoView({ block: 'nearest' });
+      else rowNode(rows[next].id)?.scrollIntoView?.({ block: 'nearest' });
       return true;
     };
     return () => { moveRef.current = null; };
@@ -317,8 +326,8 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
 
   async function animate(ids, action) {
     const nodes = ids.map(rowNode);
-    const focus = splitRef.current?.ownerDocument.activeElement;
-    if (active && ids.includes(active.id) && (detailRef.current?.contains(focus) || nodes.some(node => node?.contains(focus)))) {
+    const focus = splitRef.current?.ownerDocument?.activeElement;
+    if (active && ids.includes(active.id) && (detailRef.current?.contains?.(focus) || nodes.some(node => node?.contains?.(focus)))) {
       focusNext.current = true;
     }
     await Promise.all(nodes.map(node => playRowExit(node, action)));
@@ -327,7 +336,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     if (batchLock.current || !picked.length || !sameGroup || action === 'accept' && globalSelection && !confirmed) return;
     const items = picked.map(row => ({ lessonId: row.id, expectedRevision: row.revision }));
     const signature = JSON.stringify({ action, items });
-    const requestId = retry?.signature === signature ? retry.id : crypto.randomUUID();
+    const requestId = retry?.signature === signature ? retry.id : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'batch_' + Date.now());
     batchLock.current = true;
     setRetry({ signature, id: requestId }); setPending(true); setFailure('');
     try {
@@ -350,24 +359,33 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     resetList();
   }
 
-  const scopePicker = h('label', { className: css.scopePicker },
+  const scopeItems = [
+    { id: '', label: t('全部项目与主题') },
+    ...Array.from(groups, ([key, { label }]) => ({ id: key, label })),
+  ];
+  const scopePicker = h('div', { className: css.scopePicker },
     h('span', null, t('项目与主题')),
-    h('select', { value: groupFilter, disabled: pending, onChange: event => changeGroup(event.target.value) },
-      h('option', { value: '' }, t('全部项目与主题')),
-      Array.from(groups, ([key, { label }]) => h('option', { key, value: key }, label))));
-  const listEmpty = error ? h(W.Empty, { title: t('暂时读不到经验'), action: h(W.Button, { onClick: onRetry, disabled: loading }, t('重试')) }, displayError(error))
+    h(W.ChoiceMenu, {
+      id: listId + '-scope',
+      label: t('项目与主题'),
+      value: groupFilter,
+      disabled: pending,
+      items: scopeItems,
+      onChange: changeGroup,
+    }));
+  const listEmpty = error ? h(W.Empty, { title: t('暂时读不到经验'), action: h(W.Button, { icon: 'refresh', onClick: onRetry, disabled: loading }, t('重试')) }, displayError(error))
     : loading && !all.length ? h(W.Empty, { title: t('加载中…') })
     : !rows.length ? h(W.Empty, {
       title: all.length ? t('没有匹配的经验') : reviewMode ? t('没有待审阅的经验') : t(history ? '没有已驳回记录。' : '还没有已采纳的经验'),
-      action: all.length ? h(W.Button, { onClick: () => { setSearch(''); changeGroup(''); } }, t('清空筛选')) : null,
+      action: all.length ? h(W.Button, { icon: 'close', onClick: () => { setSearch(''); changeGroup(''); } }, t('清空筛选')) : null,
     }) : null;
 
   return h('div', {
-    className: css['workbench-grid'], ref: splitRef, 'data-review': reviewMode, 'data-detail': mobileDetail,
+    className: css['workbench-grid'], ref: splitRef, 'data-review': String(Boolean(reviewMode)), 'data-detail': String(Boolean(mobileDetail)),
   },
     reviewMode ? h('aside', { className: css['pane-rail'], 'aria-label': t('审阅筛选与自动记忆') },
       h('div', { className: css['rail-scroll'] },
-        h('section', { className: css['control-card'], ...spotlightHandlers },
+        h('section', { className: css['control-card'], 'data-dsh-card': '', ...spotlightHandlers },
           h(AutomaticSwitches, { automation }),
           h('p', { className: css.muted }, t('候选经验由你确认采纳。')),
           h(W.Status, { tone: 'error' }, automation.failure ? displayError(automation.failure) : null)),
@@ -390,20 +408,32 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
           type: 'search', label: t('搜索经验'), value: search, disabled: pending,
           onChange: event => { setSearch(event.target.value); setLimit(LIST_PAGE_SIZE); setActiveId(null); },
         }),
-        h(W.IconButton, { icon: 'refresh', label: t('刷新'), onClick: onRetry, disabled: loading || pending })),
-      !reviewMode ? h('div', { className: css.acceptedFilters }, scopePicker,
-        h('label', { className: css.checkLabel }, h('input', { type: 'checkbox', checked: history, onChange: event => {
-          setHistory(event.target.checked); setSearch(''); changeGroup('');
-        } }), t('已驳回历史'))) : null,
+        h(W.IconButton, { icon: 'refresh', spinning: Boolean(loading || pending), label: t('刷新'), onClick: onRetry, disabled: loading || pending })),
+      !reviewMode ? h('div', { className: css.acceptedFilters },
+        h(W.SegmentedControl, {
+          id: listId + '-history',
+          label: t('经验状态'),
+          value: history ? 'rejected' : 'usable',
+          options: [
+            { value: 'usable', label: t('可用经验') },
+            { value: 'rejected', label: t('已驳回历史') },
+          ],
+          onChange: val => { setHistory(val === 'rejected'); setSearch(''); changeGroup(''); },
+        }),
+        scopePicker) : null,
       picked.length ? h('div', { className: css.batch },
         h('p', { className: css.muted }, t('已选') + ' ' + picked.length + ' / 20'),
-        globalSelection ? h('label', { className: css.checkLabel }, h('input', {
-          type: 'checkbox', checked: confirmed, disabled: pending, onChange: event => setGlobalConfirmed(event.target.checked ? globalSelection : ''),
-        }), t('全局经验会用于所有项目；我已核对并同意。')) : null,
+        globalSelection ? h(W.Checkbox, {
+          checked: confirmed,
+          disabled: pending,
+          className: css.checkLabel,
+          label: t('全局经验会用于所有项目；我已核对并同意。'),
+          onChange: checked => setGlobalConfirmed(checked ? globalSelection : ''),
+        }) : null,
         !sameGroup ? h('p', { className: css.muted }, t('请只选择同范围、同主题的候选。')) : null,
         h('div', { className: css.actions },
-          h(W.Button, { variant: 'primary', disabled: pending || !sameGroup || !!globalSelection && !confirmed, onClick: () => batch('accept') }, t('批量采纳')),
-          h(W.Button, { disabled: pending || !sameGroup, onClick: () => batch('reject') }, t('批量驳回'))),
+          h(W.Button, { icon: 'check', variant: 'primary', disabled: pending || !sameGroup || !!globalSelection && !confirmed, onClick: () => batch('accept') }, t('批量采纳')),
+          h(W.Button, { icon: 'trash', variant: 'danger', disabled: pending || !sameGroup, onClick: () => batch('reject') }, t('批量驳回'))),
         h(W.Status, { tone: 'error' }, failure)) : null,
       h('div', { className: css['candidate-scroll'], 'aria-busy': loading || pending }, listEmpty ||
         visible.map((row, index) => h(CandidateRow, {

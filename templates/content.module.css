@@ -85,8 +85,9 @@
 }
 
 .dshd-tile {
-  background: var(--dsw-alias-bg-layer-2);
-  border-radius: 11px;
+  background: var(--dsw-alias-bg-layer-1, #f7f9fc);
+  border: var(--dsh-control-border-width, 0.5px) solid var(--dsw-alias-border-l2, #e2e7f0);
+  border-radius: var(--dsw-radius-md, 11px);
   padding: 9px 11px;
   min-width: 0;
 }
@@ -120,9 +121,10 @@
 }
 
 .dshd-card {
-  background: var(--dsw-alias-bg-layer-2);
-  border-radius: 12px;
-  padding: 11px 12px;
+  background: var(--dsw-alias-bg-layer-1, #f7f9fc);
+  border: var(--dsh-control-border-width, 0.5px) solid var(--dsw-alias-border-l2, #e2e7f0);
+  border-radius: var(--dsw-radius-md, 12px);
+  padding: 12px 14px;
   min-width: 0;
 }
 
@@ -301,10 +303,11 @@
 }
 
 .dshd-dream {
-  background: var(--dsw-alias-bg-layer-2);
-  border-radius: 12px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-bg-layer-1, #f7f9fc);
+  border: var(--dsh-control-border-width, 0.5px) solid var(--dsw-alias-border-l2, #e2e7f0);
+  border-radius: var(--dsw-radius-md, 12px);
+  padding: 11px 13px;
+  border-inline-start: 3px solid var(--dsw-alias-state-business-primary, #4176e6);
   min-width: 0;
 }
 

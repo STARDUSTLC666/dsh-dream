@@ -2,7 +2,9 @@
 
 # Dream
 
-**让 DSH 把做过的任务，变成下次用得上的经验。**
+**DeepSeek Harness 原生任务经验记忆插件：让 DSH 把做过的任务，变成下次用得上的经验。**
+
+适配 DeepSeek Harness `>=0.2.2-rc.3`，提供原生清透、米白纸感、Claude 暖书卷、8-Bit 像素与晴空薄荷 5 套可切换浅色/暖色工作台风格（支持跨插件同步、命令面板快速切换与 8 种界面语言）及柔和岩板深色模式。
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![total downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-total-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
 
@@ -18,8 +20,9 @@
 ## 功能
 
 - 实际任务结束后，按开关与额度整理候选经验。
-- 核对原文、适用范围、条件与例外，再决定采纳。
-- 在相关任务中回用已确认经验，并保留来源。
+- 核对原文、适用范围、条件与例外，再决定采纳或写入 `AGENTS.md`。
+- 在相关任务中回用已确认经验，并保留来源记录与写入审计。
+- 内置 5 套工作台视觉风格（原生清透 / 米白纸感 / Claude 暖书卷 / 8-Bit 像素 / 晴空薄荷）与微交互动效，适配 DSH `>=0.2.2-rc.3` 宿主控件、弹层样式同步与窗口留白。
 
 ## 看看怎么用
 

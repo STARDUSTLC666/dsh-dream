@@ -2,7 +2,9 @@
 
 # Dream
 
-**Turn completed DSH tasks into lessons for the next one.**
+**DeepSeek Harness native task-memory plugin: turn completed DSH tasks into verified lessons for the next one.**
+
+Built for DeepSeek Harness `>=0.2.2-rc.3`, with five switchable light/warm workbench styles (Harness Native, Cream Paper, Claude Warm, 8-Bit Pixel, Mint Air) synced across plugins, command palette quick switching, eight UI locales, and a soft-slate dark mode.
 
 [![npm](https://img.shields.io/npm/v/@stardustlc/dsh-dream)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream) [![total downloads](https://raw.githubusercontent.com/STARDUSTLC666/dsh-suite/npm-downloads/assets/dsh-dream-total-downloads.svg)](https://www.npmjs.com/package/@stardustlc/dsh-dream)
 
@@ -18,8 +20,9 @@
 ## Features
 
 - Collect candidates after real tasks, within your settings and limits.
-- Inspect sources, scope, conditions and exceptions before accepting.
-- Reuse accepted lessons in relevant tasks with source context.
+- Inspect sources, scope, conditions, and exceptions before accepting or writing to `AGENTS.md`.
+- Reuse accepted lessons in relevant tasks with masked source context and bridge audit logs.
+- Switch between five workbench styles (Harness Native, Cream Paper, Claude Warm, 8-Bit Pixel, Mint Air) with subtle micro-interactions, portaled overlay sync, and DSH `>=0.2.2-rc.3` host primitives and frame clearances.
 
 ## Review before reuse
 

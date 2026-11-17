@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.15.2 (2026-11-17)
+
+- 在工作台单独检查和安装兼容版本。自动安装默认关闭，可为该插件开启空闲时的稳定补丁更新。
+- Check and install compatible versions separately from the workbench. Automatic installation is off by default. Enable it for this plugin to apply stable patches while idle.
+
 ## 0.15.1 (2026-11-16)
 
 - 将原版 HTML 的顶栏、三栏审阅、四套皮肤和动效直接移植到 Dream 工作台。范围筛选、审阅按钮与核查卡片接入现有数据和宿主控件。

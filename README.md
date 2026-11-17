@@ -26,9 +26,9 @@
 
 ## 看看怎么用
 
-![在 Dream 工作台核对候选来源、确认采纳并查看已采纳经验](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/16c2cc44cff0e89310e858f3be93a1593e1c52ad/docs/assets/intro/review-steps.gif)
+[![在 Dream 工作台核对候选来源、适用范围与证据，切换界面风格并确认采纳](docs/assets/intro/screen-zh.webp)](docs/assets/intro/screen-zh.webp)
 
-演示画面来自 Dream 0.15.1 的工作台。展开候选核对来源与适用范围，确认采纳后到「已采纳」查看这条经验。
+*截图来自 Harness Web `0.2.2-rc.3` 中运行的 `Dream 0.16.1`（米白纸感风格）。展开候选核对来源与适用范围，确认采纳后到「已采纳」查看这条经验。*
 
 ## 安装
 

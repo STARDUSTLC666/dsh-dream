@@ -26,9 +26,9 @@ Built for DeepSeek Harness `>=0.2.2-rc.3`, with five switchable light/warm workb
 
 ## Review before reuse
 
-![Review a candidate, accept it, and find it in the accepted list in Dream](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/16c2cc44cff0e89310e858f3be93a1593e1c52ad/docs/assets/intro/review-steps.gif)
+[![Inspect candidate sources, scope, and evidence, switch workbench styles, and confirm acceptance in Dream](docs/assets/intro/screen-en.webp)](docs/assets/intro/screen-en.webp)
 
-Captured in the Dream 0.15.1 workbench. Open a candidate, check its source and scope, accept it, and find it in **Accepted**.
+*Captured with `Dream 0.16.1` running in Harness Web `0.2.2-rc.3` (Cream Paper style). Open a candidate, check its source and scope, accept it, and find it in **Accepted**.*
 
 ## Install
 

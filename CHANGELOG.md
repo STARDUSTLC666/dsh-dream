@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.16.1 (2026-11-18)
+
+- 同步 `@stardustlc/dsh-updates` 0.2.1：恢复 Suite 整包统一更新（移除独立拆包迁移），保留整包与独立插件的原地热更新与失败自动回滚。
+- Sync `@stardustlc/dsh-updates` 0.2.1: restore unified Suite bundle updates (removing standalone conversion) while retaining in-place hot reload and automatic rollback.
+
 ## 0.16.0 (2026-11-18)
 
 - 升级 Dream 工作台界面与动效并深度适配 DeepSeek Harness `>=0.2.2-rc.3`：统一 5 套可切换界面风格（原生清透 / 米白纸感 / Claude 暖书卷 / 8-Bit 像素 / 晴空薄荷，覆盖顶栏、命令面板、设置与 8 种界面语言）并支持跨插件同步，深色模式采用柔和透气岩板色。

@@ -1506,7 +1506,7 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
             const vm = props.vm;
             const head = function (extra) {
                 return h("div", { className: css['dshd-khead'], key: "head" }, [
-                    h("h4", { key: "t" }, t("写入记录")),
+                    h("h4", { key: "t", 'data-dsh-serif': '' }, t("写入记录")),
                     h("span", { className: css['dshd-spacer'], key: "s" }),
                     extra,
                 ]);
@@ -1520,6 +1520,8 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
             if (props.loading === true) {
                 return h("section", { className: clsx(css['dshd-card'], css['dshd-kcard']), 'data-dsh-card': '' }, [
                     head(h("span", { className: css['dshd-hint'], key: "l" }, t("加载中…"))),
+                    h(W.Skeleton, { key: "skel-1", variant: "row", label: t("加载中…") }),
+                    h(W.Skeleton, { key: "skel-2", variant: "row" }),
                 ]);
             }
             if (vm.rows.length === 0) {
@@ -1622,7 +1624,8 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
             ]);
         }
         function Skeleton() {
-            return h("div", null, [0, 1, 2].map((index) => h("div", { className: css['dshd-skel'], key: String(index) })));
+            return h("div", { className: css.skeletonWrap, role: "status", 'aria-busy': "true", 'aria-label': t("加载中…") },
+                [0, 1, 2].map((index) => h(W.Skeleton, { variant: "card", key: String(index) })));
         }
         // ───────────────────────── 主面板 ─────────────────────────
         function DreamPanel({workbench=false}={}) {
@@ -1631,6 +1634,7 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
             const moveCandidate = useRef(null);
             const tabId = useId();
             const [skin, setSkin] = useDreamStyle(root);
+            const [font, setFont] = useDreamFont(root);
             const [paletteActions, setPaletteActions] = useState(null);
             const [dreams, setDreams] = useState([]);
             const [stats, setStats] = useState(null);
@@ -1851,7 +1855,7 @@ showFilterButton === true && activeTab === "journal" ? h("div", { className: css
                         onClick: function () { setFilterOpen(filterOpen !== true); },
                         title: t("筛选作用于已加载窗口，不影响全量统计"),
                     }, t("筛选") + (filterCount > 0 ? " · " + String(filterCount) : ""), h(W.Icon, { name: 'down', size: 13 })),
-                    filterOpen === true ? h(nativeUI().MenuSurface, { ref: createOverlaySyncRef(skin), 'data-dsh-style': skin, className: clsx(css['dshd-filterpop'], css.surface), key: "pop", role: "group", 'data-window-drag-exclude': '', "aria-label": t("筛选梦境") }, [
+                    filterOpen === true ? h(nativeUI().MenuSurface, { ref: createOverlaySyncRef(skin, font), 'data-dsh-style': skin, 'data-dsh-font': font, className: clsx(css['dshd-filterpop'], css.surface), key: "pop", role: "group", 'data-window-drag-exclude': '', "aria-label": t("筛选梦境") }, [
                         h("div", { className: css['dshd-filtertitle'], key: "title" }, t("筛选当前已加载的 ") + String(vm.count) + t(" 场，不影响全量统计")),
                         h("div", { key: "moods" }, vm.moodRows.map(function (row) {
                             const on = filters.moods.indexOf(row.mood) !== -1;
@@ -1944,7 +1948,7 @@ pristine ? null : h(Btn, {
             };
             const reviewCount = knowledgeVm.rows.filter(row => HELD_STATES.includes(row.state)).length;
             return h(W.Page, {
-                root, workbench, activeTab, changeTab, tabId, skin, setSkin, paletteActions, openPalette,
+                root, workbench, activeTab, changeTab, tabId, skin, setSkin, font, setFont, paletteActions, openPalette,
                 closePalette: () => setPaletteActions(null), privacy, togglePrivacy, automation, actionNotice, reviewCount,
             }, activeTab === 'journal' ? h('div', { className: css.documentPage }, errorBox, toolbar, body(),
                 h('div', { className: css['dshd-footer'] },
@@ -2062,6 +2066,14 @@ pristine ? null : h(Btn, {
             readDshStyle: readDshStyle,
             writeDshStyle: writeDshStyle,
             normalizeDshStyle: normalizeDshStyle,
+            DSH_FONTS: DSH_FONTS,
+            DSH_FONT_STORAGE_KEY: DSH_FONT_STORAGE_KEY,
+            DSH_FONT_EVENT: DSH_FONT_EVENT,
+            DSH_DEFAULT_FONT: DSH_DEFAULT_FONT,
+            readDshFont: readDshFont,
+            writeDshFont: writeDshFont,
+            normalizeDshFont: normalizeDshFont,
+            subscribeDshFont: subscribeDshFont,
         };
         return module.exports;
     } });

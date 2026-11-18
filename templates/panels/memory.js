@@ -119,7 +119,7 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
         }, compareLabel) : null),
       h('div', { className: css.privateText },
         h(ReviewBlock, { index: 0, title: t('建议行动') },
-          h('h2', { tabIndex: -1, 'data-dream-detail-title': true, 'data-dsh-editorial-heading': '', className: css.inspectorTitle }, row.title),
+          h('h2', { tabIndex: -1, 'data-dream-detail-title': true, 'data-dsh-editorial-heading': '', 'data-dsh-serif': '', className: css.inspectorTitle }, row.title),
           h('p', null, row.action || t('未标注具体动作'))),
         h(ReviewBlock, { index: 1, title: t('来源与证据') },
           row.evidence.length ? row.evidence.map(source => h('div', { key: source.id, className: css.evidence },
@@ -146,53 +146,6 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
     diffOpen && !masked ? h(LessonDiffDialog, { row, base: previous, onClose: () => setDiffOpen(false) }) : null);
 }
 
-function ColumnDivider({ splitRef, listId, listRef, detailRef }) {
-  const [width, setWidth] = useState(340);
-  const drag = useRef(null);
-  const left = useRef(0);
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list || typeof ResizeObserver !== 'function') return;
-    const observer = new ResizeObserver(() => setWidth(list.offsetWidth));
-    observer.observe(list);
-    return () => observer.disconnect();
-  }, [listRef]);
-  function resize(next) {
-    const max = Math.min(LIST_MAX_WIDTH, listRef.current.offsetWidth + detailRef.current.offsetWidth - 300);
-    const bounded = Math.round(Math.max(LIST_MIN_WIDTH, Math.min(max, next)));
-    splitRef.current.style.setProperty('--list-width', bounded + 'px');
-  }
-  function start(event) {
-    if (event.button !== 0 || !event.isPrimary) return;
-    const handle = event.currentTarget;
-    drag.current = event.pointerId;
-    left.current = listRef.current.getBoundingClientRect().left;
-    handle.focus({ preventScroll: true });
-    handle.setPointerCapture(event.pointerId);
-  }
-  function stop(event) {
-    if (drag.current !== event.pointerId) return;
-    drag.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  }
-  function keys(event) {
-    const step = event.shiftKey ? 40 : 16;
-    if (event.key === 'ArrowLeft') resize(listRef.current.offsetWidth - step);
-    else if (event.key === 'ArrowRight') resize(listRef.current.offsetWidth + step);
-    else if (event.key === 'Home') resize(LIST_MIN_WIDTH);
-    else if (event.key === 'End') resize(LIST_MAX_WIDTH);
-    else return;
-    event.preventDefault();
-  }
-  return h('div', {
-    className: css['pane-resizer'], tabIndex: 0, role: 'separator', 'aria-orientation': 'vertical', 'aria-controls': listId,
-    'aria-label': t('调整候选列表宽度'), 'aria-valuenow': width, 'aria-valuemin': LIST_MIN_WIDTH, 'aria-valuemax': LIST_MAX_WIDTH,
-    onKeyDown: keys, onPointerDown: start,
-    onPointerMove: event => { if (event.pointerId === drag.current) resize(event.clientX - left.current); },
-    onPointerUp: stop, onPointerCancel: stop, onLostPointerCapture: stop,
-  });
-}
-
 function playRowExit(node, action) {
   if (!node?.isConnected) return Promise.resolve();
   if (node.ownerDocument?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
@@ -213,7 +166,7 @@ function playRowExit(node, action) {
   });
 }
 
-function CandidateRow({ row, index, active, selected, disabled, onSelect, onOpen, privacy }) {
+function CandidateRow({ row, index, active, selected, disabled, copied, quickBusy, onSelect, onOpen, onQuickAccept, onQuickCopy, onQuickInspect, privacy }) {
   return h('div', {
     className: clsx(css['cand-row'], privacy && css.maskedRow),
     'data-dream-row': row.id,
@@ -231,11 +184,37 @@ function CandidateRow({ row, index, active, selected, disabled, onSelect, onOpen
     onChange: onSelect,
   })) : null,
   h('button', { type: 'button', 'aria-pressed': active, onClick: onOpen, className: css.candidateButton },
-    h('span', { className: css['cand-title'] }, row.title),
+    h('span', { className: css.candTitleLine },
+      h('span', { className: 'dsh-pixel-cursor', 'aria-hidden': 'true' }, '▶'),
+      h('span', { className: css['cand-title'], 'data-dsh-serif': '' }, row.title)),
     h('span', { className: css['cand-summary'] }, row.action || row.when),
     h('span', { className: css['cand-tags'] },
       h(ScopeBadge, { row }),
-      h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel))));
+      h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel))),
+  h('div', { className: clsx('dsh-row-actions', css.rowActions) },
+    onQuickAccept ? h(W.IconButton, {
+      icon: 'check',
+      size: 'sm',
+      disabled: quickBusy,
+      label: t('快速采纳'),
+      'data-dream-quick-accept': row.id,
+      onClick: onQuickAccept,
+    }) : null,
+    h(W.IconButton, {
+      icon: copied ? 'check' : 'copy',
+      size: 'sm',
+      'data-copied': copied ? 'true' : undefined,
+      'data-dream-quick-copy': row.id,
+      label: copied ? t('已复制') : t('复制经验'),
+      onClick: onQuickCopy,
+    }),
+    h(W.IconButton, {
+      icon: 'right',
+      size: 'sm',
+      'data-dream-quick-inspect': row.id,
+      label: t('审阅详情'),
+      onClick: onQuickInspect,
+    })));
 }
 
 function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onChanged, onRetry, moveRef, automation, onNavigateTab }) {
@@ -246,18 +225,30 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   const [selected, setSelected] = useState([]);
   const [limit, setLimit] = useState(LIST_PAGE_SIZE);
   const [pending, setPending] = useState(false);
+  const [quickBusyId, setQuickBusyId] = useState('');
+  const [copiedRowId, setCopiedRowId] = useState('');
   const [failure, setFailure] = useState('');
   const [retry, setRetry] = useState(null);
   const [globalConfirmed, setGlobalConfirmed] = useState('');
   const batchLock = useRef(false);
+  const copyTimerRef = useRef(null);
   const splitRef = useRef(null);
   const listRef = useRef(null);
   const detailRef = useRef(null);
   const focusNext = useRef(false);
   const mobileReturn = useRef(null);
   const listId = typeof useId === 'function' ? useId() : 'dream-list';
+  const split = useResizableSplit(React, {
+    key: 'dsh-dream:split-width',
+    initial: 340,
+    min: LIST_MIN_WIDTH,
+    max: LIST_MAX_WIDTH,
+  });
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
   // Update protection for a batch in flight.
-  __stardustUpdatesGuard(React, "dsh-dream.memory-board", { busy: pending });
+  __stardustUpdatesGuard(React, "dsh-dream.memory-board", { busy: pending || Boolean(quickBusyId) });
 
   const all = vm.rows.filter(row => reviewMode ? HELD_STATES.includes(row.state) : row.state === (history ? 'rejected' : 'usable'));
   const groups = new Map();
@@ -360,6 +351,40 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     resetList();
   }
 
+  async function quickCopy(row) {
+    const text = [row.title, row.action || row.when].filter(Boolean).join('\n');
+    const ok = await copyText(text) || legacyExecCopy(text);
+    if (ok) {
+      setCopiedRowId(row.id);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedRowId(''), 1600);
+    }
+  }
+
+  async function quickAccept(row) {
+    if (batchLock.current || quickBusyId || !row.candidate || row.isGlobal || row.conflictIds.length || row.revision < 1) return;
+    setQuickBusyId(row.id);
+    setFailure('');
+    try {
+      await postAction({ operation: 'review', action: 'accept', lessonId: row.id, expectedRevision: row.revision });
+      await animate([row.id], 'accept');
+      onChanged(t('已更新「') + row.title + t('」的审阅状态。'));
+    } catch (err) {
+      setFailure(displayError(err));
+    } finally {
+      setQuickBusyId('');
+    }
+  }
+
+  function quickInspect(row) {
+    select(row, false);
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        detailRef.current?.querySelector?.('[data-dream-detail-title]')?.focus?.({ preventScroll: true });
+      });
+    }
+  }
+
   const scopeItems = [
     { id: '', label: t('全部项目与主题') },
     ...Array.from(groups, ([key, { label }]) => ({ id: key, label })),
@@ -375,7 +400,8 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
       onChange: changeGroup,
     }));
   const listEmpty = error ? h(W.Empty, { title: t('暂时读不到经验'), action: h(W.Button, { icon: 'refresh', onClick: onRetry, disabled: loading }, t('重试')) }, displayError(error))
-    : loading && !all.length ? h(W.Empty, { title: t('加载中…') })
+    : loading && !all.length ? h('div', { className: css.skeletonWrap, role: 'status', 'aria-busy': 'true', 'aria-label': t('加载中…') },
+      [0, 1, 2, 3].map(idx => h(W.Skeleton, { key: idx, variant: 'row' })))
     : !rows.length ? (all.length
       ? h(W.Empty, {
           title: t('没有匹配的经验'),
@@ -400,7 +426,11 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     : null;
 
   return h('div', {
-    className: css['workbench-grid'], ref: splitRef, 'data-review': String(Boolean(reviewMode)), 'data-detail': String(Boolean(mobileDetail)),
+    className: css['workbench-grid'],
+    ref: splitRef,
+    'data-review': String(Boolean(reviewMode)),
+    'data-detail': String(Boolean(mobileDetail)),
+    style: { ...split.paneStyle, '--list-width': split.size + 'px' },
   },
     reviewMode ? h('aside', { className: css['pane-rail'], 'aria-label': t('审阅筛选与自动记忆') },
       h('div', { className: css['rail-scroll'] },
@@ -457,7 +487,13 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
       h('div', { className: css['candidate-scroll'], 'aria-busy': loading || pending }, listEmpty ||
         visible.map((row, index) => h(CandidateRow, {
           key: row.id, row, index, active: row.id === active?.id, selected: selected.includes(row.id), privacy,
+          copied: copiedRowId === row.id,
+          quickBusy: quickBusyId === row.id || pending,
           onOpen: () => select(row),
+          onQuickCopy: () => quickCopy(row),
+          onQuickInspect: () => quickInspect(row),
+          onQuickAccept: reviewMode && row.candidate && !row.isGlobal && !row.conflictIds.length && row.revision >= 1
+            ? () => quickAccept(row) : null,
           disabled: pending || !selected.includes(row.id) && selected.length >= 20,
           onSelect: reviewMode && row.candidate && !row.conflictIds.length ? checked => {
             setSelected(ids => checked ? [...ids, row.id] : ids.filter(id => id !== row.id));
@@ -466,7 +502,12 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
         })),
         visible.length < rows.length ? h(W.Button, { className: css.more, onClick: () => setLimit(limit + LIST_PAGE_SIZE) }, t('显示更多经验')) : null),
       h('footer', { className: css.listFooter }, t('显示') + ' ' + visible.length + ' / ' + rows.length)),
-    h(ColumnDivider, { splitRef, listId, listRef, detailRef }),
+    h(W.SplitResizer, {
+      ...split.resizerProps,
+      'aria-controls': listId,
+      label: t('调整候选列表宽度'),
+      className: css['pane-resizer'],
+    }),
     h('section', { className: css['pane-inspector'], ref: detailRef, 'aria-label': t('经验详情') },
       mobileDetail ? h(W.Button, { className: css.back, variant: 'ghost', icon: 'left', onClick: () => {
         mobileReturn.current = active.id;
@@ -475,11 +516,15 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
       active && !error ? h(MemoryDetail, {
         key: active.id, row: active, base: revisions.get(active.id), privacy, reviewMode, onChanged, batchPending: pending,
         onExit: reviewMode ? action => animate([active.id], action) : null,
-      }) : (!loading && !error && !all.length && reviewMode)
-        ? h('div', { className: css.inspectorEmptyWrap },
-            h(W.Empty, {
-              icon: 'sparkle',
-              title: t('等待新的候选经验'),
-            }, t('候选经验绝不会自动生效——每条都会展示会话原文来源、适用条件与范围，由你决定采纳或丢弃。')))
-        : h(W.Empty, { title: t('选择一条经验') })));
+      }) : (loading && !all.length && !error)
+        ? h('div', { className: css.skeletonInspector, role: 'status', 'aria-busy': 'true', 'aria-label': t('加载中…') },
+          h(W.Skeleton, { variant: 'card' }),
+          h(W.Skeleton, { variant: 'card' }))
+        : (!loading && !error && !all.length && reviewMode)
+          ? h('div', { className: css.inspectorEmptyWrap },
+              h(W.Empty, {
+                icon: 'sparkle',
+                title: t('等待新的候选经验'),
+              }, t('候选经验绝不会自动生效——每条都会展示会话原文来源、适用条件与范围，由你决定采纳或丢弃。')))
+          : h(W.Empty, { title: t('选择一条经验') })));
 }

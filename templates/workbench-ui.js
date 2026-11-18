@@ -52,12 +52,14 @@ function Search({ label, className, ...props }) {
 }
 
 function Checkbox({ label, hiddenLabel = false, checked, disabled, onChange, className, title, ...props }) {
+  const ariaLabel = props['aria-label'] || (hiddenLabel && typeof label === 'string' ? label : undefined);
   return h(nativeUI().Checkbox, {
     ...props,
     checked: Boolean(checked),
     disabled,
-    label,
-    title: title || (hiddenLabel && typeof label === 'string' ? label : undefined),
+    label: hiddenLabel ? undefined : label,
+    'aria-label': ariaLabel,
+    title: title || ariaLabel,
     className: clsx(css.checkbox, hiddenLabel && 'dsh-checkbox-icon', className),
     onChange: next => onChange?.(typeof next === 'boolean' ? next : Boolean(next?.target?.checked)),
   });
@@ -78,12 +80,14 @@ function SegmentedControl({ id, label, value, options, onChange, disabled = fals
 function ChoiceMenu({ id, label, value, items, onChange, disabled = false, className, align = 'start' }) {
   const [open, setOpen] = useState(false);
   const [skin] = useDshStyle(React);
+  const [font] = useDshFont(React);
   const P = nativeUI();
   const current = items.find(item => item.id === value) || items[0];
   return h('div', { className: clsx(css.choiceWrap, className), 'data-window-drag-exclude': '' },
     h(P.Menu, {
       open: Boolean(open && !disabled && items.length > 0),
       dshStyle: skin,
+      dshFont: font,
       portal: !P.isFallback,
       compact: true,
       autoFocus: true,
@@ -108,7 +112,7 @@ function ChoiceMenu({ id, label, value, items, onChange, disabled = false, class
             setOpen(true);
           }
         },
-      }, h('span', { ref: open ? createOverlaySyncRef(skin) : undefined, className: css.choiceLabel }, current?.label || label), h(Icon, { name: 'down', size: 13 })),
+      }, h('span', { ref: open ? createOverlaySyncRef(skin, font) : undefined, className: css.choiceLabel }, current?.label || label), h(Icon, { name: 'down', size: 13 })),
     }),
   );
 }
@@ -285,17 +289,38 @@ function computeCoachmarkLayout(target, preferredSide, cardEl) {
   return { spotlight, side, left, top, arrowX, arrowY };
 }
 
-function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, step, manual, layout: rawLayout, setLayout, onStep, onClose }) {
+function safeTourQuery(scope, selector) {
+  if (!scope || typeof scope.querySelector !== 'function' || !selector) return null;
+  if (selector.startsWith('#') && !/[\s>+~,\[]/.test(selector)) {
+    const rawId = selector.slice(1);
+    const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? '#' + CSS.escape(rawId)
+      : '[id="' + rawId.replace(/["\\]/g, '\\$&') + '"]';
+    try {
+      return scope.querySelector(escaped);
+    } catch {
+      try { return scope.querySelector(selector); } catch { return null; }
+    }
+  }
+  try {
+    return scope.querySelector(selector);
+  } catch {
+    return null;
+  }
+}
+
+function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, font, step, manual, layout: rawLayout, setLayout, onStep, onClose }) {
   const layerRef = useRef(null);
   const cardRef = useRef(null);
   const nextBtnRef = useRef(null);
   const titleId = (typeof useId === 'function' ? useId() : 'dream-tour') + '-title';
   const [copiedTourPrompt, setCopiedTourPrompt] = useState(false);
+  const tabSelector = suffix => '[id="' + String(tabId || '').replace(/["\\]/g, '\\$&') + '-' + suffix + '"]';
   const steps = [
     {
       id: 'auto',
       selector: '[data-tour="dream-auto"]',
-      fallback: '#' + tabId + '-review',
+      fallback: tabSelector('review'),
       side: 'right',
       title: t('开启自动整理与自动召回'),
       desc: t('日常排障或写代码时保持开启，空闲时会自动从真实会话提取候选经验，无需手动记笔记。'),
@@ -312,14 +337,14 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, step, 
     {
       id: 'review',
       selector: '[data-tour="dream-list"]',
-      fallback: '#' + tabId + '-review',
+      fallback: tabSelector('review'),
       side: 'right',
       title: t('先核对原文证据，再确认采纳'),
       desc: t('所有候选默认扣留在「待审阅」，展示原话出处、适用范围与密钥脱敏预览；只有你点「确认采纳」才会真正生效。'),
     },
     {
       id: 'bridge',
-      selector: '#' + tabId + '-bridge',
+      selector: tabSelector('bridge'),
       fallback: '[data-tour="dream-tabs"]',
       side: 'bottom',
       title: t('预览写入 AGENTS.md 与一键回滚'),
@@ -357,7 +382,7 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, step, 
     function measure() {
       const scope = rootRef?.current || (typeof document !== 'undefined' ? document : null);
       if (!scope || typeof scope.querySelector !== 'function') return;
-      const target = scope.querySelector(current.selector) || (current.fallback ? scope.querySelector(current.fallback) : null);
+      const target = safeTourQuery(scope, current.selector) || safeTourQuery(scope, current.fallback);
       setLayout(computeCoachmarkLayout(target, current.side, cardRef.current));
     }
     measure();
@@ -402,6 +427,7 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, step, 
     ref: layerRef,
     className: css.tourLayer,
     'data-dsh-style': skin,
+    'data-dsh-font': normalizeDshFont(font ?? readDshFont()),
     'data-dream-tour': current.id,
     'data-window-drag-exclude': '',
   },
@@ -467,14 +493,17 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, step, 
           }, isLast ? t('完成引导') : t('下一步'))))));
 }
 
-function Dialog({ title, onClose, busy, className, children, style: styleProp }) {
+function Dialog({ title, onClose, busy, className, children, style: styleProp, font: fontProp }) {
   const [syncedStyle] = useDshStyle(React);
+  const [syncedFont] = useDshFont(React);
   const activeStyle = normalizeDshStyle(styleProp ?? syncedStyle);
+  const activeFont = normalizeDshFont(fontProp ?? syncedFont);
   const { Modal, MenuSurface } = nativeUI();
   const close = () => { if (!busy) onClose?.(); };
   return h(Modal, {
     open: true,
     dshStyle: activeStyle,
+    dshFont: activeFont,
     onClose: close,
     title,
     closeLabel: t('关闭'),
@@ -483,8 +512,9 @@ function Dialog({ title, onClose, busy, className, children, style: styleProp })
     shortcutModal: 'dsh-dream',
     className: clsx(css.modal, className),
   }, h('div', {
-    ref: createOverlaySyncRef(activeStyle),
+    ref: createOverlaySyncRef(activeStyle, activeFont),
     'data-dsh-style': activeStyle,
+    'data-dsh-font': activeFont,
     'data-window-drag-exclude': '',
     className: css.modalFrame,
   }, h(MenuSurface, { className: clsx(css.surface, css.modalSurface), 'data-window-drag-exclude': '' },
@@ -503,6 +533,8 @@ function registerWorkbench(ctx, { id, label, component, inject, order = 50 }) {
 }
 
 const DreamStyleSwitcher = createStyleSwitcherComponent(React, require);
+const SplitResizer = createSplitResizerComponent(React);
+const DreamSkeleton = createSkeletonComponent(React);
 
 const viewTransitions = new WeakMap();
 
@@ -561,12 +593,39 @@ function useDreamStyle(transitionRef) {
   return [style, change];
 }
 
-function SkinSwitcher({ value, onChange }) {
+function useDreamFont(transitionRef) {
+  const [font, setFontState] = useState(() => readDshFont());
+  useEffect(() => {
+    const current = readDshFont();
+    setFontState(prev => (prev === current ? prev : current));
+    syncPortaledFont(current, typeof document !== 'undefined' ? document : null);
+    return subscribeDshFont(next => {
+      runViewTransition(transitionRef?.current, () => {
+        setFontState(prev => (prev === next ? prev : next));
+      });
+    });
+  }, [transitionRef]);
+  function change(next) {
+    const normalized = normalizeDshFont(next);
+    if (normalized === font) return normalized;
+    runViewTransition(transitionRef?.current, () => {
+      const applied = writeDshFont(normalized);
+      setFontState(applied);
+    });
+    return normalized;
+  }
+  return [font, change];
+}
+
+function SkinSwitcher({ value, onChange, font, onFontChange }) {
   const lang = languageOf();
   return h(DreamStyleSwitcher, {
     id: 'dream-style-switcher',
     style: value,
+    font,
     onChange,
+    onFontChange,
+    showFontSwitcher: true,
     lang,
     compact: true,
     formatAriaLabel: preset => t('界面风格') + '：' + t(preset.zh),
@@ -591,7 +650,7 @@ function clearSpotlight({ currentTarget }) {
 const spotlightHandlers = { onPointerMove: followPointer, onPointerLeave: clearSpotlight };
 const editableSelector = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
 
-function CommandPalette({ commands, onClose, skin }) {
+function CommandPalette({ commands, onClose, skin, font }) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const id = typeof useId === 'function' ? useId() : 'dream-cmd';
@@ -610,7 +669,7 @@ function CommandPalette({ commands, onClose, skin }) {
     }
     event.preventDefault();
   }
-  return h(Dialog, { title: t('命令面板'), onClose, style: skin },
+  return h(Dialog, { title: t('命令面板'), onClose, style: skin, font },
     h(Search, {
       label: t('搜索命令…'), value: query, onKeyDown,
       onChange: event => { setQuery(event.target.value); setIndex(0); },
@@ -630,7 +689,7 @@ const DREAM_TABS = [
 ];
 
 function DreamChrome({
-  root, workbench, activeTab, changeTab, tabId, skin, setSkin, paletteActions, openPalette, closePalette,
+  root, workbench, activeTab, changeTab, tabId, skin, setSkin, font, setFont, paletteActions, openPalette, closePalette,
   privacy, togglePrivacy, automation, actionNotice, reviewCount, children,
 }) {
   const panelId = tabId + '-panel';
@@ -639,6 +698,7 @@ function DreamChrome({
   const triggerRef = useRef(null);
   const paletteOpenRef = useRef(Boolean(paletteActions));
   paletteOpenRef.current = Boolean(paletteActions);
+  const tabsIndicator = useSlidingTabIndicator(React, activeTab, { deps: [reviewCount, languageOf()] });
 
   useEffect(() => {
     if (!workbench || readDreamTourDone()) return undefined;
@@ -673,14 +733,21 @@ function DreamChrome({
       value === 'review' && reviewCount > 0 ? h('span', { className: css.tabCount }, reviewCount) : null),
   }));
   const shortcut = /Mac/i.test(typeof window !== 'undefined' ? String(window.navigator?.platform || '') : '') ? '⌘K' : 'Ctrl+K';
+  const lang = languageOf();
+  const isZh = String(lang || '').toLowerCase().startsWith('zh');
   const commands = paletteActions ? [
     ...paletteActions,
     { id: 'dream:tour', label: t('使用引导'), run: () => openTour(true) },
     ...DREAM_TABS.map(([value, label]) => ({ id: 'tab:' + value, label: t(label), run: () => changeTab(value) })),
     ...DSH_STYLES.map(preset => ({
       id: 'style:' + preset.id,
-      label: t('界面风格') + ' · ' + t(preset.zh),
+      label: t('界面风格') + ' · ' + (isZh ? preset.zh : preset.en),
       run: () => setSkin(preset.id),
+    })),
+    ...DSH_FONTS.map(preset => ({
+      id: 'font:' + preset.id,
+      label: (isZh ? '字体搭配' : 'Font pairing') + ' · ' + (isZh ? preset.zh : preset.en),
+      run: () => setFont?.(preset.id),
     })),
   ] : null;
   const needsInlineCss = typeof document === 'undefined' || typeof document.querySelector !== 'function'
@@ -689,20 +756,26 @@ function DreamChrome({
     ref: root,
     className: clsx(css['app-shell'], privacy && css['dshd-privacy']),
     'data-dsh-style': skin,
+    'data-dsh-font': font,
     'data-main': String(Boolean(workbench)),
   },
     needsInlineCss ? h('style', { 'data-dsh-dream-inline': 'true' }, styleText) : null,
-    h('header', { className: css.topbar },
-      h('div', { className: css['topbar-left'] },
-        h('div', { className: css['plugin-brand'] },
-          h('span', { className: css['plugin-badge'], 'aria-hidden': true },
+    h('header', { className: clsx('dsh-header', css.topbar), 'data-dsh-header': '' },
+      h('div', { className: clsx('dsh-header-leading', css['topbar-left']) },
+        h('div', { className: clsx('dsh-header-brand', css['plugin-brand']) },
+          h('span', { className: clsx('dsh-header-badge', css['plugin-badge']), 'aria-hidden': true },
             h(Icon, { name: 'moon', size: 14 })),
-          h('h1', null, t('Dream 记忆'))),
-        h('div', { 'data-tour': 'dream-tabs' },
+          h('h1', { className: 'dsh-header-title' }, t('Dream 记忆'))),
+        h('div', {
+          'data-tour': 'dream-tabs',
+          className: clsx('dsh-header-tabs', 'dsh-tablist', 'dsh-tablist-pill', css.tabsWrap),
+          ...tabsIndicator.tablistProps,
+        },
           h(nativeUI().SegmentedTabs, {
             label: t('Dream 视图'), value: activeTab, onChange: changeTab, items: tabs, size: 'sm', className: css['view-tabs'],
-          }))),
-      h('div', { className: css['topbar-right'] },
+          }),
+          h('span', tabsIndicator.indicatorProps))),
+      h('div', { className: clsx('dsh-header-actions', css['topbar-right']) },
         h(Button, {
           ref: triggerRef,
           onClick: () => openTour(true),
@@ -723,20 +796,28 @@ function DreamChrome({
           onClick: () => automation.change({ operation: 'automatic-flush' }),
           'data-dream-command': 'flush', 'data-tour': 'dream-flush', title: t('现在整理待处理轮次'),
         }, t('立即整理')),
-        h(SkinSwitcher, { value: skin, onChange: setSkin }),
+        h(SkinSwitcher, { value: skin, onChange: setSkin, font, onFontChange: setFont }),
         h(IconButton, { icon: 'shield', size: 'sm', label: t('隐私模式'), 'aria-pressed': privacy, onClick: togglePrivacy }))),
     actionNotice ? h('div', { className: css.pageStatus }, h(Status, { tone: 'success' }, actionNotice)) : null,
-    h('div', { id: panelId, role: 'tabpanel', 'aria-labelledby': tabId + '-' + activeTab, className: css['workspace-body'] },
+    h('div', {
+      key: activeTab,
+      id: panelId,
+      role: 'tabpanel',
+      'aria-labelledby': tabId + '-' + activeTab,
+      'data-dsh-tab-panel': '',
+      className: clsx('dsh-tab-panel', css['workspace-body']),
+    },
       children),
     privacy ? h('p', { className: clsx(css.muted, css.privacyStatus), role: 'status' },
       t('隐私模式：显示层模糊；DOM 仍为明文，不改文件、不加密。点击卡片可临时查看。')) : null,
-    commands ? h(CommandPalette, { commands, onClose: closePalette, skin }) : null,
+    commands ? h(CommandPalette, { commands, onClose: closePalette, skin, font }) : null,
     tour.open ? h(DreamCoachmarkTour, {
       rootRef: root,
       tabId,
       activeTab,
       changeTab,
       skin,
+      font,
       step: tour.step,
       manual: tour.manual,
       layout: tourLayout,
@@ -746,4 +827,4 @@ function DreamChrome({
     }) : null);
 }
 
-const W = { Button, Checkbox, ChoiceMenu, CopyPrompt, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Status, Switch };
+const W = { Button, Checkbox, ChoiceMenu, CopyPrompt, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Skeleton: DreamSkeleton, SplitResizer, Status, Switch };

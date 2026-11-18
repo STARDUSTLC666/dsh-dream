@@ -22,6 +22,10 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
 
   const document = {
     baseURI: 'http://127.0.0.1:62041/',
+    documentElement: {
+      attrs: {},
+      setAttribute(name, val) { this.attrs[name] = String(val) },
+    },
     body: {},
     head: {
       appendChild(el) { headStyles.push(el) },
@@ -45,6 +49,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
     },
     querySelectorAll(sel) {
       if (sel === '[data-dsh-portal-synced]') return [...syncedNodes]
+      if (sel === '[data-dsh-portal-synced], [data-dsh-style]') return [...syncedNodes]
       return []
     },
     addEventListener() {},
@@ -119,7 +124,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
     },
     useCallback(fn) { return fn },
     useMemo(fn) { return fn() },
-    useId() { return 'dream-id-' + (++idCounter) },
+    useId() { return ':r' + (++idCounter) + ':' },
     useEffect(fn) { effects.push(fn) },
     useLayoutEffect(fn) { effects.push(fn) },
   }
@@ -280,6 +285,12 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
       ownerDocument: document,
       children: [],
       getClientRects: () => [{ width: 800, height: 600 }],
+      querySelector(sel) {
+        if (typeof sel === 'string' && /^#:/.test(sel)) {
+          throw new SyntaxError("Failed to execute 'querySelector' on 'Element': '" + sel + "' is not a valid selector.")
+        }
+        return null
+      },
       querySelectorAll(sel) {
         if (sel === '[data-dream-command]:enabled') {
           return findNodes(this, n => n.attrs?.['data-dream-command'] && !n.attrs.disabled)
@@ -381,7 +392,7 @@ function textOf(node) {
   return (node.children || []).map(textOf).join('')
 }
 
-test('dsh-dream stylesheet enforces Never-Too-Dark slate, 5 [data-dsh-style] presets, clearances, icons and update footer', async () => {
+test('dsh-dream stylesheet enforces Never-Too-Dark slate, 13 [data-dsh-style] presets, 8 [data-dsh-font] pairings, v3 layout primitives, clearances, icons and update footer', async () => {
   const env = createDreamUiEnv({ withPrimitives: false })
   const mounted = await env.mountWorkbench(true, 'zh-CN')
   try {
@@ -389,9 +400,21 @@ test('dsh-dream stylesheet enforces Never-Too-Dark slate, 5 [data-dsh-style] pre
     assert.match(cssText, /body\[data-ds-dark-theme\] \[data-dsh-style="harness"\]/)
     assert.match(cssText, /--dsw-alias-bg-base:\s*#1f232b/)
     assert.match(cssText, /--dsw-alias-bg-layer-1:\s*#272c36/)
-    for (const preset of ['harness', 'cream', 'claude', 'pixel8bit', 'mint']) {
+    for (const preset of ['harness', 'cream', 'claude', 'pixel8bit', 'mint', 'glass', 'eink', 'blueprint', 'risograph', 'win98', 'songhui', 'frutiger', 'gazette']) {
       assert.ok(cssText.includes(`[data-dsh-style="${preset}"]`), 'missing preset ' + preset)
     }
+    for (const fontId of ['songkai', 'fangsong', 'poster', 'retro98', 'serif', 'arcade', 'modern']) {
+      assert.ok(cssText.includes(`[data-dsh-font="${fontId}"]`), 'missing font rule ' + fontId)
+    }
+    assert.match(cssText, /\.dsh-style-switcher/)
+    assert.match(cssText, /\.dsh-font-trigger/)
+    assert.match(cssText, /\.dsh-header/)
+    assert.match(cssText, /\.dsh-tab-indicator/)
+    assert.match(cssText, /\.dsh-split-resizer/)
+    assert.match(cssText, /\.dsh-skeleton/)
+    assert.match(cssText, /\.dsh-row-actions/)
+    assert.match(cssText, /\[data-dsh-serif\]/)
+    assert.match(cssText, /\.dsh-pixel-cursor/)
     assert.match(cssText, /translate:\s*1px 1px !important/)
     assert.match(cssText, /box-shadow:\s*2px 2px 0px #1e2826/)
     assert.match(cssText, /--dsh-frame-top-clearance/)
@@ -404,16 +427,43 @@ test('dsh-dream stylesheet enforces Never-Too-Dark slate, 5 [data-dsh-style] pre
   }
 })
 
-test('dsh-dream renders in standalone fallback mode, syncs 5 styles across root & portaled dialogs, and exposes SVG motion hooks', async () => {
+test('dsh-dream renders in standalone fallback mode, syncs 13 styles + 8 fonts across root & portaled dialogs, and exposes v3 header/resizer/quick-actions', async () => {
   const env = createDreamUiEnv({ withPrimitives: false })
   assert.equal(env.primitivesRequestedAtLoad, false)
-  assert.equal(env.client.__internals.DSH_STYLES.length, 5)
+  assert.equal(env.client.__internals.DSH_STYLES.length, 13)
+  assert.equal(env.client.__internals.DSH_FONTS.length, 8)
+  assert.equal(env.client.__internals.DSH_DEFAULT_FONT, 'arcade')
 
   const mounted = await env.mountWorkbench(true, 'en-US')
   try {
     let root = mounted.tree
     assert.equal(root.attrs['data-dsh-style'], 'harness')
+    assert.equal(root.attrs['data-dsh-font'], 'arcade')
     assert.equal(root.attrs['data-main'], 'true')
+
+    // Verify v3 unified header, sliding tab indicator, panel enter, serif, and pixel cursor
+    assert.ok(findNodes(root, n => Object.hasOwn(n.attrs || {}, 'data-dsh-header')).length === 1)
+    assert.ok(findNodes(root, n => String(n.attrs?.className || '').includes('dsh-tab-indicator')).length === 1)
+    assert.ok(findNodes(root, n => Object.hasOwn(n.attrs || {}, 'data-dsh-tab-panel')).length === 1)
+    assert.ok(findNodes(root, n => Object.hasOwn(n.attrs || {}, 'data-dsh-serif')).length >= 2)
+    assert.ok(findNodes(root, n => String(n.attrs?.className || '').includes('dsh-pixel-cursor')).length >= 1)
+
+    // Verify DshSplitResizer keyboard resize + double-click reset + localStorage persistence
+    const resizer = findNodes(root, n => n.attrs?.role === 'separator' && Object.hasOwn(n.attrs || {}, 'data-dsh-resizer'))[0]
+    assert.ok(resizer, 'DshSplitResizer must render in MemoryBoard')
+    assert.equal(resizer.attrs['aria-valuenow'], 340)
+    resizer.attrs.onKeyDown({ key: 'ArrowRight', preventDefault() {} })
+    root = mounted.rerender()
+    assert.equal(findNodes(root, n => n.attrs?.role === 'separator')[0].attrs['aria-valuenow'], 356)
+    assert.equal(env.storage.get('dsh-dream:split-width'), '356')
+    findNodes(root, n => n.attrs?.role === 'separator')[0].attrs.onDoubleClick()
+    root = mounted.rerender()
+    assert.equal(findNodes(root, n => n.attrs?.role === 'separator')[0].attrs['aria-valuenow'], 340)
+
+    // Verify row hover quick-action bar controls render on candidate row
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-quick-accept'] === 'lesson-1').length === 1)
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-quick-copy'] === 'lesson-1').length === 1)
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-quick-inspect'] === 'lesson-1').length === 1)
 
     // Verify SVG icon micro-animation markers exist across Dream buttons
     const iconNames = new Set(findNodes(root, n => n.tag === 'svg' && n.attrs['data-dsh-icon']).map(n => n.attrs['data-dsh-icon']))
@@ -424,14 +474,14 @@ test('dsh-dream renders in standalone fallback mode, syncs 5 styles across root 
     assert.ok(findNodes(root, n => Object.hasOwn(n.attrs, 'data-dsh-card')).length >= 3)
     assert.ok(findNodes(root, n => Object.hasOwn(n.attrs, 'data-dsh-row')).length >= 1)
 
-    // Switch through all 5 styles via topbar SkinSwitcher
-    for (const preset of ['cream', 'claude', 'pixel8bit', 'mint', 'harness']) {
+    // Switch through all 13 styles via topbar SkinSwitcher
+    for (const preset of ['cream', 'claude', 'pixel8bit', 'mint', 'glass', 'eink', 'blueprint', 'risograph', 'win98', 'songhui', 'frutiger', 'gazette', 'harness']) {
       const trigger = findNodes(root, n => n.attrs.id === 'dream-style-switcher')[0]
       assert.ok(trigger)
       trigger.attrs.onClick()
       root = mounted.rerender()
       const items = findNodes(root, n => n.attrs.role === 'menuitemradio')
-      assert.equal(items.length, 5)
+      assert.equal(items.length, 13)
       const idx = env.client.__internals.DSH_STYLES.findIndex(s => s.id === preset)
       items[idx].attrs.onClick()
       root = mounted.rerender()
@@ -439,7 +489,22 @@ test('dsh-dream renders in standalone fallback mode, syncs 5 styles across root 
       assert.equal(env.storage.get('dsh-stardust:ui-style'), preset)
     }
 
-    // Open Command Palette dialog & verify portal style + drag exclusion sync
+    // Switch through all 8 font pairings via topbar FontSwitcher
+    for (const fontId of ['auto', 'songkai', 'fangsong', 'poster', 'retro98', 'serif', 'modern', 'arcade']) {
+      const fontTrigger = findNodes(root, n => n.attrs.id === 'dream-style-switcher-font')[0]
+      assert.ok(fontTrigger)
+      fontTrigger.attrs.onClick()
+      root = mounted.rerender()
+      const items = findNodes(root, n => n.attrs.role === 'menuitemradio')
+      assert.equal(items.length, 8)
+      const idx = env.client.__internals.DSH_FONTS.findIndex(f => f.id === fontId)
+      items[idx].attrs.onClick()
+      root = mounted.rerender()
+      assert.equal(root.attrs['data-dsh-font'], fontId)
+      assert.equal(env.storage.get('dsh-stardust:ui-font'), fontId)
+    }
+
+    // Open Command Palette dialog & verify portal style + font + drag exclusion sync
     const cmdBtn = findNodes(root, n => n.tag === 'button' && n.attrs['aria-label'] === 'Command palette')[0]
     assert.ok(cmdBtn)
     cmdBtn.attrs.onClick()
@@ -448,14 +513,19 @@ test('dsh-dream renders in standalone fallback mode, syncs 5 styles across root 
     const dialog = findNodes(root, n => n.attrs.role === 'dialog')[0]
     assert.ok(dialog)
     assert.equal(dialog.attrs['data-dsh-style'], 'harness')
+    assert.equal(dialog.attrs['data-dsh-font'], 'arcade')
     assert.equal(dialog.attrs['data-window-drag-exclude'], '')
 
     env.win.localStorage.setItem('dsh-stardust:ui-style', 'mint')
     env.win.dispatchEvent(new env.win.CustomEvent('dsh-stardust-style', { detail: { style: 'mint' } }))
+    env.win.localStorage.setItem('dsh-stardust:ui-font', 'fangsong')
+    env.win.dispatchEvent(new env.win.CustomEvent('dsh-stardust-font', { detail: { font: 'fangsong' } }))
     root = mounted.rerender()
     const updatedDialog = findNodes(root, n => n.attrs.role === 'dialog')[0]
     assert.equal(root.attrs['data-dsh-style'], 'mint')
+    assert.equal(root.attrs['data-dsh-font'], 'fangsong')
     assert.equal(updatedDialog.attrs['data-dsh-style'], 'mint')
+    assert.equal(updatedDialog.attrs['data-dsh-font'], 'fangsong')
   } finally {
     mounted.cleanup()
   }
@@ -479,9 +549,10 @@ test('dsh-dream integrates host primitives and stamps [data-dsh-style] onto port
     const hostMenu = findNodes(root, n => n.attrs['data-host-menu'] === 'true')[0]
     assert.ok(hostMenu)
     assert.equal(hostMenu.attrs['data-dsh-style'], 'cream')
+    assert.equal(hostMenu.attrs['data-dsh-font'], 'arcade')
     assert.equal(hostMenu.attrs['data-window-drag-exclude'], '')
 
-    // Open Preview review changes Modal and verify HostModalWithStyle stamps data-dsh-style + data-window-drag-exclude
+    // Open Preview review changes Modal and verify HostModalWithStyle stamps data-dsh-style + data-dsh-font + data-window-drag-exclude
     const diffBtn = findNodes(root, n => n.attrs['data-dream-command'] === 'diff')[0]
     diffBtn.attrs.onClick()
     root = mounted.rerender()
@@ -489,6 +560,7 @@ test('dsh-dream integrates host primitives and stamps [data-dsh-style] onto port
     const hostModal = findNodes(root, n => n.attrs['data-host-modal'] === 'true')[0]
     assert.ok(hostModal)
     assert.equal(hostModal.attrs['data-dsh-style'], 'cream')
+    assert.equal(hostModal.attrs['data-dsh-font'], 'arcade')
     assert.equal(hostModal.attrs['data-window-drag-exclude'], '')
 
     // Switch to Settings tab and verify host SegmentedControl

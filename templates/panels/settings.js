@@ -100,7 +100,7 @@ function SettingCard({ title, wide, index, children }) {
     className: clsx(css['settings-card'], wide && css.settingsWide),
     'data-dsh-card': '',
     style: { '--stagger-idx': index }, ...spotlightHandlers,
-  }, h('h2', null, title), children);
+  }, h('h2', { 'data-dsh-serif': '' }, title), children);
 }
 
 function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, setSkin }) {
@@ -140,7 +140,7 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, s
         h('div', { className: css.actions },
           h(W.Button, { icon: 'sparkle', spinning: Boolean(value.running), variant: 'primary', disabled: !canFlush, onClick: () => change({ operation: 'automatic-flush' }) }, t('现在整理待处理轮次')),
           h(W.Button, { onClick: onReview }, t('待审阅') + ' · ' + format.format(value.candidates ?? 0)))) :
-        failure ? null : h('p', { className: css.muted }, t('正在读取状态…'))),
+        failure ? null : h(W.Skeleton, { variant: 'text', lines: 3, label: t('正在读取状态…') })),
     chat ? h(SettingCard, { title: t('聊天记忆设置'), index: 1 },
       h('label', { className: css.scopePicker, htmlFor: 'dream-settings-session' }, t('会话'), h('select', {
         id: 'dream-settings-session', value: chat.sessionId, disabled: pending, onChange: event => setChatId(event.target.value),

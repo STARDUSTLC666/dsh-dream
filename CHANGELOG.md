@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.16.4 (2026-11-18)
+
+- 同步 `@stardustlc/dsh-updates` 0.2.3：侧边栏工作台平时默认隐藏底部更新栏（零高度占用），仅在检测到兼容新版本或执行更新时浮现单行精简提示条；完整更新设置与检查入口统一保留在 DSH「插件」详情页底部。
+- Sync `@stardustlc/dsh-updates` 0.2.3: keep the sidebar workbench update footer hidden by default when up-to-date, surfacing a single-line compact strip only for actionable updates or active jobs while retaining full controls in native Plugin Details.
+
 ## 0.16.3 (2026-11-18)
 
 - 优化「待审阅」与「梦境日记」空状态交互：补齐通俗经验提炼说明、跳转「设置 / 已采纳」快捷按钮与一键复制「做个梦 / 复盘提炼经验」指令按钮，并新增覆盖 8 种界面语言的可折叠三步记忆工作流指引。

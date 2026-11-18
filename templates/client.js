@@ -1946,7 +1946,7 @@ pristine ? null : h(Btn, {
             return h(W.Page, {
                 root, workbench, activeTab, changeTab, tabId, skin, setSkin, paletteActions, openPalette,
                 closePalette: () => setPaletteActions(null), privacy, togglePrivacy, automation, actionNotice, reviewCount,
-            }, activeTab === 'journal' ? h('div', { className: css.documentPage }, errorBox, h(W.WorkflowGuide, { key: 'workflow-guide', onNavigateTab: changeTab, showReviewLink: true }), toolbar, body(),
+            }, activeTab === 'journal' ? h('div', { className: css.documentPage }, errorBox, toolbar, body(),
                 h('div', { className: css['dshd-footer'] },
                     h('span', null, footerTextOf(query, limit, vm.total, vm.count)),
                     canLoadMore ? h(W.Button, { onClick: showMore, disabled: loading }, t('显示更早的梦')) : null)) : body());

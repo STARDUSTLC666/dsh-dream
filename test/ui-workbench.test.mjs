@@ -542,7 +542,7 @@ test('Cordis 4 ctx.effect unload disposer cleans up registered Dream tools and r
   assert.equal(activeRoutes, 0)
 })
 
-test('dsh-dream empty review & journal states provide 1-click copy prompts, tab jumps, accessible collapsible workflow guide, and explicit label htmlFor', async () => {
+test('dsh-dream empty review & journal states provide 1-click copy prompts, tab jumps, interactive coachmark tour with arrow, and explicit label htmlFor', async () => {
   const copiedTexts = []
   const env = createDreamUiEnv({
     withPrimitives: false,
@@ -553,8 +553,11 @@ test('dsh-dream empty review & journal states provide 1-click copy prompts, tab 
   try {
     let root = mounted.tree
     const cssText = env.headStyles.map(s => s.textContent).join('\n')
-    assert.match(cssText, /content:\s*"▸";\s*content:\s*"▸"\s*\/\s*""/)
-    assert.match(cssText, /@media \(prefers-reduced-motion: no-preference\)[\s\S]*?transition:\s*rotate/)
+    assert.match(cssText, /:popover-open/)
+    assert.match(cssText, /data-side=['"]bottom['"]/)
+
+    // Static collapsible workflow guide is removed in favor of topbar "? 引导" coachmark tour
+    assert.equal(findNodes(root, n => Object.hasOwn(n.attrs || {}, 'data-dream-workflow-guide')).length, 0)
 
     // 1) Review empty state: explains distillation, offers 1-click copy prompts and quick jump buttons
     assert.match(root.textContent, /没有待审阅的经验/)
@@ -584,7 +587,7 @@ test('dsh-dream empty review & journal states provide 1-click copy prompts, tab 
     const langSelect = findNodes(root, n => n.tag === 'select' && n.attrs.id === 'dream-settings-language')[0]
     assert.ok(langLabel && langSelect, 'Settings label must pair htmlFor + id')
 
-    // 2) Switch to Journal tab: verify interactive "做个梦" copy button + collapsible workflow guide without headings inside <summary>
+    // 2) Switch to Journal tab: verify interactive "做个梦" copy button in empty state
     const journalTab = findNodes(root, n => n.attrs.role === 'tab' && n.textContent.includes('日记'))[0]
     assert.ok(journalTab)
     journalTab.attrs.onClick()
@@ -592,19 +595,51 @@ test('dsh-dream empty review & journal states provide 1-click copy prompts, tab 
     root = mounted.rerender()
 
     assert.match(root.textContent, /还没有梦境日记/)
-    const guide = findNodes(root, n => n.tag === 'details' && Object.hasOwn(n.attrs, 'data-dream-workflow-guide'))[0]
-    assert.ok(guide, 'expected collapsible workflow guide in Journal')
-    const summary = findNodes(guide, n => n.tag === 'summary')[0]
-    assert.ok(summary)
-    assert.match(summary.textContent, /怎么用最顺手：积累 → 做梦提炼 → 审阅入库/)
-    const headingsInSummary = findNodes(summary, n => /^h[1-6]$/.test(n.tag))
-    assert.equal(headingsInSummary.length, 0, 'must never place h1-h6 inside <summary>')
-
     const journalDreamBtn = findNodes(root, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '做个梦')[0]
     assert.ok(journalDreamBtn, 'Journal empty state should expose interactive "做个梦" copy button')
     journalDreamBtn.attrs.onClick()
     await new Promise(r => setTimeout(r, 10))
     assert.equal(copiedTexts.at(-1), '做个梦')
+
+    // 3) Interactive Coachmark Tour ("? 引导"): auto-switches tab when needed, renders directional arrow + spotlight, steps 1->4, and persists completion
+    const tourTrigger = findNodes(root, n => n.tag === 'button' && Object.hasOwn(n.attrs, 'data-dream-tour-trigger'))[0]
+    assert.ok(tourTrigger, 'expected topbar "? 引导" trigger button')
+    tourTrigger.attrs.onClick()
+    root = mounted.rerender()
+
+    let tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
+    assert.ok(tourCard, 'expected coachmark tour popover dialog to mount')
+    assert.equal(tourCard.attrs.role, 'dialog')
+    assert.equal(tourCard.attrs['aria-modal'], 'false')
+    assert.match(tourCard.textContent, /1 \/ 4/)
+    assert.match(tourCard.textContent, /开启自动整理与自动召回/)
+    const arrow = findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-arrow'))[0]
+    assert.ok(arrow, 'expected directional arrow inside coachmark card')
+
+    // Advance to Step 2 ("立即整理或发一句「做个梦」") and test inline prompt copy
+    findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
+    root = mounted.rerender()
+    tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
+    assert.match(tourCard.textContent, /2 \/ 4/)
+    const inlineDreamCopy = findNodes(tourCard, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '做个梦')[0]
+    assert.ok(inlineDreamCopy, 'Step 2 coachmark card should include inline 1-click "做个梦" copy button')
+
+    // Step 3 & Step 4 -> Finish ("完成引导") persists done to localStorage
+    findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
+    root = mounted.rerender()
+    tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
+    assert.match(tourCard.textContent, /3 \/ 4/)
+
+    findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
+    root = mounted.rerender()
+    tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
+    assert.match(tourCard.textContent, /4 \/ 4/)
+    assert.match(tourCard.textContent, /完成引导/)
+
+    findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
+    root = mounted.rerender()
+    assert.equal(findNodes(root, n => n.attrs['data-tour-card']).length, 0, 'coachmark closes on completion')
+    assert.equal(env.win.localStorage.getItem('dsh-dream.tour.v1'), 'done', 'completion persists in localStorage')
   } finally {
     mounted.cleanup()
   }

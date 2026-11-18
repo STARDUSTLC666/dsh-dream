@@ -202,23 +202,269 @@ function CopyPrompt({ prompt, label, variant = 'outline', size = 'sm', className
     isFailed ? h('code', { className: css['dshd-cmd'], tabIndex: 0 }, text) : null);
 }
 
-function WorkflowGuide({ onNavigateTab, defaultOpen = false, showReviewLink = false, className }) {
-  return h('details', {
-    className: clsx(css.workflowGuide, className),
-    open: defaultOpen || undefined,
-    'data-dream-workflow-guide': '',
+const DREAM_TOUR_KEY = 'dsh-dream.tour.v1';
+let dreamTourSessionDone = false;
+
+function readDreamTourDone() {
+  if (dreamTourSessionDone) return true;
+  try {
+    return typeof window !== 'undefined' && window.localStorage?.getItem(DREAM_TOUR_KEY) === 'done';
+  } catch {
+    return false;
+  }
+}
+
+function writeDreamTourDone() {
+  dreamTourSessionDone = true;
+  try {
+    if (typeof window !== 'undefined') window.localStorage?.setItem(DREAM_TOUR_KEY, 'done');
+  } catch {
+    // Ignore restricted storage.
+  }
+}
+
+function computeCoachmarkLayout(target, preferredSide, cardEl) {
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || 1280;
+  const vh = (typeof window !== 'undefined' && window.innerHeight) || 800;
+  const cw = cardEl?.offsetWidth || 320;
+  const ch = cardEl?.offsetHeight || 196;
+  const pad = 5;
+  const gap = 12;
+  const raw = target?.getBoundingClientRect?.();
+  if (!target) {
+    return {
+      spotlight: null,
+      side: 'center',
+      left: Math.max(12, Math.round((vw - cw) / 2)),
+      top: Math.max(12, Math.round((vh - ch) / 2)),
+      arrowX: 28,
+      arrowY: 24,
+    };
+  }
+  const hasBox = Boolean(raw && (raw.width > 0 || raw.height > 0));
+  const rect = hasBox ? raw : { left: 120, top: 72, width: 140, height: 32, right: 260, bottom: 104 };
+  const spotlight = {
+    left: Math.round(rect.left - pad),
+    top: Math.round(rect.top - pad),
+    width: Math.round(rect.width + pad * 2),
+    height: Math.round(rect.height + pad * 2),
+  };
+  const spaceBottom = vh - spotlight.top - spotlight.height;
+  const spaceTop = spotlight.top;
+  const spaceRight = vw - spotlight.left - spotlight.width;
+  const spaceLeft = spotlight.left;
+
+  let side = preferredSide || 'bottom';
+  if (side === 'right' && spaceRight < cw + gap + 12) {
+    side = spaceBottom >= ch + gap + 12 ? 'bottom' : spaceLeft >= cw + gap + 12 ? 'left' : 'top';
+  } else if (side === 'left' && spaceLeft < cw + gap + 12) {
+    side = spaceRight >= cw + gap + 12 ? 'right' : 'bottom';
+  } else if (side === 'bottom' && spaceBottom < ch + gap + 12 && spaceTop > spaceBottom) {
+    side = 'top';
+  } else if (side === 'top' && spaceTop < ch + gap + 12 && spaceBottom > spaceTop) {
+    side = 'bottom';
+  }
+
+  let left = spotlight.left;
+  let top = spotlight.top + spotlight.height + gap;
+  if (side === 'top') {
+    top = spotlight.top - ch - gap;
+  } else if (side === 'right') {
+    left = spotlight.left + spotlight.width + gap;
+    top = spotlight.top;
+  } else if (side === 'left') {
+    left = spotlight.left - cw - gap;
+    top = spotlight.top;
+  }
+  left = Math.round(Math.max(12, Math.min(vw - cw - 12, left)));
+  top = Math.round(Math.max(12, Math.min(vh - ch - 12, top)));
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const arrowX = Math.round(Math.max(18, Math.min(cw - 18, centerX - left)));
+  const arrowY = Math.round(Math.max(18, Math.min(ch - 18, centerY - top)));
+  return { spotlight, side, left, top, arrowX, arrowY };
+}
+
+function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, step, manual, layout: rawLayout, setLayout, onStep, onClose }) {
+  const layerRef = useRef(null);
+  const cardRef = useRef(null);
+  const nextBtnRef = useRef(null);
+  const titleId = (typeof useId === 'function' ? useId() : 'dream-tour') + '-title';
+  const [copiedTourPrompt, setCopiedTourPrompt] = useState(false);
+  const steps = [
+    {
+      id: 'auto',
+      selector: '[data-tour="dream-auto"]',
+      fallback: '#' + tabId + '-review',
+      side: 'right',
+      title: t('开启自动整理与自动召回'),
+      desc: t('日常排障或写代码时保持开启，空闲时会自动从真实会话提取候选经验，无需手动记笔记。'),
+    },
+    {
+      id: 'flush',
+      selector: '[data-tour="dream-flush"]',
+      side: 'bottom',
+      title: t('立即整理或发一句「做个梦」'),
+      desc: t('点这里立即整理待处理轮次；也可在下方一键复制指令发到聊天，让助手复盘最近对话并写下反思日记。'),
+      prompt: t('做个梦'),
+      promptLabel: t('复制「做个梦」'),
+    },
+    {
+      id: 'review',
+      selector: '[data-tour="dream-list"]',
+      fallback: '#' + tabId + '-review',
+      side: 'right',
+      title: t('先核对原文证据，再确认采纳'),
+      desc: t('所有候选默认扣留在「待审阅」，展示原话出处、适用范围与密钥脱敏预览；只有你点「确认采纳」才会真正生效。'),
+    },
+    {
+      id: 'bridge',
+      selector: '#' + tabId + '-bridge',
+      fallback: '[data-tour="dream-tabs"]',
+      side: 'bottom',
+      title: t('预览写入 AGENTS.md 与一键回滚'),
+      desc: t('在「已采纳」可将经验生成差异预览写入项目 AGENTS.md，每次写入都记录在「规则记录」中并支持随时回滚。'),
+    },
+  ];
+  const current = steps[Math.max(0, Math.min(steps.length - 1, step))];
+  const layout = rawLayout && typeof rawLayout === 'object' && rawLayout.side
+    ? rawLayout
+    : { spotlight: null, side: current.side || 'bottom', left: 24, top: 76, arrowX: 28, arrowY: 24 };
+
+  async function copyStepPrompt(text) {
+    const ok = await writeDreamClipboard(text);
+    if (ok) {
+      setCopiedTourPrompt(true);
+      setTimeout(() => setCopiedTourPrompt(false), 1800);
+    }
+  }
+
+  useEffect(() => {
+    const node = layerRef.current;
+    if (!node) return undefined;
+    try {
+      node.setAttribute?.('popover', 'manual');
+      node.showPopover?.();
+    } catch {
+      // Fallback fixed layer remains visible when Popover API is absent.
+    }
+    return () => {
+      try { node.hidePopover?.(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  useEffect(() => {
+    function measure() {
+      const scope = rootRef?.current || (typeof document !== 'undefined' ? document : null);
+      if (!scope || typeof scope.querySelector !== 'function') return;
+      const target = scope.querySelector(current.selector) || (current.fallback ? scope.querySelector(current.fallback) : null);
+      setLayout(computeCoachmarkLayout(target, current.side, cardRef.current));
+    }
+    measure();
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : null;
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+      return () => { if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf); };
+    }
+    window.addEventListener('resize', measure, { passive: true });
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [step, activeTab, current.selector, current.fallback, current.side]);
+
+  useEffect(() => {
+    if (!manual) return;
+    nextBtnRef.current?.focus?.();
+  }, [manual, step]);
+
+  function finish() {
+    onClose(manual);
+  }
+  function onKeyDown(event) {
+    if (event.isComposing || event.nativeEvent?.isComposing) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      finish();
+    } else if (event.key === 'ArrowRight' && step < steps.length - 1) {
+      event.preventDefault();
+      onStep(step + 1, true);
+    } else if (event.key === 'ArrowLeft' && step > 0) {
+      event.preventDefault();
+      onStep(step - 1, true);
+    }
+  }
+
+  const isLast = step >= steps.length - 1;
+  return h('div', {
+    ref: layerRef,
+    className: css.tourLayer,
+    'data-dsh-style': skin,
+    'data-dream-tour': current.id,
+    'data-window-drag-exclude': '',
   },
-    h('summary', { className: css.workflowSummary }, t('怎么用最顺手：积累 → 做梦提炼 → 审阅入库')),
-    h('div', { className: css.workflowBody },
-      h('ol', { className: css.workflowSteps },
-        h('li', null, t('积累：日常在 DSH 完成排障或开发任务；开启「自动整理」后空闲时会自动提取候选。')),
-        h('li', null, t('做梦提炼：随时复制下方指令发到对话，让助手回放最近会话、写下反思日记并提炼可复用经验。')),
-        h('li', null, t('审阅入库：在「待审阅」核对证据与适用范围，确认采纳后即可自动召回或预览写入 AGENTS.md。'))),
-      h('div', { className: css.workflowActions },
-        h(CopyPrompt, { prompt: t('做个梦'), label: t('复制「做个梦」'), variant: 'primary' }),
-        h(CopyPrompt, { prompt: t('复盘最近的对话并提炼可复用的项目经验'), label: t('复制复盘提炼指令') }),
-        showReviewLink && onNavigateTab ? h(Button, { icon: 'book', size: 'sm', onClick: () => onNavigateTab('review') }, t('查看待审阅')) : null,
-        onNavigateTab ? h(Button, { icon: 'settings', size: 'sm', onClick: () => onNavigateTab('settings') }, t('前往设置')) : null)));
+    layout.spotlight
+      ? h('div', {
+          className: css.tourSpotlight,
+          'data-tour-spotlight': current.id,
+          'aria-hidden': 'true',
+          style: {
+            left: layout.spotlight.left + 'px',
+            top: layout.spotlight.top + 'px',
+            width: layout.spotlight.width + 'px',
+            height: layout.spotlight.height + 'px',
+          },
+        })
+      : h('div', { className: css.tourBackdropFallback, 'aria-hidden': 'true' }),
+    h('div', {
+      ref: cardRef,
+      role: 'dialog',
+      'aria-modal': 'false',
+      'aria-labelledby': titleId,
+      tabIndex: -1,
+      onKeyDown,
+      className: css.tourCard,
+      'data-side': layout.side,
+      'data-tour-card': current.id,
+      style: {
+        left: layout.left + 'px',
+        top: layout.top + 'px',
+        '--arrow-x': layout.arrowX + 'px',
+        '--arrow-y': layout.arrowY + 'px',
+      },
+    },
+      h('span', { className: css.tourArrow, 'data-tour-arrow': layout.side, 'aria-hidden': 'true' }),
+      h('div', { className: css.tourHead },
+        h('div', { className: css.tourStepMeta },
+          h('span', { className: css.tourStepBadge }, (step + 1) + ' / ' + steps.length),
+          h('span', { className: css.tourDots, 'aria-hidden': 'true' },
+            steps.map((item, idx) => h('span', { key: item.id, className: css.tourDot, 'data-active': idx === step ? 'true' : undefined })))),
+        h('button', { type: 'button', className: css.tourSkip, onClick: finish }, t('跳过'))),
+      h('h2', { id: titleId, className: css.tourTitle }, current.title),
+      h('p', { className: css.tourDesc }, current.desc),
+      current.prompt ? h('div', { className: css.tourInlineAction },
+        h(Button, {
+          size: 'sm',
+          variant: 'outline',
+          icon: copiedTourPrompt ? 'check' : 'copy',
+          'data-copy-prompt': current.prompt,
+          'data-copied': copiedTourPrompt ? 'true' : undefined,
+          onClick: () => { void copyStepPrompt(current.prompt); },
+        }, copiedTourPrompt ? t('已复制') : current.promptLabel)) : null,
+      h('div', { className: css.tourFooter },
+        step > 0
+          ? h(Button, { size: 'sm', variant: 'ghost', onClick: () => onStep(step - 1, true), 'data-tour-prev': '' }, t('上一步'))
+          : h('span', null),
+        h('div', { className: css.tourNav },
+          h(Button, {
+            ref: nextBtnRef,
+            size: 'sm',
+            variant: 'primary',
+            'data-tour-next': '',
+            onClick: () => (isLast ? finish() : onStep(step + 1, true)),
+          }, isLast ? t('完成引导') : t('下一步'))))));
 }
 
 function Dialog({ title, onClose, busy, className, children, style: styleProp }) {
@@ -388,6 +634,39 @@ function DreamChrome({
   privacy, togglePrivacy, automation, actionNotice, reviewCount, children,
 }) {
   const panelId = tabId + '-panel';
+  const [tour, setTour] = useState({ open: false, step: 0, manual: false });
+  const [tourLayout, setTourLayout] = useState(null);
+  const triggerRef = useRef(null);
+  const paletteOpenRef = useRef(Boolean(paletteActions));
+  paletteOpenRef.current = Boolean(paletteActions);
+
+  useEffect(() => {
+    if (!workbench || readDreamTourDone()) return undefined;
+    const timer = setTimeout(() => {
+      if (!readDreamTourDone() && !paletteOpenRef.current) {
+        setTour({ open: true, step: 0, manual: false });
+      }
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [workbench]);
+
+  useEffect(() => {
+    if (paletteActions && tour.open) {
+      setTour(prev => ({ ...prev, open: false }));
+    }
+  }, [paletteActions]);
+
+  function openTour(manual = true) {
+    setTour({ open: true, step: 0, manual: Boolean(manual) });
+  }
+  function closeTour(restoreFocus = false) {
+    writeDreamTourDone();
+    setTour(prev => ({ ...prev, open: false }));
+    if (restoreFocus) {
+      setTimeout(() => triggerRef.current?.focus?.(), 0);
+    }
+  }
+
   const tabs = DREAM_TABS.map(([value, label]) => ({
     value, id: tabId + '-' + value, panelId,
     label: h('span', { className: css.tabLabel }, t(label),
@@ -396,6 +675,7 @@ function DreamChrome({
   const shortcut = /Mac/i.test(typeof window !== 'undefined' ? String(window.navigator?.platform || '') : '') ? '⌘K' : 'Ctrl+K';
   const commands = paletteActions ? [
     ...paletteActions,
+    { id: 'dream:tour', label: t('使用引导'), run: () => openTour(true) },
     ...DREAM_TABS.map(([value, label]) => ({ id: 'tab:' + value, label: t(label), run: () => changeTab(value) })),
     ...DSH_STYLES.map(preset => ({
       id: 'style:' + preset.id,
@@ -418,10 +698,22 @@ function DreamChrome({
           h('span', { className: css['plugin-badge'], 'aria-hidden': true },
             h(Icon, { name: 'moon', size: 14 })),
           h('h1', null, t('Dream 记忆'))),
-        h(nativeUI().SegmentedTabs, {
-          label: t('Dream 视图'), value: activeTab, onChange: changeTab, items: tabs, size: 'sm', className: css['view-tabs'],
-        })),
+        h('div', { 'data-tour': 'dream-tabs' },
+          h(nativeUI().SegmentedTabs, {
+            label: t('Dream 视图'), value: activeTab, onChange: changeTab, items: tabs, size: 'sm', className: css['view-tabs'],
+          }))),
       h('div', { className: css['topbar-right'] },
+        h(Button, {
+          ref: triggerRef,
+          onClick: () => openTour(true),
+          size: 'sm',
+          variant: tour.open ? 'toolbar' : 'ghost',
+          className: css.tourTrigger,
+          'data-dream-tour-trigger': '',
+          'aria-label': t('使用引导'),
+          'aria-expanded': tour.open,
+          title: t('使用引导'),
+        }, '? ' + t('引导')),
         h(Button, {
           onClick: openPalette, size: 'sm', 'aria-label': t('命令面板'), title: t('命令面板'),
           'aria-haspopup': 'dialog', 'aria-keyshortcuts': 'Meta+K Control+K',
@@ -429,7 +721,7 @@ function DreamChrome({
         h(Button, {
           icon: 'sparkle', spinning: Boolean(automation.value?.running), size: 'sm', variant: 'primary', disabled: !automation.canFlush,
           onClick: () => automation.change({ operation: 'automatic-flush' }),
-          'data-dream-command': 'flush', title: t('现在整理待处理轮次'),
+          'data-dream-command': 'flush', 'data-tour': 'dream-flush', title: t('现在整理待处理轮次'),
         }, t('立即整理')),
         h(SkinSwitcher, { value: skin, onChange: setSkin }),
         h(IconButton, { icon: 'shield', size: 'sm', label: t('隐私模式'), 'aria-pressed': privacy, onClick: togglePrivacy }))),
@@ -438,7 +730,20 @@ function DreamChrome({
       children),
     privacy ? h('p', { className: clsx(css.muted, css.privacyStatus), role: 'status' },
       t('隐私模式：显示层模糊；DOM 仍为明文，不改文件、不加密。点击卡片可临时查看。')) : null,
-    commands ? h(CommandPalette, { commands, onClose: closePalette, skin }) : null);
+    commands ? h(CommandPalette, { commands, onClose: closePalette, skin }) : null,
+    tour.open ? h(DreamCoachmarkTour, {
+      rootRef: root,
+      tabId,
+      activeTab,
+      changeTab,
+      skin,
+      step: tour.step,
+      manual: tour.manual,
+      layout: tourLayout,
+      setLayout: setTourLayout,
+      onStep: (nextStep, isManual) => setTour({ open: true, step: nextStep, manual: Boolean(isManual) }),
+      onClose: closeTour,
+    }) : null);
 }
 
-const W = { Button, Checkbox, ChoiceMenu, CopyPrompt, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Status, Switch, WorkflowGuide };
+const W = { Button, Checkbox, ChoiceMenu, CopyPrompt, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Status, Switch };

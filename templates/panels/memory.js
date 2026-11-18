@@ -404,7 +404,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   },
     reviewMode ? h('aside', { className: css['pane-rail'], 'aria-label': t('审阅筛选与自动记忆') },
       h('div', { className: css['rail-scroll'] },
-        h('section', { className: css['control-card'], 'data-dsh-card': '', ...spotlightHandlers },
+        h('section', { className: css['control-card'], 'data-dsh-card': '', 'data-tour': 'dream-auto', ...spotlightHandlers },
           h(AutomaticSwitches, { automation }),
           h('p', { className: css.muted }, t('候选经验由你确认采纳。')),
           h(W.Status, { tone: 'error' }, automation.failure ? displayError(automation.failure) : null)),
@@ -421,7 +421,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
         h('span', null, h('kbd', null, 'J'), '/', h('kbd', null, 'K'), ' ', t('切换候选')),
         h('span', null, h('kbd', null, 'A'), ' ', t('确认采纳')),
         h('span', null, h('kbd', null, 'D'), ' ', t('丢弃')))) : null,
-    h('section', { className: css['pane-list'], ref: listRef, id: listId, 'aria-label': t(reviewMode ? '候选经验' : '已采纳') },
+    h('section', { className: css['pane-list'], ref: listRef, id: listId, 'data-tour': 'dream-list', 'aria-label': t(reviewMode ? '候选经验' : '已采纳') },
       h('div', { className: css['list-toolbar'] },
         h(W.Search, {
           type: 'search', label: t('搜索经验'), value: search, disabled: pending,
@@ -480,7 +480,6 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
             h(W.Empty, {
               icon: 'sparkle',
               title: t('等待新的候选经验'),
-            }, t('候选经验绝不会自动生效——每条都会展示会话原文来源、适用条件与范围，由你决定采纳或丢弃。')),
-            h(W.WorkflowGuide, { onNavigateTab, defaultOpen: true }))
+            }, t('候选经验绝不会自动生效——每条都会展示会话原文来源、适用条件与范围，由你决定采纳或丢弃。')))
         : h(W.Empty, { title: t('选择一条经验') })));
 }

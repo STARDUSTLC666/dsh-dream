@@ -6,7 +6,7 @@ import { apply as applyDreamServer } from '../lib/index.js'
 
 const CLIENT_BUNDLE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 
-function createDreamUiEnv({ withPrimitives = false, initialStyle = null } = {}) {
+function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyData = false, onClipboardWrite = null } = {}) {
   const storage = new Map()
   if (initialStyle) storage.set('dsh-stardust:ui-style', initialStyle)
   const listeners = new Map()
@@ -173,7 +173,11 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null } = {}) 
     Tag: props => React.createElement('span', props, props.children),
   }
 
-  const sampleKnowledge = {
+  const sampleKnowledge = emptyData ? {
+    lessons: [],
+    evidence: [],
+    stats: { lessons: 0, evidence: 0, byState: {} },
+  } : {
     lessons: [{
       id: 'lesson-1',
       revision: 2,
@@ -201,7 +205,12 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null } = {}) 
     stats: { lessons: 1, evidence: 1, byState: { candidate: 1 } },
   }
 
-  const sampleJournal = {
+  const sampleJournal = emptyData ? {
+    dreams: [],
+    stats: { total: 0, moods: {}, topLessons: [] },
+    query: '',
+    limit: 50,
+  } : {
     dreams: [{
       id: 'dream-1',
       at: '2026-11-17T12:00:00Z',
@@ -228,7 +237,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null } = {}) 
     setTimeout,
     clearTimeout,
     document,
-    navigator: { platform: 'Win32', clipboard: { async writeText() {} } },
+    navigator: { platform: 'Win32', clipboard: { async writeText(val) { onClipboardWrite?.(val) } } },
     fetch: async url => {
       const target = String(url)
       if (target.includes('/knowledge')) return { ok: true, status: 200, json: async () => sampleKnowledge }
@@ -531,4 +540,72 @@ test('Cordis 4 ctx.effect unload disposer cleans up registered Dream tools and r
   for (const dispose of effects.splice(0).reverse()) dispose()
   assert.equal(activeTools, 0)
   assert.equal(activeRoutes, 0)
+})
+
+test('dsh-dream empty review & journal states provide 1-click copy prompts, tab jumps, accessible collapsible workflow guide, and explicit label htmlFor', async () => {
+  const copiedTexts = []
+  const env = createDreamUiEnv({
+    withPrimitives: false,
+    emptyData: true,
+    onClipboardWrite: val => copiedTexts.push(val),
+  })
+  const mounted = await env.mountWorkbench(true, 'zh-CN')
+  try {
+    let root = mounted.tree
+    const cssText = env.headStyles.map(s => s.textContent).join('\n')
+    assert.match(cssText, /content:\s*"▸";\s*content:\s*"▸"\s*\/\s*""/)
+    assert.match(cssText, /@media \(prefers-reduced-motion: no-preference\)[\s\S]*?transition:\s*rotate/)
+
+    // 1) Review empty state: explains distillation, offers 1-click copy prompts and quick jump buttons
+    assert.match(root.textContent, /没有待审阅的经验/)
+    assert.match(root.textContent, /完成实际任务后/)
+
+    const distillBtn = findNodes(root, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '复盘最近的对话并提炼可复用的项目经验')[0]
+    const dreamBtn = findNodes(root, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '做个梦')[0]
+    assert.ok(distillBtn, 'expected 1-click distill prompt button in review empty state')
+    assert.ok(dreamBtn, 'expected 1-click dream prompt button in review empty state')
+
+    distillBtn.attrs.onClick()
+    await new Promise(r => setTimeout(r, 10))
+    root = mounted.rerender()
+    assert.deepEqual(copiedTexts, ['复盘最近的对话并提炼可复用的项目经验'])
+    const copiedBtn = findNodes(root, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '复盘最近的对话并提炼可复用的项目经验' && n.attrs['data-copied'] === 'true')[0]
+    assert.ok(copiedBtn, 'copy button should stamp data-copied="true"')
+    assert.ok(!copiedBtn.attrs.disabled, 'copy button must stay enabled during feedback')
+    const statusRegions = findNodes(root, n => n.attrs.role === 'status' && /已复制指令/.test(n.textContent))
+    assert.ok(statusRegions.length >= 1, 'external role="status" live region should announce copy confirmation')
+
+    // Quick jump to Settings and verify explicit label htmlFor -> control id
+    const goSettings = findNodes(root, n => n.tag === 'button' && n.textContent.includes('前往设置'))[0]
+    assert.ok(goSettings, 'expected quick jump button to Settings')
+    goSettings.attrs.onClick()
+    root = mounted.rerender()
+    const langLabel = findNodes(root, n => n.tag === 'label' && n.attrs.htmlFor === 'dream-settings-language')[0]
+    const langSelect = findNodes(root, n => n.tag === 'select' && n.attrs.id === 'dream-settings-language')[0]
+    assert.ok(langLabel && langSelect, 'Settings label must pair htmlFor + id')
+
+    // 2) Switch to Journal tab: verify interactive "做个梦" copy button + collapsible workflow guide without headings inside <summary>
+    const journalTab = findNodes(root, n => n.attrs.role === 'tab' && n.textContent.includes('日记'))[0]
+    assert.ok(journalTab)
+    journalTab.attrs.onClick()
+    await new Promise(r => setTimeout(r, 20))
+    root = mounted.rerender()
+
+    assert.match(root.textContent, /还没有梦境日记/)
+    const guide = findNodes(root, n => n.tag === 'details' && Object.hasOwn(n.attrs, 'data-dream-workflow-guide'))[0]
+    assert.ok(guide, 'expected collapsible workflow guide in Journal')
+    const summary = findNodes(guide, n => n.tag === 'summary')[0]
+    assert.ok(summary)
+    assert.match(summary.textContent, /怎么用最顺手：积累 → 做梦提炼 → 审阅入库/)
+    const headingsInSummary = findNodes(summary, n => /^h[1-6]$/.test(n.tag))
+    assert.equal(headingsInSummary.length, 0, 'must never place h1-h6 inside <summary>')
+
+    const journalDreamBtn = findNodes(root, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '做个梦')[0]
+    assert.ok(journalDreamBtn, 'Journal empty state should expose interactive "做个梦" copy button')
+    journalDreamBtn.attrs.onClick()
+    await new Promise(r => setTimeout(r, 10))
+    assert.equal(copiedTexts.at(-1), '做个梦')
+  } finally {
+    mounted.cleanup()
+  }
 })

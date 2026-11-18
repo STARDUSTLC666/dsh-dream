@@ -42,14 +42,17 @@ For the web profile, replace `desktop` with `web`. Restart that DSH profile afte
 
 ## Start using it
 
-1. Open Dream memory in the sidebar and choose whether to use automatic organization and recall.
-2. Complete real work and check Pending review after an eligible task, or explicitly ask for a retrospective.
-3. Expand a candidate, inspect sources, scope, conditions and exceptions, then decide whether to accept it.
-4. Recall accepted experience in relevant tasks; edit, revoke or review it in Accepted when needed.
+Dream works best as a lightweight **Accumulate → Reflect & distill → Review & adopt → Auto-recall** loop:
 
-Example request：
+1. **Accumulate naturally**: Open **Dream memory** from the sidebar and choose your **Auto collect** and **Auto recall** switches. Complete real debugging or coding tasks as usual — idle turns automatically queue qualifying candidates into **Awaiting review**.
+2. **Reflect & distill on demand**: Anytime you want a retrospective or a journal entry, use the 1-click copy prompt buttons right inside **Awaiting review** or **Journal** and paste into chat so the assistant replays recent sessions and distills source-backed candidates.
+3. **Review & adopt**: Inspect session evidence, scope, conditions, and exceptions in **Awaiting review** (`J`/`K` to navigate, `A` to accept, `D` to discard). Candidates never take effect until you explicitly accept them.
+4. **Recall & codify**: Matching accepted lessons are recalled automatically in future tasks; durable project conventions can be previewed as a diff before writing to `AGENTS.md`, with 1-click rollback in **Rule history**.
 
-> Review the task we just completed. Keep sources and place reusable lessons in the review queue.
+Handy chat prompts (1-click copyable in the workbench):
+
+- `Have a dream` — replay recent sessions and record a reflection entry in **Journal**.
+- `Review our recent conversation and distill reusable project lessons` — extract source-linked candidates into **Awaiting review**.
 
 ## Before you start
 

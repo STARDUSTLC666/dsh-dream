@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.16.3 (2026-11-18)
+
+- 优化「待审阅」与「梦境日记」空状态交互：补齐通俗经验提炼说明、跳转「设置 / 已采纳」快捷按钮与一键复制「做个梦 / 复盘提炼经验」指令按钮，并新增覆盖 8 种界面语言的可折叠三步记忆工作流指引。
+- Upgrade Review and Dream Journal empty states with clear onboarding context, quick jumps to Settings and Accepted memories, interactive 1-click prompt copy buttons, and an 8-locale collapsible 3-step workflow guide.
+
 ## 0.16.2 (2026-11-18)
 
 - 更新区底部新增克制、无打扰的 GitHub 点赞与问题反馈快捷链接，并完善中英文检索关键词。

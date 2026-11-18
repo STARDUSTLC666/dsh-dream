@@ -1267,7 +1267,11 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                     title: block.title,
                 }))),
                 vm.count === 1
-                    ? h("div", { className: css['dshd-hint'], key: "one" }, t("1 场梦，先不谈分布 —— 再做梦会累积。"))
+                    ? h("div", { className: css['dshd-hint'], key: "one" }, [
+                        h("span", { key: "txt" }, t("1 场梦，先不谈分布 —— 再做梦会累积。")),
+                        " ",
+                        h(W.CopyPrompt, { key: "cp", prompt: t("做个梦"), label: t("复制「做个梦」") }),
+                    ])
                     : h("div", { key: "legend" }, [
                         h("div", { className: css['dshd-note'], key: "cap" }, t("左 → 右：从早到晚")),
                         h("div", { className: css['dshd-legend'], key: "rows" }, vm.moodRows.map((row, index) => h("div", { className: css['dshd-legend-row'], key: "mood-" + String(index) + "-" + row.mood }, [
@@ -1328,6 +1332,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
         }
         function ReviewControls(props) {
             const row = props.row;
+            const reviewFormId = typeof useId === "function" ? useId() : "dream-review-" + row.id;
             const [open, setOpen] = useState(false);
             const [action, setAction] = useState(reviewActionFor(row.state));
             const [resolution, setResolution] = useState("prefer");
@@ -1424,15 +1429,15 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                             setOpen(false);
                         }
                     } }, [
-                    h("label", { key: "action" }, [t("审阅动作"), h("select", { "aria-label": t("审阅动作"), disabled: pending, value: effectiveAction, onChange: function (event) { setAction(event.target.value); } }, commands.map(function (item) { return h("option", { value: item[0], key: item[0] }, item[1]); }))]),
+                    h("label", { key: "action", htmlFor: reviewFormId + "-action" }, [t("审阅动作"), h("select", { id: reviewFormId + "-action", "aria-label": t("审阅动作"), disabled: pending, value: effectiveAction, onChange: function (event) { setAction(event.target.value); } }, commands.map(function (item) { return h("option", { value: item[0], key: item[0] }, item[1]); }))]),
                     effectiveAction === "resolve-conflict" ? h("div", { key: "conflict" }, [
-                        h("label", { key: "against" }, [t("冲突经验"), h("select", { "aria-label": t("冲突经验"), disabled: pending, value: affected, onChange: function (event) { setAffected(event.target.value); } }, row.conflicts.map(function (item) { return h("option", { key: item.id, value: item.id, title: item.title }, item.title); }))]),
-                        h("label", { key: "resolution" }, [t("处理方式"), h("select", { "aria-label": t("处理方式"), disabled: pending, value: resolution, onChange: function (event) { setResolution(event.target.value); } }, [
+                        h("label", { key: "against", htmlFor: reviewFormId + "-against" }, [t("冲突经验"), h("select", { id: reviewFormId + "-against", "aria-label": t("冲突经验"), disabled: pending, value: affected, onChange: function (event) { setAffected(event.target.value); } }, row.conflicts.map(function (item) { return h("option", { key: item.id, value: item.id, title: item.title }, item.title); }))]),
+                        h("label", { key: "resolution", htmlFor: reviewFormId + "-resolution" }, [t("处理方式"), h("select", { id: reviewFormId + "-resolution", "aria-label": t("处理方式"), disabled: pending, value: resolution, onChange: function (event) { setResolution(event.target.value); } }, [
                                 h("option", { key: "prefer", value: "prefer" }, t("采用这条，驳回对方")),
                                 h("option", { key: "drop", value: "drop" }, t("放弃这条，保留对方")),
                                 h("option", { key: "merge", value: "merge" }, t("合并到这条，对方留作历史")),
                             ])]),
-                        h("label", { key: "note" }, [t("处理依据"), h("textarea", { "aria-label": t("处理依据"), disabled: pending, rows: 2, maxLength: 500, value: note, placeholder: t("说明哪个来源支持这次决定…"), onChange: function (event) { setNote(event.target.value); } })]),
+                        h("label", { key: "note", htmlFor: reviewFormId + "-note" }, [t("处理依据"), h("textarea", { id: reviewFormId + "-note", "aria-label": t("处理依据"), disabled: pending, rows: 2, maxLength: 500, value: note, placeholder: t("说明哪个来源支持这次决定…"), onChange: function (event) { setNote(event.target.value); } })]),
                     ]) : null,
                     h(Btn, { key: "confirm", disabled: reviewBusy || command === "" || (!globalConfirmed && ((effectiveAction === 'accept' && row.isGlobal) || (effectiveAction === 'resolve-conflict' && (row.isGlobal || row.hasGlobalConflicts)))), onClick: function () { review(effectiveAction); }, variant: "primary" }, t("确认审阅")),
                     h("details", { key: "fallback" }, [h("summary", { key: "summary" }, t("在对话里处理")), command === "" ? h("div", { key: "hint", className: css['dshd-note'] }, t("选择冲突经验并填写处理依据后即可处理。")) : h(CopyCommand, { key: "copy", command: command, label: t("复制审阅命令") })]),
@@ -1453,7 +1458,7 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                 ]) : null,
                 h("details", { key: "feedback", className: css['dshd-feedback'] }, [
                     h("summary", { key: "summary" }, t("使用反馈 · 有用 ") + (row.feedback.useful || 0) + t(" · 不适用 ") + (row.feedback.notApplicable || 0)),
-                    h("label", { key: "note" }, [t("场景备注（可选）"), h("textarea", { "aria-label": t("反馈场景备注"), rows: 2, disabled: pending, maxLength: 500, value: feedbackNote, placeholder: t("这次在哪个场景使用…"), onChange: function (event) { setFeedbackNote(event.target.value); } })]),
+                    h("label", { key: "note", htmlFor: reviewFormId + "-feedback-note" }, [t("场景备注（可选）"), h("textarea", { id: reviewFormId + "-feedback-note", "aria-label": t("反馈场景备注"), rows: 2, disabled: pending, maxLength: 500, value: feedbackNote, placeholder: t("这次在哪个场景使用…"), onChange: function (event) { setFeedbackNote(event.target.value); } })]),
                     h(Btn, { key: "useful", disabled: pending, onClick: function () { feedback("useful"); } }, t("这次有用")),
                     h(Btn, { key: "not", disabled: pending, onClick: function () { feedback("not-applicable"); } }, t("这次不适用")),
                     h("div", { key: "help", className: css['dshd-note'] }, t("记录使用情况，供之后复核；采纳与驳回由审阅决定。")),
@@ -1594,7 +1599,7 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
             ]);
         }
         function EmptyState(props) {
-            const moon = h("svg", { width: 34, height: 34, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round", key: "i" }, [
+            const moon = h("svg", { width: 34, height: 34, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round", 'aria-hidden': true, key: "i" }, [
                 h("path", { key: "p", d: "M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z" }),
             ]);
             if (props.query !== undefined && props.query !== "") {
@@ -1610,8 +1615,9 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
                 h("h3", { key: "t" }, t("还没有梦境日记")),
                 h("p", { key: "p" }, t("自动整理的内容在「经验」页待审阅；日记可让助手复盘时单独生成。")),
                 h("div", { className: css['dshd-chips'], key: "c" }, [
-                    h("span", { className: css['dshd-chip'], key: "s1" }, t("对 agent 说「做个梦」")),
-                    h("span", { className: css['dshd-chip'], key: "s2" }, "dream_digest → dream_save"),
+                    h(W.CopyPrompt, { key: "s1", variant: "primary", prompt: t("做个梦"), label: t("复制「做个梦」") }),
+                    h(W.CopyPrompt, { key: "s2", prompt: t("复盘最近的对话并提炼可复用的项目经验"), label: t("复制复盘提炼指令") }),
+                    props.onReview ? h(Btn, { key: "s3", icon: "book", size: "sm", onClick: props.onReview }, t("查看待审阅经验")) : null,
                 ]),
             ]);
         }
@@ -1869,6 +1875,11 @@ showFilterButton === true && activeTab === "journal" ? h("div", { className: css
                         ]),
                     ]) : null,
                 ]) : null,
+pristine ? null : h(W.CopyPrompt, {
+                    key: "dream-copy",
+                    prompt: t("做个梦"),
+                    label: t("复制「做个梦」"),
+                }),
 pristine ? null : h(Btn, {
                     key: "privacy",
                     onClick: togglePrivacy,
@@ -1885,7 +1896,7 @@ pristine ? null : h(Btn, {
                 if (activeTab === 'review' || activeTab === 'knowledge') return h(MemoryBoard, {
                     key: activeTab, vm: knowledgeVm, revisions: knowledge.revisions, reviewMode: activeTab === 'review',
                     error: knowledgeError, loading: knowledgeLoading, privacy, onRetry: showKnowledge, onChanged,
-                    moveRef: moveCandidate, automation,
+                    moveRef: moveCandidate, automation, onNavigateTab: changeTab,
                 });
                 if (activeTab === 'bridge') return h('div', { className: css.documentPage }, bridgeLogCard);
                 if (activeTab === 'settings') return h(DreamSettings, {
@@ -1901,7 +1912,7 @@ pristine ? null : h(Btn, {
                                 h("p", { key: "p" }, t("等宿主路由就绪后点上面的「重试」；如果一直失败，看一眼 DSH 日志里有没有 [dsh-dream] 告警。")),
                             ]),
                         ]);
-                    return h(EmptyState, { key: "empty", query: query, onClear: query === "" ? null : clearSearch });
+                    return h(EmptyState, { key: "empty", query: query, onClear: query === "" ? null : clearSearch, onReview: () => changeTab('review') });
                 }
                 return h("div", { key: "content" }, [
                     vm.showTiles
@@ -1935,7 +1946,7 @@ pristine ? null : h(Btn, {
             return h(W.Page, {
                 root, workbench, activeTab, changeTab, tabId, skin, setSkin, paletteActions, openPalette,
                 closePalette: () => setPaletteActions(null), privacy, togglePrivacy, automation, actionNotice, reviewCount,
-            }, activeTab === 'journal' ? h('div', { className: css.documentPage }, errorBox, toolbar, body(),
+            }, activeTab === 'journal' ? h('div', { className: css.documentPage }, errorBox, h(W.WorkflowGuide, { key: 'workflow-guide', onNavigateTab: changeTab, showReviewLink: true }), toolbar, body(),
                 h('div', { className: css['dshd-footer'] },
                     h('span', null, footerTextOf(query, limit, vm.total, vm.count)),
                     canLoadMore ? h(W.Button, { onClick: showMore, disabled: loading }, t('显示更早的梦')) : null)) : body());

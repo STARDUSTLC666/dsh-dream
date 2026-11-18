@@ -142,12 +142,13 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, s
           h(W.Button, { onClick: onReview }, t('待审阅') + ' · ' + format.format(value.candidates ?? 0)))) :
         failure ? null : h('p', { className: css.muted }, t('正在读取状态…'))),
     chat ? h(SettingCard, { title: t('聊天记忆设置'), index: 1 },
-      h('label', { className: css.scopePicker }, t('会话'), h('select', {
-        value: chat.sessionId, disabled: pending, onChange: event => setChatId(event.target.value),
+      h('label', { className: css.scopePicker, htmlFor: 'dream-settings-session' }, t('会话'), h('select', {
+        id: 'dream-settings-session', value: chat.sessionId, disabled: pending, onChange: event => setChatId(event.target.value),
       }, chats.map(row => h('option', { key: row.sessionId, value: row.sessionId }, (row.cwd || '') + ' · ' + row.sessionId.slice(0, 8))))),
       [['use', '使用记忆'], ['contribute', '贡献记忆']].map(([key, label]) => h('label', {
-        className: css.scopePicker, key,
+        className: css.scopePicker, key, htmlFor: 'dream-settings-chat-' + key,
       }, t(label), h('select', {
+        id: 'dream-settings-chat-' + key,
         disabled: pending, value: chat[key] == null ? 'inherit' : String(chat[key]),
         onChange: event => change({ operation: 'automatic-chat', sessionId: chat.sessionId,
           [key]: event.target.value === 'inherit' ? null : event.target.value === 'true' }),
@@ -165,8 +166,8 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, s
           options: styleOptions,
           onChange: setSkin,
         })),
-      h('label', { className: css.scopePicker }, t('界面语言'), h('select', {
-        'aria-label': t('界面语言'), value: dreamLanguage, onChange: event => setDreamLanguage(event.target.value),
+      h('label', { className: css.scopePicker, htmlFor: 'dream-settings-language' }, t('界面语言'), h('select', {
+        id: 'dream-settings-language', 'aria-label': t('界面语言'), value: dreamLanguage, onChange: event => setDreamLanguage(event.target.value),
       }, h('option', { value: '' }, t('跟随 DSH')),
       Object.entries(DREAM_LANGUAGES).map(([code, label]) => h('option', { key: code, value: code }, label)))),
       h(W.Switch, { label: t('隐私模式'), checked: privacy, onChange: onPrivacyChange }),

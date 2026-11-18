@@ -131,6 +131,96 @@ function Empty({ title, children, action, icon = 'book' }) {
     children ? h('p', { className: css.muted }, children) : null, action);
 }
 
+let lastDreamCopyStatus = '';
+
+function legacyExecCopy(text) {
+  try {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof document.execCommand !== 'function' || !document.body?.append) {
+      return false;
+    }
+    const field = Object.assign(document.createElement('textarea'), { value: text });
+    field.setAttribute('readonly', '');
+    field.style.cssText = 'position:fixed;inset-block-start:0;opacity:0';
+    document.body.append(field);
+    field.select?.();
+    try { return Boolean(document.execCommand('copy')); } finally { field.remove?.(); }
+  } catch {
+    return false;
+  }
+}
+
+function CopyPrompt({ prompt, label, variant = 'outline', size = 'sm', className, onCopied }) {
+  const text = typeof prompt === 'string' ? prompt.trim() : '';
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const timerRef = useRef(null);
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+  if (!text) return null;
+
+  const buttonLabel = label || text;
+  const handleCopy = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    copyText(text).then(ok => {
+      const succeeded = ok || legacyExecCopy(text);
+      setCopied(succeeded);
+      setFailed(!succeeded);
+      let msg = succeeded ? t('已复制指令，粘贴到对话发送即可') : t('复制失败');
+      if (msg === lastDreamCopyStatus) msg += '\u00A0';
+      lastDreamCopyStatus = msg;
+      setAnnouncement(msg);
+      if (succeeded) onCopied?.(text);
+      const timer = setTimeout(() => {
+        setCopied(false);
+        setFailed(false);
+        setAnnouncement('');
+      }, 2000);
+      timer?.unref?.();
+      timerRef.current = timer;
+    });
+  };
+
+  const isCopied = copied === true;
+  const isFailed = failed === true;
+  return h('span', { className: clsx(css.copyPromptWrap, className) },
+    h(Button, {
+      type: 'button',
+      variant,
+      size,
+      icon: isCopied ? 'check' : 'copy',
+      'data-copied': isCopied ? 'true' : undefined,
+      'data-failed': isFailed ? 'true' : undefined,
+      'data-copy-prompt': text,
+      title: text,
+      onClick: handleCopy,
+    }, isCopied ? t('已复制') : buttonLabel),
+    h('span', {
+      className: css.copyBubble,
+      role: 'status',
+      'data-visible': (isCopied || isFailed) ? 'true' : undefined,
+    }, typeof announcement === 'string' ? announcement : ''),
+    isFailed ? h('code', { className: css['dshd-cmd'], tabIndex: 0 }, text) : null);
+}
+
+function WorkflowGuide({ onNavigateTab, defaultOpen = false, showReviewLink = false, className }) {
+  return h('details', {
+    className: clsx(css.workflowGuide, className),
+    open: defaultOpen || undefined,
+    'data-dream-workflow-guide': '',
+  },
+    h('summary', { className: css.workflowSummary }, t('怎么用最顺手：积累 → 做梦提炼 → 审阅入库')),
+    h('div', { className: css.workflowBody },
+      h('ol', { className: css.workflowSteps },
+        h('li', null, t('积累：日常在 DSH 完成排障或开发任务；开启「自动整理」后空闲时会自动提取候选。')),
+        h('li', null, t('做梦提炼：随时复制下方指令发到对话，让助手回放最近会话、写下反思日记并提炼可复用经验。')),
+        h('li', null, t('审阅入库：在「待审阅」核对证据与适用范围，确认采纳后即可自动召回或预览写入 AGENTS.md。'))),
+      h('div', { className: css.workflowActions },
+        h(CopyPrompt, { prompt: t('做个梦'), label: t('复制「做个梦」'), variant: 'primary' }),
+        h(CopyPrompt, { prompt: t('复盘最近的对话并提炼可复用的项目经验'), label: t('复制复盘提炼指令') }),
+        showReviewLink && onNavigateTab ? h(Button, { icon: 'book', size: 'sm', onClick: () => onNavigateTab('review') }, t('查看待审阅')) : null,
+        onNavigateTab ? h(Button, { icon: 'settings', size: 'sm', onClick: () => onNavigateTab('settings') }, t('前往设置')) : null)));
+}
+
 function Dialog({ title, onClose, busy, className, children, style: styleProp }) {
   const [syncedStyle] = useDshStyle(React);
   const activeStyle = normalizeDshStyle(styleProp ?? syncedStyle);
@@ -351,4 +441,4 @@ function DreamChrome({
     commands ? h(CommandPalette, { commands, onClose: closePalette, skin }) : null);
 }
 
-const W = { Button, Checkbox, ChoiceMenu, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Status, Switch };
+const W = { Button, Checkbox, ChoiceMenu, CopyPrompt, Dialog, Empty, Icon, IconButton, Page: DreamChrome, Search, SegmentedControl, Status, Switch, WorkflowGuide };

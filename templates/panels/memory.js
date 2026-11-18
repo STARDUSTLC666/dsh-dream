@@ -70,6 +70,7 @@ function lessonDiff(before, after) {
 
 function LessonDiffDialog({ row, base, onClose }) {
   const [action, setAction] = useState(row.state === 'disputed' ? 'reject' : 'accept');
+  const diffActionId = typeof useId === 'function' ? useId() : 'dream-diff-action';
   const state = action === 'accept' ? 'usable' : 'rejected';
   const before = base || row;
   const after = base ? row : { ...row, stateLabel: lessonStateLabel(state) };
@@ -78,7 +79,7 @@ function LessonDiffDialog({ row, base, onClose }) {
   return h(W.Dialog, { title, onClose },
     h('div', { className: css.diffMeta },
       h('span', null, t('版本') + ' ' + before.revision + ' → ' + (base ? row.revision : t('确认审阅后'))),
-      base ? null : h('label', null, t('审阅动作'), h('select', { value: action, onChange: event => setAction(event.target.value) },
+      base ? null : h('label', { htmlFor: diffActionId }, t('审阅动作'), h('select', { id: diffActionId, value: action, onChange: event => setAction(event.target.value) },
         row.state === 'disputed' ? null : h('option', { value: 'accept' }, t('确认采纳')),
         h('option', { value: 'reject' }, t('丢弃'))))),
     diffs.length ? h(nativeUI().DiffBlock, {
@@ -237,7 +238,7 @@ function CandidateRow({ row, index, active, selected, disabled, onSelect, onOpen
       h(nativeUI().Tag, { tone: LESSON_TONES[row.state] }, row.stateLabel))));
 }
 
-function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onChanged, onRetry, moveRef, automation }) {
+function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onChanged, onRetry, moveRef, automation, onNavigateTab }) {
   const [search, setSearch] = useState('');
   const [group, setGroup] = useState('');
   const [history, setHistory] = useState(false);
@@ -375,10 +376,28 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
     }));
   const listEmpty = error ? h(W.Empty, { title: t('暂时读不到经验'), action: h(W.Button, { icon: 'refresh', onClick: onRetry, disabled: loading }, t('重试')) }, displayError(error))
     : loading && !all.length ? h(W.Empty, { title: t('加载中…') })
-    : !rows.length ? h(W.Empty, {
-      title: all.length ? t('没有匹配的经验') : reviewMode ? t('没有待审阅的经验') : t(history ? '没有已驳回记录。' : '还没有已采纳的经验'),
-      action: all.length ? h(W.Button, { icon: 'close', onClick: () => { setSearch(''); changeGroup(''); } }, t('清空筛选')) : null,
-    }) : null;
+    : !rows.length ? (all.length
+      ? h(W.Empty, {
+          title: t('没有匹配的经验'),
+          action: h(W.Button, { icon: 'close', onClick: () => { setSearch(''); changeGroup(''); } }, t('清空筛选')),
+        })
+      : reviewMode
+        ? h(W.Empty, {
+            icon: 'sparkle',
+            title: t('没有待审阅的经验'),
+            action: h('div', { className: css.emptyStack },
+              h('div', { className: css.emptyPrompts },
+                h(W.CopyPrompt, { variant: 'primary', prompt: t('复盘最近的对话并提炼可复用的项目经验'), label: t('复制复盘提炼指令') }),
+                h(W.CopyPrompt, { prompt: t('做个梦'), label: t('复制「做个梦」') })),
+              onNavigateTab ? h('div', { className: css.emptyPrompts },
+                h(W.Button, { icon: 'settings', size: 'sm', onClick: () => onNavigateTab('settings') }, t('前往设置')),
+                h(W.Button, { icon: 'book', size: 'sm', onClick: () => onNavigateTab('knowledge') }, t('查看已采纳'))) : null),
+          }, t('完成实际任务后，开启「自动整理」或在对话里让助手复盘，提炼出的候选经验会先进入这里等你核对证据与范围。'))
+        : h(W.Empty, {
+            title: t(history ? '没有已驳回记录。' : '还没有已采纳的经验'),
+            action: !history && onNavigateTab ? h(W.Button, { icon: 'sparkle', size: 'sm', onClick: () => onNavigateTab('review') }, t('查看待审阅')) : null,
+          }, !history ? t('已采纳的经验会在后续相关任务中自动作为参考取回，也可预览写入项目 AGENTS.md。') : null))
+    : null;
 
   return h('div', {
     className: css['workbench-grid'], ref: splitRef, 'data-review': String(Boolean(reviewMode)), 'data-detail': String(Boolean(mobileDetail)),
@@ -456,5 +475,12 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
       active && !error ? h(MemoryDetail, {
         key: active.id, row: active, base: revisions.get(active.id), privacy, reviewMode, onChanged, batchPending: pending,
         onExit: reviewMode ? action => animate([active.id], action) : null,
-      }) : h(W.Empty, { title: t('选择一条经验') })));
+      }) : (!loading && !error && !all.length && reviewMode)
+        ? h('div', { className: css.inspectorEmptyWrap },
+            h(W.Empty, {
+              icon: 'sparkle',
+              title: t('等待新的候选经验'),
+            }, t('候选经验绝不会自动生效——每条都会展示会话原文来源、适用条件与范围，由你决定采纳或丢弃。')),
+            h(W.WorkflowGuide, { onNavigateTab, defaultOpen: true }))
+        : h(W.Empty, { title: t('选择一条经验') })));
 }

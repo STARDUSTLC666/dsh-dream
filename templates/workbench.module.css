@@ -428,6 +428,99 @@
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 170px; margin: auto; padding: 20px 12px; text-align: center; overflow-wrap: anywhere; }
 .empty svg { color: var(--dream-tertiary); }
 .empty h2 { font-size: 15px; font-weight: 600; }
+.empty > .muted { max-width: 420px; line-height: 1.55; }
+.emptyStack { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-block-start: 4px; max-width: 100%; }
+.emptyPrompts { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; max-width: 100%; }
+.inspectorEmptyWrap { display: flex; flex-direction: column; justify-content: center; gap: 14px; flex: 1 1 auto; max-width: 560px; width: 100%; margin-inline: auto; padding: 20px 18px; }
+
+.copyPromptWrap {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+}
+.copyBubble {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--dream-secondary);
+  opacity: 0;
+  pointer-events: none;
+  max-inline-size: 0;
+  overflow: clip;
+  white-space: nowrap;
+  transition: opacity 0.16s ease;
+}
+.copyBubble[data-visible='true'] {
+  opacity: 1;
+  max-inline-size: 280px;
+  padding: 2px 6px;
+  border-radius: var(--dsw-radius-xs, 4px);
+  background: var(--dream-layer-2);
+}
+
+.workflowGuide {
+  border: var(--dream-hairline);
+  border-radius: var(--dream-card-radius);
+  background: var(--dream-layer-1);
+  padding: 9px 13px;
+  margin-block-end: 12px;
+  text-align: start;
+}
+.workflowSummary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.55ch;
+  min-block-size: 24px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--dream-ink);
+  user-select: none;
+}
+.workflowSummary::-webkit-details-marker {
+  display: none;
+}
+.workflowSummary::before {
+  content: "▸";
+  content: "▸" / "";
+  display: inline-block;
+  flex-shrink: 0;
+  color: var(--dream-accent);
+  rotate: 0deg;
+}
+.workflowGuide[open] > .workflowSummary::before {
+  rotate: 90deg;
+}
+.workflowBody {
+  display: grid;
+  gap: 10px;
+  margin-block-start: 8px;
+  padding-block-start: 8px;
+  border-block-start: var(--dream-hairline);
+}
+.workflowSteps {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: grid;
+  gap: 5px;
+  color: var(--dream-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.workflowActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .workflowSummary::before {
+    transition: rotate 0.18s ease;
+  }
+}
 .switches { display: grid; gap: 8px; }
 .switchRow { display: flex; gap: 8px; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 500; }
 .switchRow button { flex: none; }

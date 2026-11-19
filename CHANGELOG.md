@@ -1,6 +1,12 @@
 # 更新记录
 
 
+## 0.17.2 (2026-11-20)
+
+- 在备用弹窗中，子菜单优先处理 Escape，避免误关外层表单。
+- Let nested controls consume Escape before closing a fallback dialog.
+- 旧日记、知识和桥接路由先执行 DSH 鉴权。
+
 ## 0.17.1 (2026-11-19)
 
 - 修复首次未找到宿主控件后永久使用 fallback 的缓存问题；支持同一加载器下宿主迟到、卸载、替换与重载。

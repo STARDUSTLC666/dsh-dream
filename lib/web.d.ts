@@ -120,6 +120,12 @@ export interface DreamWebOptions {
     knowledgeStoreFactory?: (knowledgeDir: string) => KnowledgeReader;
     /** 测试注入：返回只读桥接记录源；提供时不做目录存在性检查。 */
     bridgeStoreFactory?: (bridgeDir: string) => BridgeReader;
+    /** Host connection used to reject unauthenticated requests before any body/backend work. */
+    connection?: {
+        requestRejection?: (request: {
+            headers: any;
+        }) => 401 | 403 | undefined;
+    };
 }
 /** ?limit 解析：缺省/非数字 → fallback；越界钳制到 [1, 500]。 */
 export declare function limitFromQuery(raw: unknown, fallback?: number): number;

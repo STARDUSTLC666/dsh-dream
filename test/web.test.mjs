@@ -70,7 +70,9 @@ function mount(options) {
   const injected = []
   const routes = []
   const effects = []
+  const connection = options?.connection ?? { requestRejection: () => undefined }
   const webCtx = {
+    connection,
     webServer: {
       register(route, description) {
         routes.push({ route, description })
@@ -167,7 +169,7 @@ test('三条只读路由：ctx.inject(["webServer"]) + 一个 effect 注册 jour
   assert.equal(DREAM_KNOWLEDGE_ROUTE, '/_dsh/dsh-dream/knowledge')
   assert.equal(DREAM_BRIDGE_ROUTE, '/_dsh/dsh-dream/bridge')
   const mounted = mount({ journalDir: makeJournal([]) })
-  assert.deepEqual(mounted.injected, [['webServer']])
+  assert.deepEqual(mounted.injected, [['webServer', 'connection']])
   assert.equal(mounted.effects.length, 1)
   assert.equal(mounted.effects[0].label, 'dsh-dream: web routes')
   assert.deepEqual(
@@ -459,6 +461,7 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
   const injected = []
   const routes = []
   const webCtx = {
+    connection: { requestRejection() { return undefined } },
     webServer: { register(route) { routes.push(route); return () => {} } },
     effect(factory) { return factory() },
   }
@@ -468,7 +471,7 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
     inject(names, callback) { injected.push(names); callback(webCtx) },
   }
   apply(ctx, { journalDir: dir })
-  assert.deepEqual(injected, [['profileContext', 'connection', 'pluginManager', 'agents', 'loader'], ['webServer'], ['connection'], ['sessions', 'agents', 'llm', 'systemPrompt']])
+  assert.deepEqual(injected, [['profileContext', 'connection', 'pluginManager', 'agents', 'loader'], ['webServer', 'connection'], ['connection'], ['sessions', 'agents', 'llm', 'systemPrompt']])
   assert.equal(routes.length, 3)
   const journalRoute = routes.find((route) => route.path === DREAM_ROUTE)
   const knowledgeRoute = routes.find((route) => route.path === DREAM_KNOWLEDGE_ROUTE)

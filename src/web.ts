@@ -206,6 +206,8 @@ export interface DreamWebOptions {
   knowledgeStoreFactory?: (knowledgeDir: string) => KnowledgeReader
   /** 测试注入：返回只读桥接记录源；提供时不做目录存在性检查。 */
   bridgeStoreFactory?: (bridgeDir: string) => BridgeReader
+  /** Host connection used to reject unauthenticated requests before any body/backend work. */
+  connection?: { requestRejection?: (request: { headers: any }) => 401 | 403 | undefined }
 }
 
 /** ?limit 解析：缺省/非数字 → fallback；越界钳制到 [1, 500]。 */
@@ -425,6 +427,21 @@ function readBridgeApplicationsFromStore(journalDir: string): BridgeApplicationV
   return Array.isArray(result) ? (result as BridgeApplicationView[]) : []
 }
 
+function connectionRejection(connection: any, req: any): 401 | 403 | undefined {
+  try {
+    if (typeof connection?.requestRejection !== 'function') return 403
+    const rejection = connection.requestRejection({ headers: req?.headers })
+    return rejection === 401 || rejection === 403 ? rejection : undefined
+  } catch { return 403 }
+}
+
+function rejectUnauthenticated(req: any, res: any, connection: any): boolean {
+  const status = connectionRejection(connection, req)
+  if (status === undefined) return false
+  responseJson(res, status, { ok: false, error: { code: 'unauthorized', message: 'Authentication required' } })
+  return true
+}
+
 /** 组装梦境日记路由处理器；journalDir 在这一刻定下来（与插件的配置生命周期一致）。 */
 export function createDreamWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
   const journalDir = journalDirOf(options)
@@ -524,26 +541,35 @@ export function installDreamWeb(ctx: any, options: DreamWebOptions = {}): void {
   if (ctx === null || ctx === undefined || typeof ctx.inject !== 'function') {
     throw new Error('dsh-dream: installDreamWeb 需要带 ctx.inject 的宿主上下文（宿主应提供 webServer 服务）')
   }
-  const journalHandler = createDreamWebHandler(options)
-  const knowledgeHandler = createKnowledgeWebHandler(options)
-  const bridgeHandler = createBridgeWebHandler(options)
-  ctx.inject(['webServer'], (webCtx: any) => {
+  ctx.inject(['webServer', 'connection'], (webCtx: any) => {
+    const journalHandler = createDreamWebHandler(options)
+    const knowledgeHandler = createKnowledgeWebHandler(options)
+    const bridgeHandler = createBridgeWebHandler(options)
     webCtx.effect(() => {
       const disposers: Array<() => void> = [
         webCtx.webServer.register({
           kind: 'exact',
           path: DREAM_ROUTE,
-          handler: (req: any, res: any) => journalHandler(req, res),
+          handler: async (req: any, res: any) => {
+            if (rejectUnauthenticated(req, res, webCtx.connection)) return
+            await journalHandler(req, res)
+          },
         }, 'dsh-dream: dream journal route'),
         webCtx.webServer.register({
           kind: 'exact',
           path: DREAM_KNOWLEDGE_ROUTE,
-          handler: (req: any, res: any) => knowledgeHandler(req, res),
+          handler: async (req: any, res: any) => {
+            if (rejectUnauthenticated(req, res, webCtx.connection)) return
+            await knowledgeHandler(req, res)
+          },
         }, 'dsh-dream: knowledge route'),
         webCtx.webServer.register({
           kind: 'exact',
           path: DREAM_BRIDGE_ROUTE,
-          handler: (req: any, res: any) => bridgeHandler(req, res),
+          handler: async (req: any, res: any) => {
+            if (rejectUnauthenticated(req, res, webCtx.connection)) return
+            await bridgeHandler(req, res)
+          },
         }, 'dsh-dream: bridge log route'),
       ]
       return () => {

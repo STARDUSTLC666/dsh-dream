@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.17.2",
+  "version": "0.17.3",
   "description": "DeepSeek Harness 原生任务经验记忆插件。支持任务复盘候选整理、来源与适用范围核对、审阅采纳、AGENTS.md 写入与相关任务召回，内置 5 套浅色/暖色工作台风格（原生清透 / 米白纸感 / Claude 暖书卷 / 8-Bit 像素 / 晴空薄荷）并兼容浅色与柔和深色模式。欢迎提交 issues 和 PR。",
   "type": "module",
   "main": "lib/index.js",
@@ -66,7 +66,7 @@
     "dsh": ">=0.2.2-rc.3"
   },
   "dependencies": {
-    "@stardustlc/dsh-updates": "0.2.5"
+    "@stardustlc/dsh-updates": "0.2.6"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

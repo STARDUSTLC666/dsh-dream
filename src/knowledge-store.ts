@@ -17,7 +17,6 @@
  * @module dsh-dream/knowledge-store
  */
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -34,6 +33,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
+import { appendJsonLine } from './jsonl.js'
 import {
   KnowledgeError,
   canTransition,
@@ -1555,7 +1555,7 @@ export class KnowledgeStore {
   private appendLine(file: string, value: unknown): void {
     this.ensureDir()
     try {
-      appendFileSync(file, JSON.stringify(value) + '\n', 'utf8')
+      appendJsonLine(file, value)
     } catch (error) {
       throw new KnowledgeError('io', '写入 ' + file + ' 失败：' + errorMessage(error))
     }

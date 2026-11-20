@@ -3,8 +3,9 @@
  *
  * @module dsh-dream/journal
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { appendJsonLine } from './jsonl.js'
 
 /** 一条梦境。 */
 export interface DreamEntry {
@@ -31,7 +32,7 @@ export function saveDream(journalDir: string, reflection: string, lessons: strin
     mood: mood.trim() || '平静',
   }
   mkdirSync(journalDir, { recursive: true })
-  appendFileSync(journalFile(journalDir), JSON.stringify(entry) + '\n', 'utf8')
+  appendJsonLine(journalFile(journalDir), entry)
   return entry
 }
 

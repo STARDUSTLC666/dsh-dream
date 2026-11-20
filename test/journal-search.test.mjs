@@ -3,14 +3,14 @@
  * 会出现「stats.total 1500、搜索却搜不到老梦」的假搜索。
  *
  * 只用合成临时 JSONL，绝不读真实 ~/.dsh。
- * journal.ts 没有相对导入，node --test 可直接加载源文件，无需先构建 lib/。
+ * 使用构建产物，与 npm test 的其余存储回归保持同一模块解析路径。
  */
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readDreams, searchDreams } from '../src/journal.ts'
+import { readDreams, searchDreams } from '../lib/journal.js'
 
 /** 日记条数：远大于旧实现的 1000 上限。 */
 const TOTAL = 1200

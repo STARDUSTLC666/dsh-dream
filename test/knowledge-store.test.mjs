@@ -338,6 +338,37 @@ test('负例：坏行跳过不炸并计数', () => {
   }
 })
 
+test('a successful update after an interrupted event append survives authoritative replay', () => {
+  const root = freshRoot(), dir = join(root, 'knowledge')
+  try {
+    const store = new KnowledgeStore(dir)
+    const original = store.createLesson(lessonInput({ evidence: [] }), 'before-interruption').lesson
+    const partial = '{"schemaVersion":1,"kind":"lesson.update"'
+    writeFileSync(join(dir, 'events.jsonl'), partial, { flag: 'a' })
+    const updated = store.updateLesson(original.id, { title: 'Saved after interrupted append' }, original.revision, 'after-interruption')
+    assert.equal(updated.title, 'Saved after interrupted append')
+    store.rebuildIndex()
+    const reopened = new KnowledgeStore(dir)
+    assert.equal(reopened.getLesson(original.id).title, updated.title)
+    assert.equal(reopened.getLesson(original.id).revision, updated.revision)
+    assert.ok(readFileSync(join(dir, 'events.jsonl'), 'utf8').includes(partial + '\n'), 'retain the damaged fragment for diagnosis')
+    assert.ok(reopened.stats().badLines >= 1)
+  } finally { cleanup(root) }
+})
+
+test('new evidence remains readable when the evidence log ends with an incomplete record', () => {
+  const root = freshRoot(), dir = join(root, 'knowledge')
+  try {
+    const store = new KnowledgeStore(dir)
+    store.appendEvidence(evidenceInput())
+    writeFileSync(join(dir, 'evidence.jsonl'), '{"id":"interrupted', { flag: 'a' })
+    const saved = store.appendEvidence(evidenceInput({ sessionId: 'sess-after-interruption', recordSeq: 2 })).evidence
+    const rows = readFileSync(join(dir, 'evidence.jsonl'), 'utf8').split('\n').flatMap(line => { try { return [JSON.parse(line)] } catch { return [] } })
+    assert.ok(rows.some(row => row.id === saved.id), 'the successfully appended evidence must occupy its own JSONL record')
+    assert.equal(new KnowledgeStore(dir).listEvidence().length, 2)
+  } finally { cleanup(root) }
+})
+
 test('负例：同 sessionId+recordSeq 或 sourceHash 的证据只写一次', () => {
   const root = freshRoot()
   const dir = join(root, 'knowledge')

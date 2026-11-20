@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { saveDream, readDreams, searchDreams } from '../lib/index.js'
@@ -34,6 +34,16 @@ test('searchDreams 不区分大小写命中 lessons', () => {
 test('readDreams limit 钳制且损坏行跳过', () => {
   const limited = readDreams(dir, 1)
   assert.equal(limited.length, 1)
+})
+
+test('saving after a truncated journal record preserves the newly confirmed dream', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-dream-journal-partial-'))
+  try {
+    const before = saveDream(root, 'Before interruption', [], '')
+    writeFileSync(join(root, 'dreams.jsonl'), '{"reflection":"unfinished', { flag: 'a' })
+    const saved = saveDream(root, 'After interruption', ['Keep this lesson'], '')
+    assert.deepEqual(readDreams(root, 10).map(row => row.id), [saved.id, before.id])
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
 test('清理', () => { rmSync(dir, { recursive: true, force: true }) })

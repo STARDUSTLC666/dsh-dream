@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.17.5 (2026-11-20)
+
+- 修复进程中断留下 JSONL 半行后，下一条已确认保存的经验更新、证据或日记被拼入坏行而在重放时丢失的问题；保留损坏原文与既有数据格式。
+- Isolate interrupted JSONL tails before appending new knowledge events, evidence or journal entries so confirmed saves survive replay without rewriting existing bytes.
+- 同步共享更新组件 0.2.9，修复取消窗口和失败响应清理，并确保运行中旧协调器在空闲后接管修复。
 
 ## 0.17.4 (2026-11-20)
 

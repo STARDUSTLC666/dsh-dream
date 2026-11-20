@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import {
   MAX_RETRIEVAL_LIMIT,
   MAX_RETRIEVAL_MAX_CHARS,
+  buildEvidenceSummary,
+  createEvidenceSummarizer,
   essentialLessonChars,
   metadataLessonChars,
   rankInversionCount,
@@ -226,6 +228,27 @@ test('无相关返回空数组，不返回占位话', () => {
   const result = retrieveLessons(lessons, [], { query: '完全无关的量子纠缠主题' })
   assert.deepEqual(result.items, [])
   assert.deepEqual(result.skipped, [])
+})
+
+test('shared evidence summaries preserve duplicate IDs, missing links and request isolation', () => {
+  const linked = makeLesson({ id: 'linked', title: 'Xylophone linked', evidenceIds: ['shared', 'missing', 'other', 'shared'], independentSupportCount: 2 })
+  const missing = makeLesson({ id: 'missing', title: 'Xylophone missing', evidenceIds: ['absent'] })
+  const empty = makeLesson({ id: 'empty', title: 'Xylophone empty' })
+  const evidence = [
+    makeEvidence({ id: 'shared', summary: 'superseded', verification: 'claimed' }),
+    makeEvidence({ id: 'other', summary: 'other source', verification: 'claimed' }),
+    makeEvidence({ id: 'shared', summary: 'latest source', verification: 'read' }),
+  ]
+  const summarize = createEvidenceSummarizer(evidence)
+  assert.equal(summarize(linked), '独立证据 2 条（已读 2 / 仅声明 1）：latest source；other source 等')
+  assert.equal(summarize(missing), '证据暂不可核对（1 条引用缺失）')
+  assert.equal(summarize(empty), '无证据（仅候选，不可作为已证实结论）')
+  const result = retrieveLessons([linked, missing, empty], evidence, { query: 'xylophone', maxChars: 20000 })
+  for (const lesson of [linked, missing, empty]) {
+    assert.equal(result.items.find(item => item.lessonId === lesson.id).evidenceSummary, buildEvidenceSummary(lesson, evidence))
+  }
+  assert.match(createEvidenceSummarizer([makeEvidence({ id: 'shared', summary: 'second request' })])(linked), /second request/)
+  assert.match(summarize(linked), /latest source/)
 })
 
 test('R4：预算按排名整条装入，遇第一条放不下即停，rankInversionCount===0', () => {

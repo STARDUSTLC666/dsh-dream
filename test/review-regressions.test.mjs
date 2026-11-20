@@ -156,6 +156,23 @@ test('本地产物必须位于当前项目、匹配引用与哈希，错误声�
   } finally { e.close() }
 })
 
+test('current Harness session.header.cwd verifies local evidence and preserves workspace boundaries', async () => {
+  const e = env()
+  try {
+    const text = 'Owned artifact verification from the current session header.'
+    writeFileSync(join(e.project, 'result.txt'), text)
+    writeFileSync(join(e.root, 'outside.txt'), text)
+    const evidence = { kind: 'local-artifact', artifactPath: 'result.txt', summary: text, verification: 'read' }
+    const exec = { agent: { session: { header: { cwd: e.project }, cwd: e.root } } }
+    const valid = await e.tool('dream_learn').execute(input('current session header evidence', { workspaceRoot: e.project, evidence: [evidence] }), exec)
+    assert.equal(valid.evidence[0].verification, 'read')
+    assert.equal(valid.independentSupportCount, 1)
+    const outside = await e.tool('dream_learn').execute(input('current header outside boundary', { workspaceRoot: e.project, evidence: [{ ...evidence, artifactPath: '../outside.txt' }] }), exec)
+    assert.equal(outside.evidence[0].verification, 'claimed')
+    assert.equal(outside.independentSupportCount, 0)
+  } finally { e.close() }
+})
+
 test('来源核验检查真实用户、序号、引用与项目；读到纠正仍不等于用户采纳', async () => {
   const e = env()
   try {

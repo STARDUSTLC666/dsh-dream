@@ -173,7 +173,8 @@ function knowledgeStoreOf(cfg: ResolvedDreamConfig): KnowledgeStore {
 
 function execCwdOf(exec: unknown): string | undefined {
   const root = asRecord(exec)
-  const candidates = [asRecord(asRecord(root.agent).session), asRecord(root.session), root]
+  const agentSession = asRecord(asRecord(root.agent).session), session = asRecord(root.session)
+  const candidates = [asRecord(agentSession.header), agentSession, asRecord(session.header), session, root]
   for (const candidate of candidates) {
     const cwd = candidate.cwd
     if (typeof cwd === 'string' && cwd.trim() !== '') return cwd.trim()

@@ -59,6 +59,8 @@ export declare function queryScopeLabel(q: Pick<RetrievalQuery, 'projectId' | 'w
 export declare function lessonScopeLabel(scope: Lesson['scope']): string;
 /** 证据摘要（面板与 dream_context 共用）：独立支持数 + 已读/仅声明 + 脱敏摘要片段。 */
 export declare function buildEvidenceSummary(lesson: Lesson, evidence: Evidence[]): string;
+/** 一次查询共用证据索引；保持重复 ID 后者覆盖与引用顺序的摘要规则。 */
+export declare function createEvidenceSummarizer(evidence: Evidence[]): (lesson: Lesson) => string;
 /** essential 成本：title/when/action/exceptions/scopeLabel，永不截断（R4）。 */
 export declare function essentialLessonChars(item: Pick<RetrievedLesson, 'title' | 'when' | 'action' | 'exceptions' | 'scopeLabel'>): number;
 /** metadata 成本：whyRelevant/evidenceSummary，预算紧时可截断（R4）。 */

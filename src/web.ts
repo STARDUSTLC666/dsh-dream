@@ -23,7 +23,7 @@ import { dreamStats, readDreams, searchDreams, type DreamEntry, type DreamStats 
 import type { Evidence, Lesson } from './knowledge.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { isDreamReference, maskSecrets } from './mask.js'
-import { buildEvidenceSummary, lessonScopeLabel } from './retrieval.js'
+import { createEvidenceSummarizer, lessonScopeLabel } from './retrieval.js'
 import { isHumanAccepted, memoryDirectory, needsMemoryReview, reviewDeadline } from './memory.js'
 import { readAutomaticState } from './automatic-state.js'
 
@@ -508,6 +508,7 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
       }
       const lessons = reader.listLessons()
       const evidence = reader.listEvidence()
+      const summarizeEvidence = createEvidenceSummarizer(evidence)
       const stats = normalizeKnowledgeStats(reader.stats())
       let retrieved: Record<string, { at: number; count: number }> = {}
       try { retrieved = readAutomaticState({ ...resolveConfig(options.config as Record<string, unknown> | null | undefined), journalDir: journalDirOf(options) }).retrieved ?? {} } catch { /* read-only panel still reports knowledge */ }
@@ -516,7 +517,7 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
           ...lesson,
           humanReviewRequired: lesson.state === 'usable' && !isHumanAccepted(lesson),
           scopeLabel: lessonScopeLabel(lesson.scope),
-          evidenceSummary: buildEvidenceSummary(lesson, evidence),
+          evidenceSummary: summarizeEvidence(lesson),
           reviewDue: needsMemoryReview(lesson),
           ...(reviewDeadline(lesson) === undefined ? {} : { nextReviewAt: new Date(reviewDeadline(lesson)!).toISOString() }),
           ...(retrieved[lesson.id] ? { lastRetrievedAt: new Date(retrieved[lesson.id].at).toISOString() } : {}),

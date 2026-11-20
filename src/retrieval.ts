@@ -139,10 +139,19 @@ export function lessonScopeLabel(scope: Lesson['scope']): string {
 
 /** 证据摘要（面板与 dream_context 共用）：独立支持数 + 已读/仅声明 + 脱敏摘要片段。 */
 export function buildEvidenceSummary(lesson: Lesson, evidence: Evidence[]): string {
+  return createEvidenceSummarizer(evidence)(lesson)
+}
+
+/** 一次查询共用证据索引；保持重复 ID 后者覆盖与引用顺序的摘要规则。 */
+export function createEvidenceSummarizer(evidence: Evidence[]): (lesson: Lesson) => string {
   const byId = new Map<string, Evidence>()
   for (const item of evidence) {
     if (item !== null && typeof item === 'object' && typeof item.id === 'string') byId.set(item.id, item)
   }
+  return (lesson) => summarizeEvidence(lesson, byId)
+}
+
+function summarizeEvidence(lesson: Lesson, byId: ReadonlyMap<string, Evidence>): string {
   const linked: Evidence[] = []
   for (const id of lesson.evidenceIds) {
     const found = byId.get(id)
@@ -466,7 +475,7 @@ function buildWhyRelevant(entry: Candidate, q: RetrievalQuery): string {
   return parts.join('；')
 }
 
-function toRetrievedLesson(entry: Candidate, evidence: Evidence[], q: RetrievalQuery): RetrievedLesson {
+function toRetrievedLesson(entry: Candidate, summarizeEvidence: (lesson: Lesson) => string, q: RetrievalQuery): RetrievedLesson {
   const lesson = entry.lesson
   const item: RetrievedLesson = {
     lessonId: lesson.id,
@@ -478,7 +487,7 @@ function toRetrievedLesson(entry: Candidate, evidence: Evidence[], q: RetrievalQ
     state: lesson.state,
     scopeLabel: lessonScopeLabel(lesson.scope),
     whyRelevant: buildWhyRelevant(entry, q),
-    evidenceSummary: buildEvidenceSummary(lesson, evidence),
+    evidenceSummary: summarizeEvidence(lesson),
     truncated: false,
   }
   if (lesson.lastValidatedAt !== undefined) item.lastValidatedAt = lesson.lastValidatedAt
@@ -573,6 +582,8 @@ export function retrieveLessons(
   })
 
   const items: RetrievedLesson[] = []
+  if (candidates.length === 0) return { items, skipped }
+  const summarizeEvidence = createEvidenceSummarizer(evidence)
   let usedChars = 0
   for (let index = 0; index < candidates.length; index += 1) {
     if (items.length >= limit) {
@@ -582,7 +593,7 @@ export function retrieveLessons(
       break
     }
     const candidate = candidates[index]
-    const item = toRetrievedLesson(candidate, evidence, q)
+    const item = toRetrievedLesson(candidate, summarizeEvidence, q)
     const remaining = maxChars - usedChars
     const essential = essentialLessonChars(item)
     if (essential > remaining) {

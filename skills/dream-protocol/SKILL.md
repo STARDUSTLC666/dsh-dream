@@ -26,7 +26,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 
 - 已有 Dream reviewed memory 动态上下文时，先检查其中条件与当前请求，不必重复检索相同经验。需要版本条件、不同关键词或自动取回关闭时，调 `dream_context`：给 `query`、`projectId` / `workspaceRoot`，以及实际确认的 `packageName` + `packageVersion`。自动取回不知道依赖版本时会扣留所有版本限定经验。审阅候选时显式传 `includeCandidates: true`。
 - **预算：默认 5 条 / 3000 字符**（工具硬上限 20 条 / 20000 字符）。取回少量真正适用的即可；没有相关经验就接受空结果，不要为了「显得有记忆」硬塞。
-- `dream_context` 是只读的：不写盘，只返回标题、适用条件、行动建议、证据摘要与「为什么与当前任务相关」。
+- `dream_context` 是只读的：不写盘，只返回标题、适用条件、行动建议、证据摘要与「为什么与当前任务相关」。可按需传入 `activeFiles`（工作区相对路径，优先召回绑定到对应文件的经验）与 `currentModel`（对比经验来源模型 `originModel`，若发生跨模型偏移仅在条件仍适用时采纳）。
 - 未知当前项目时只会返回全局经验；不会跨项目扫描。候选（candidate）**可被检索到**（显式 `includeCandidates: true`，用于审阅候选），但**默认不注入任务建议**（`includeCandidates: false` 时记 `skipped: candidate-hold`；`independentSupportCount === 0` 且非 `usable` 的记 `no-evidence`），且排在可用经验之后——未经审阅不得当作已证实结论。
 
 ## 二、任务中：先把真实任务做完
@@ -42,6 +42,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
   - 能定位就填 `sessionId` / `recordSeq`；
   - `summary` 只写脱敏后的一句话，不搬原文；
   - `verification`：`read` = 你或插件读到了原记录；`claimed` = 仅模型声称。**claimed 只计入证据列表，不计入独立支持数。**
+- 提候选时建议按需填写 SIM 结构化字段（全部可选、统一脱敏）：`rationale`（根因或制定理由，与具体动作解耦）、`files`（关联工作区相对路径，仅路径不含正文）、`prevents`（预期预防的失败/误操作签名）、`problemKey`（归属问题聚类键，用于串联演化链）以及模型来源 `origin`（`provider`/`model`/`agentPreset`，经宿主 `sessionQuery` 核验会话证据时也会自动提取）；跨项目迁移或拟替代旧规则时可附 `carriedFrom` / `supersedes`。
 - **只有真的读到来源（会话记录 / 本地验证产物 / 用户明确纠正）才能标 read，自我判断一律 claimed**（"我记得""应该是"都算 claimed）；标错 read 等于自我提权，禁止。
 - 没有证据的观察只能是 candidate，不能写成确定事实，也不能说成「已验证」。
 - 所有新经验都先进入 candidate，包括已读到的用户纠正。read 只表示插件成功核对来源，不表示用户采纳；工具审阅记录 actor:model，不能冒充真人。会话证据须给 sessionId、recordSeq、可匹配 quote（缺省使用 summary）；本地产物须给工作目录内的 artifactPath。插件独立核对项目、角色和原文，计算 sourceHash；失败降为 claimed 并给 verificationReason。
@@ -70,6 +71,7 @@ description: 做梦协议：任务开始取回适用经验，长任务收尾沉�
 - attach-evidence 只补充核验后的证据，不自动采纳；resolve-conflict 必须给 resolution、affectedIds、note，整组原子更新；reopen 将驳回经验重新送审。
 
 - 面板操作：「设置 → 梦境日记」可浏览时间线、查看来源、采纳或驳回候选、标记待复核、处理冲突与记录使用反馈。规则变更单独预览后应用，也可确认回滚；真实页面操作记录为 human，工具操作记录为 model。界面跟随宿主语言，日记和经验原文保留。
+- 原生斜杠命令（DSH 宿主提供 `commands` 服务时可用）：`/dream` 触发当前会话复盘反思或查看待整理队列；`/dream-learn` 立即记录候选经验或排队定向提炼（仍保留在 `candidate`，绝不自动采纳）；`/dream-status` 只读查看自动整理状态、经验计数、观测统计与软门控状态（不消耗模型 token）。
 
 ---
 
@@ -96,7 +98,7 @@ The plugin collects sourced project candidates after qualifying completed human 
 
 - If Dream reviewed memory is already present in dynamic context, check its conditions against the current request; do not retrieve the same items again. Use `dream_context` for version-bound lessons, different keywords, or when automatic retrieval is disabled. Supply `query`, scope and an actually verified `packageName` + `packageVersion`. Automatic retrieval holds all version-bound lessons when dependency versions are unknown. Pass `includeCandidates: true` explicitly when reviewing candidates.
 - **Budget: 5 items / 3000 characters by default** (hard caps 20 items / 20000 characters). Take only what is relevant; an empty result is acceptable — never stuff memories in to look useful.
-- `dream_context` is read-only: it writes nothing and returns title, applicability, action, evidence summary and why it is relevant.
+- `dream_context` is read-only: it writes nothing and returns title, applicability, action, evidence summary and why it is relevant. Optionally pass `activeFiles` (workspace-relative paths for file-scoped recall) and `currentModel` (compares against `originModel` so cross-model shifts are checked before adopting).
 - With an unknown project it returns global lessons only and never scans across projects. Candidates **can be retrieved** (`includeCandidates: true`, for candidate review) but are **held out of default task advice** (`includeCandidates: false` reports `skipped: candidate-hold`; evidence-free non-usable items report `no-evidence`), and they rank after usable lessons — never treat one as a verified conclusion before review.
 
 ## 2. During the task: do the real work first
@@ -112,6 +114,7 @@ The plugin collects sourced project candidates after qualifying completed human 
   - fill `sessionId` / `recordSeq` when the source can be located;
   - keep `summary` to one masked sentence — never copy the raw record;
   - `verification`: `read` = the record was actually read; `claimed` = the model merely asserts it. **Claimed evidence does not count toward independent support.**
+- When helpful, populate optional SIM structured fields on `dream_learn` (all masked before persistence): `rationale` (root cause decoupled from action), `files` (workspace-relative paths only, never file contents), `prevents` (expected failure signature prevented), `problemKey` (problem cluster key linking revisions), and model provenance `origin` (`provider`/`model`/`agentPreset`, also extracted automatically when session evidence is verified via `sessionQuery`), plus `carriedFrom` / `supersedes` when carrying over or revising earlier lessons.
 - **Only mark read when the source was actually read (session record / local artifact / explicit user correction); anything self-asserted is claimed.** Marking read without a source is self-promotion and is forbidden.
 - An observation without evidence stays a candidate: do not present it as a fact, and never call it "verified".
 - Every new lesson starts as a candidate, including verified user corrections. Read means the plugin checked the source, not that a user accepted the lesson; tool review records actor:model. Session evidence needs sessionId, recordSeq and a matching quote (summary if omitted). Artifacts need artifactPath inside the working directory. The plugin checks project, role and text and computes sourceHash; failures become claimed with verificationReason.
@@ -139,3 +142,4 @@ The plugin collects sourced project candidates after qualifying completed human 
 - Browsing or reviewing candidates and conflicts → `dream_review`;
 - attach-evidence adds verified sources without promoting state. resolve-conflict requires resolution, affectedIds and note and updates the group atomically. reopen sends a rejected lesson back for review.
 - **Settings → Dream journal** lets users browse the timeline and sources, accept/reject candidates, request re-validation, resolve conflicts and record usage feedback. Rule changes require a separate preview and apply action and can be rolled back with confirmation. Page actions record human; tool actions record model. UI language follows the host; journal and lesson content remains original.
+- **Native DSH slash commands** (registered when the host provides `commands`): `/dream` queues a session reflection/recap follow-up or reports pending status; `/dream-learn` records a candidate lesson or queues focused extraction (always stays `candidate`, never auto-promotes); `/dream-status` returns a read-only status summary (automatic runtime, lesson counts, observations, verification gate) without spending model tokens.

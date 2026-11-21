@@ -9,6 +9,7 @@
  * @module dsh-dream/retrieval
  */
 import type { Evidence, Lesson, LessonState } from './knowledge.js';
+import type { LessonObservation } from './automatic-state.js';
 /** 检索入参；limit/maxChars 在内部按硬上限裁剪。 */
 export interface RetrievalQuery {
     query: string;
@@ -24,6 +25,12 @@ export interface RetrievalQuery {
     packageName?: string;
     /** 任务目标平台；宿主工具缺省使用当前系统，跨平台任务可显式指定。 */
     platform?: string;
+    /** 当前任务正在读写的工作区相对路径（用于匹配 lesson.files）。 */
+    activeFiles?: string[];
+    /** 当前执行步进的模型 ID（用于对比 lesson.origin.model，识别跨模型偏移）。 */
+    currentModel?: string;
+    /** DSH 原生反馈与回用观测映射（仅用于同级温和破平，不改写资格过滤）。 */
+    observations?: Record<string, Pick<LessonObservation, 'positive' | 'negative' | 'corrections' | 'repeatToolHits'>>;
     /** 是否返回 candidate；默认 true（面板/审计需要）。dream_context 默认传 false（R1）。 */
     includeCandidates?: boolean;
     /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
@@ -38,6 +45,11 @@ export interface RetrievedLesson {
     when: string;
     action: string;
     exceptions: string[];
+    rationale?: string;
+    problemKey?: string;
+    files?: string[];
+    originModel?: string;
+    modelMismatch?: boolean;
     state: LessonState;
     scopeLabel: string;
     whyRelevant: string;

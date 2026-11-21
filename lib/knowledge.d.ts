@@ -13,6 +13,27 @@ export interface LessonReviewResolution {
 }
 /** 审阅备注最大长度；超出截断而不是报错。 */
 export declare const REVIEW_NOTE_MAX_LENGTH = 500;
+/** 根因/理由最大长度。 */
+export declare const LESSON_RATIONALE_MAX_LENGTH = 1000;
+/** 问题聚类键最大长度。 */
+export declare const LESSON_PROBLEM_KEY_MAX_LENGTH = 160;
+/** 预期预防的失败签名最大长度。 */
+export declare const LESSON_PREVENTS_MAX_LENGTH = 400;
+/** 单条经验最多关联的工作区相对路径数。 */
+export declare const LESSON_FILES_MAX_COUNT = 20;
+/** 产生该经验时的模型与预设来源（SIM provenance）。 */
+export interface LessonOrigin {
+    provider?: string;
+    model?: string;
+    agentPreset?: string;
+}
+/** 跨项目/升全局迁移来源（SIM carried_from）。 */
+export interface LessonCarriedFrom {
+    lessonId?: string;
+    projectId?: string;
+    workspaceRoot?: string;
+    model?: string;
+}
 /** 一条可复用经验。 */
 export interface Lesson {
     schemaVersion: 1;
@@ -27,6 +48,18 @@ export interface Lesson {
     when: string;
     /** 例外，检索时不得被截断。 */
     exceptions: string[];
+    /** 根因或制定理由（与具体实现解耦，便于跨项目/跨模型判断是否仍适用）。 */
+    rationale?: string;
+    /** 归属的问题聚类键（串联同一问题的演化尝试链）。 */
+    problemKey?: string;
+    /** 关联的工作区内相对文件路径（仅路径，不含正文）。 */
+    files?: string[];
+    /** 预期预防的失败/误操作签名（SIM predicted）。 */
+    prevents?: string;
+    /** 创建时的模型/预设来源（SIM provenance）。 */
+    origin?: LessonOrigin;
+    /** 跨项目或升全局时的原始来源（SIM carried_from）。 */
+    carriedFrom?: LessonCarriedFrom;
     scope: {
         projectId?: string;
         workspaceRoot?: string;
@@ -74,6 +107,10 @@ export interface Evidence {
     sessionId?: string;
     recordSeq?: number | string;
     projectId?: string;
+    /** 产生该证据时的模型提供方与模型 ID（可选）。 */
+    provider?: string;
+    model?: string;
+    agentPreset?: string;
     observedAt: string;
     /** 已脱敏的一句话。 */
     summary: string;
@@ -90,6 +127,13 @@ export interface LessonInput {
     action: string;
     when: string;
     exceptions?: string[];
+    rationale?: string;
+    problemKey?: string;
+    files?: string[];
+    prevents?: string;
+    origin?: LessonOrigin;
+    carriedFrom?: LessonCarriedFrom;
+    supersedes?: string[];
     projectId?: string;
     workspaceRoot?: string;
     global?: boolean;
@@ -167,6 +211,8 @@ export declare class KnowledgeError extends Error {
     details?: Record<string, unknown>;
     constructor(code: 'invalid' | 'revision' | 'duplicate' | 'io', message: string, details?: Record<string, unknown>);
 }
+/** 归一化工作区内相对文件路径（仅路径，不含正文；拒绝绝对路径、.. 与控制字符）。 */
+export declare function normalizeRelativeLessonFile(raw: string): string | undefined;
 /** 当前内存模型 / 写盘的 lesson schemaVersion。 */
 export declare const LESSON_SCHEMA_VERSION = 1;
 /** 迁移函数：把 from 版本的原始记录纯函数地转换成 to 版本的原始记录；必须幂等、不得写盘。 */

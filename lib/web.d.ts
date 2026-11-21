@@ -1,7 +1,8 @@
 import { type ResolvedDreamConfig } from './config.js';
 import { type DreamEntry, type DreamStats } from './journal.js';
 import type { Evidence, Lesson } from './knowledge.js';
-import { memoryDirectory } from './memory.js';
+import { memoryDirectory, type ObservationReviewSignal } from './memory.js';
+import { type LessonObservation } from './automatic-state.js';
 /** 面板与浏览器说话的同源路由。 */
 export declare const DREAM_ROUTE = "/_dsh/dsh-dream/journal";
 /** M1 经验面板的只读路由。 */
@@ -53,17 +54,28 @@ export interface KnowledgeWebStats {
     /** 事件 / 证据流中被跳过的坏行数（面板据此显示提示行）。 */
     badLines: number;
 }
+/** 经验演化关系（纯内存推导，零写盘）。 */
+export interface KnowledgeLessonEvolution {
+    supersedes: string[];
+    supersededBy: string[];
+    relatedByProblemKey: string[];
+}
+/** 知识路由中单条经验的投影形状。 */
+export type KnowledgeWebLesson = Lesson & {
+    scopeLabel: string;
+    evidenceSummary: string;
+    humanReviewRequired?: boolean;
+    reviewDue?: boolean;
+    nextReviewAt?: string;
+    lastRetrievedAt?: string;
+    observations: LessonObservation | null;
+    reviewSignal: ObservationReviewSignal;
+    evolution: KnowledgeLessonEvolution;
+};
 /** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
 export interface KnowledgeWebPayload {
-    /** 每条经验额外带 scopeLabel 与 evidenceSummary（与 dream_context 同源文案）。 */
-    lessons: Array<Lesson & {
-        scopeLabel: string;
-        evidenceSummary: string;
-        humanReviewRequired?: boolean;
-        reviewDue?: boolean;
-        nextReviewAt?: string;
-        lastRetrievedAt?: string;
-    }>;
+    /** 每条经验额外带 scopeLabel、evidenceSummary、观测与演化链（只读投影）。 */
+    lessons: KnowledgeWebLesson[];
     memory?: ReturnType<typeof memoryDirectory>;
     /** 脱敏后的证据记录。 */
     evidence: Evidence[];
@@ -133,7 +145,7 @@ export declare function limitFromQuery(raw: unknown, fallback?: number): number;
 export declare function knowledgeDirOf(options: DreamWebOptions, journalDir?: string): string;
 /** 解析后的 bridgeDir：显式路径优先，否则 = <journalDir>/bridge。 */
 export declare function bridgeDirOf(options: DreamWebOptions, journalDir?: string): string;
-/** 递归脱敏；结构化绝对路径按目录分段，避免 Unix 分隔符把正常路径连成长令牌。 */
+/** 递归脱敏；结构化路径按目录分段，避免路径分隔符把正常路径连成长令牌。 */
 export declare function maskDeep<T>(value: T, key?: string): T;
 /** 知识目录不存在（或尚未建立）时的空载荷：不写盘、不报 404。 */
 export declare function emptyKnowledgePayload(): KnowledgeWebPayload;

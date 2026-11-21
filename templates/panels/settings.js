@@ -95,6 +95,21 @@ function AutomaticSwitches({ automation }) {
     }));
 }
 
+const DSH_FEATURE_ITEMS = [
+  ['workingDirectory', '工作目录追踪'],
+  ['workspaceRegistry', '规范工作区识别'],
+  ['workspaceChanges', '改动文件感知'],
+  ['messageFeedback', '原生消息反馈归因'],
+  ['sessionLogExclude', '后台日志上传排除'],
+  ['tools', '工具文件路径召回'],
+];
+
+const DSH_SLASH_COMMANDS = [
+  ['/dream', '触发当前会话做梦复盘'],
+  ['/dream-learn', '从当前会话提炼候选经验（仍需人工审阅）'],
+  ['/dream-status', '查看记忆、模型来源与观测摘要（只读）'],
+];
+
 function SettingCard({ title, wide, index, children }) {
   return h('section', {
     className: clsx(css['settings-card'], wide && css.settingsWide),
@@ -119,6 +134,13 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, s
   return h('div', { className: css.settingsPage },
     h(SettingCard, { title: t('自动记忆与预算'), index: 0, wide: !chat },
       h(AutomaticSwitches, { automation }),
+      h(W.Switch, {
+        label: t('完成前核验门控（实验）'),
+        checked: value?.verificationGateEnabled === true,
+        disabled: pending || !value,
+        onChange: verificationGateEnabled => change({ operation: 'automatic', verificationGateEnabled }),
+      }),
+      h('p', { className: css.muted }, t('默认关闭。开启后，仅在修改了文件的轮次结束前最多提醒 1 次核对已采纳的校验经验；纯问答轮次不会触发。')),
       h('p', { className: css.muted }, t('候选经验由你确认采纳。')),
       failure ? h(W.Status, { tone: 'error' }, displayError(failure)) : null,
       value ? h(React.Fragment, null,
@@ -134,7 +156,10 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, s
           h('dt', null, t('整理间隔')), h('dd', null, format.format(value.idleSeconds ?? 60) + ' ' + t('秒')),
           h('dt', null, t('单项目合并上限')), h('dd', null, format.format(value.maxBatchTurns ?? 4)),
           h('dt', null, t('过期 / 超出容量')), h('dd', null, format.format(value.expiredTurns ?? 0) + ' / ' + format.format(value.overflowTurns ?? 0)),
-          h('dt', null, t('单次输出上限')), h('dd', null, format.format(value.maxOutputTokens ?? 0) + ' tokens')),
+          h('dt', null, t('单次输出上限')), h('dd', null, format.format(value.maxOutputTokens ?? 0) + ' tokens'),
+          typeof value.observationsCount === 'number' ? h(React.Fragment, null,
+            h('dt', null, t('原生反馈观测')),
+            h('dd', null, format.format(value.observationsCount))) : null),
         h('p', { className: css.muted }, t('沿用会话模型和整理预算。待处理片段最多保留 24 小时、32 轮。')),
         lastDate ? h('p', { className: css.muted }, t('最近检查') + ' · ' + formatDate(lastDate) + ' ' + formatTime(lastDate) + ' · ' + t(AUTOMATIC_REASONS[value.last.reason] ?? '已检查')) : null,
         h('div', { className: css.actions },
@@ -173,12 +198,30 @@ function DreamSettings({ automation, privacy, onPrivacyChange, onReview, skin, s
       h(W.Switch, { label: t('隐私模式'), checked: privacy, onChange: onPrivacyChange }),
       h('p', { className: css.muted }, t('显示层模糊；DOM 仍为明文，不改文件、不加密')),
       h('p', { className: css.muted }, t('maskSecrets 由插件配置管理，证据中的脱敏槽位可展开查看掩码。'))),
-    h(SettingCard, { title: t('反向代理访问'), index: 3 },
+    h(SettingCard, { title: t('DSH 原生集成'), index: 3 },
+      value?.dshFeatures && typeof value.dshFeatures === 'object'
+        ? h('dl', { className: css.scopeFacts, 'data-dream-dsh-features': '' },
+            DSH_FEATURE_ITEMS.map(([key, label]) => {
+              const connected = value.dshFeatures[key] === true;
+              return h(React.Fragment, { key },
+                h('dt', null, t(label)),
+                h('dd', null, h(nativeUI().Tag, {
+                  tone: connected ? 'success' : 'neutral',
+                  'data-dsh-feature': key,
+                  'data-connected': String(connected),
+                }, t(connected ? '已接入' : '未启用'))));
+            }))
+        : h('p', { className: css.muted }, t('宿主未上报可选原生能力；基础记忆与手动工具仍可正常使用。')),
+      h('p', { className: css.muted }, t('原生对话斜杠命令')),
+      h('ul', { className: css.settingsList, 'data-dream-slash-commands': '' },
+        DSH_SLASH_COMMANDS.map(([cmd, desc]) =>
+          h('li', { key: cmd }, h('code', null, cmd), ' — ', t(desc))))),
+    h(SettingCard, { title: t('反向代理访问'), index: 4 },
       h('p', { className: css.muted }, t('代理来源与 Host 使用各自的白名单。通过插件配置管理：')),
       h('ul', { className: css.settingsList },
         h('li', null, h('code', null, 'trustedRemoteAddresses')),
         h('li', null, h('code', null, 'trustedHosts')))),
-    h(SettingCard, { title: t('日志与健康检查'), index: 4 },
+    h(SettingCard, { title: t('日志与健康检查'), index: 5 },
       h('p', { className: css.muted }, t('在 DSH 对话中运行 dream_health 检查日记和会话存储。')),
       h('div', { className: css.actions }, h(CopyCommand, { command: 'dream_health', label: t('复制检查命令') }))));
 }

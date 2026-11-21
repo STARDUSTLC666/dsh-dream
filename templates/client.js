@@ -273,7 +273,56 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             "显示更早的梦": "Show older dreams",
             "数据来自梦境日记（dreams.jsonl）": "Data from the dream journal (dreams.jsonl)",
             "梦境日记": "Dream journal",
-            "自动整理任务经验，审阅后回用；日记保留独立的反思记录。": "Collect lessons from tasks and reuse them after review; journals keep separate reflections."
+            "自动整理任务经验，审阅后回用；日记保留独立的反思记录。": "Collect lessons from tasks and reuse them after review; journals keep separate reflections.",
+            "语义变更摘要": "Semantic change summary",
+            "保留": "Retained",
+            "新增": "Added",
+            "修订": "Revised",
+            "移除": "Evicted",
+            "以下已写入 AGENTS.md 的规则将在应用后被移除，请确认：": "The following rules currently in AGENTS.md will be removed if applied — please confirm:",
+            "将新增规则": "Rules to add",
+            "将修订规则": "Rules to revise",
+            "保留原规则": "Retained rules",
+            "模型来源": "Origin model",
+            "模型来源：": "Origin model: ",
+            "建议复核": "Review advised",
+            "近期收到多次原生负反馈，建议人工复核此经验是否仍然适用（仅提示，不会自动修改状态）。": "Repeated negative feedback received in DSH. Please review whether this lesson still applies (advisory only; state is never changed automatically).",
+            "多次被标记为不适用，建议人工复核适用条件或补充例外（仅提示，不会自动修改状态）。": "Marked not applicable multiple times. Please review its conditions or add exceptions (advisory only; state is never changed automatically).",
+            "负向观测与用户纠正高于正向反馈，建议人工复核（仅提示，不会自动修改状态）。": "Negative observations and user corrections exceed positive feedback. Please review this lesson (advisory only; state is never changed automatically).",
+            "实测观测提示此经验可能已偏离当前场景，建议人工复核（仅提示，不会自动修改状态）。": "Observed signals suggest this lesson may need re-checking (advisory only; state is never changed automatically).",
+            "制定理由": "Rationale",
+            "制定理由：": "Rationale: ",
+            "预期预防": "Prevents",
+            "预期预防：": "Prevents: ",
+            "关联文件": "Scoped files",
+            "原生反馈观测": "Native feedback observations",
+            "重复工具提醒": "Repeat-tool reminders",
+            "最近观测模型：": "Last observed model: ",
+            "分类：": "Category: ",
+            "备注：": "Note: ",
+            "来自 DSH 原生消息赞踩、纠正与重复工具观测；仅作参考，不改变审阅状态。": "Attributed from DSH native message feedback, corrections and repeat-tool reminders. Advisory only; never changes review state.",
+            "演化与溯源": "Evolution and provenance",
+            "问题标识": "Problem key",
+            "替代旧经验": "Supersedes",
+            "已被替代": "Superseded by",
+            "同问题相关": "Related by problem",
+            "迁移来源": "Carried from",
+            "完成前核验门控（实验）": "Pre-finish verification gate (experimental)",
+            "默认关闭。开启后，仅在修改了文件的轮次结束前最多提醒 1 次核对已采纳的校验经验；纯问答轮次不会触发。": "Off by default. When enabled, nudges at most once before finishing turns that modified files to check accepted verification lessons; Q&A turns are never interrupted.",
+            "DSH 原生集成": "DSH native integration",
+            "工作目录追踪": "Working directory tracking",
+            "规范工作区识别": "Canonical workspace registry",
+            "改动文件感知": "Workspace file changes",
+            "原生消息反馈归因": "Native message feedback",
+            "后台日志上传排除": "Auxiliary log exclusion",
+            "工具文件路径召回": "Tool file-scoped recall",
+            "已接入": "Connected",
+            "未启用": "Unavailable",
+            "宿主未上报可选原生能力；基础记忆与手动工具仍可正常使用。": "The host did not report optional native services. Core memory and manual tools continue to work normally.",
+            "原生对话斜杠命令": "Native chat slash commands",
+            "触发当前会话做梦复盘": "Trigger a Dream reflection for the current session",
+            "从当前会话提炼候选经验（仍需人工审阅）": "Extract candidate lessons from the current session (human review still required)",
+            "查看记忆、模型来源与观测摘要（只读）": "Show read-only memory, model provenance and observation summary"
         });
         function languageOf(locale = localeService) {
             try {
@@ -670,10 +719,98 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 return parts.slice(0, 4).join("；") + t("；等 ") + String(parts.length) + t(" 条适用范围");
             return parts.join("；");
         }
+        function normalizeOrigin(value) {
+            if (value === null || typeof value !== "object" || Array.isArray(value))
+                return null;
+            const provider = trimmedText(value.provider);
+            const model = trimmedText(value.model);
+            const agentPreset = trimmedText(value.agentPreset);
+            if (provider === "" && model === "" && agentPreset === "")
+                return null;
+            const out = {};
+            if (provider !== "")
+                out.provider = provider;
+            if (model !== "")
+                out.model = model;
+            if (agentPreset !== "")
+                out.agentPreset = agentPreset;
+            return out;
+        }
+        function normalizeCarriedFrom(value) {
+            if (value === null || typeof value !== "object" || Array.isArray(value))
+                return null;
+            const lessonId = trimmedText(value.lessonId);
+            const projectId = trimmedText(value.projectId);
+            const workspaceRoot = trimmedText(value.workspaceRoot);
+            const model = trimmedText(value.model);
+            if (lessonId === "" && projectId === "" && workspaceRoot === "" && model === "")
+                return null;
+            const out = {};
+            if (lessonId !== "")
+                out.lessonId = lessonId;
+            if (projectId !== "")
+                out.projectId = projectId;
+            if (workspaceRoot !== "")
+                out.workspaceRoot = workspaceRoot;
+            if (model !== "")
+                out.model = model;
+            return out;
+        }
+        function normalizeObservations(value) {
+            if (value === null || typeof value !== "object" || Array.isArray(value))
+                return null;
+            const nonNeg = function (num) { return typeof num === "number" && Number.isFinite(num) && num >= 0 ? Math.floor(num) : 0; };
+            const out = {
+                positive: nonNeg(value.positive),
+                negative: nonNeg(value.negative),
+                corrections: nonNeg(value.corrections),
+                repeatToolHits: nonNeg(value.repeatToolHits),
+                lastAt: nonNeg(value.lastAt),
+            };
+            const lastModel = trimmedText(value.lastModel);
+            const lastCategory = trimmedText(value.lastCategory);
+            const lastNote = trimmedText(value.lastNote);
+            if (lastModel !== "")
+                out.lastModel = lastModel;
+            if (lastCategory !== "")
+                out.lastCategory = lastCategory;
+            if (lastNote !== "")
+                out.lastNote = lastNote;
+            return out;
+        }
+        function normalizeReviewSignal(value) {
+            if (value === null || typeof value !== "object" || Array.isArray(value))
+                return null;
+            const nonNeg = function (num) { return typeof num === "number" && Number.isFinite(num) && num >= 0 ? Math.floor(num) : 0; };
+            const out = {
+                flagged: value.flagged === true,
+                negativeScore: nonNeg(value.negativeScore),
+                positiveScore: nonNeg(value.positiveScore),
+            };
+            const reason = trimmedText(value.reason);
+            if (reason !== "")
+                out.reason = reason;
+            return out;
+        }
+        function normalizeEvolution(value) {
+            if (value === null || typeof value !== "object" || Array.isArray(value))
+                return null;
+            const toIds = function (list) {
+                return Array.isArray(list)
+                    ? list.filter(function (id) { return typeof id === "string" && id.trim() !== ""; }).map(function (id) { return id.trim(); })
+                    : [];
+            };
+            return {
+                supersedes: toIds(value.supersedes),
+                supersededBy: toIds(value.supersededBy),
+                relatedByProblemKey: toIds(value.relatedByProblemKey),
+            };
+        }
         /**
          * 经验视图模型：只投影展示所需字段（title / when / applicability / exceptions /
-         * state / scopeLabel / evidenceSummary / lastValidatedAt），并派生 revision / 扣留原因 /
-         * 可桥接标记与复制命令所需的稳定字段；不碰权重、向量、原始 JSON。
+         * state / scopeLabel / evidenceSummary / lastValidatedAt，以及存在时的 SIM 溯源、
+         * 观测、复核提示与演化链），并派生 revision / 扣留原因 / 可桥接标记与复制命令所需的稳定字段；
+         * 不碰权重、向量、原始 JSON。
          * limit 只截断渲染行数，byState 仍按全量统计；truncated / badLines 原样带给提示行。
          */
         function normalizeKnowledge(value, now, limit) {
@@ -702,7 +839,21 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 if (rows.length >= cap)
                     continue;
                 const lastValidatedAt = trimmedText(raw.lastValidatedAt);
-                rows.push({
+                const rationale = trimmedText(raw.rationale);
+                const problemKey = trimmedText(raw.problemKey);
+                const prevents = trimmedText(raw.prevents);
+                const files = Array.isArray(raw.files)
+                    ? raw.files.filter(function (item) { return typeof item === "string" && item.trim() !== ""; }).map(function (item) { return item.trim(); }).slice(0, 20)
+                    : null;
+                const origin = normalizeOrigin(raw.origin);
+                const carriedFrom = normalizeCarriedFrom(raw.carriedFrom);
+                const supersedes = Array.isArray(raw.supersedes)
+                    ? raw.supersedes.filter(function (id) { return typeof id === "string" && id.trim() !== ""; }).map(function (id) { return id.trim(); })
+                    : null;
+                const observations = normalizeObservations(raw.observations);
+                const reviewSignal = normalizeReviewSignal(raw.reviewSignal);
+                const evolution = normalizeEvolution(raw.evolution);
+                const row = {
                     id: trimmedText(raw.id),
                     kind: trimmedText(raw.kind),
                     groupKey: JSON.stringify([raw.kind, raw.scope?.global === true, raw.scope?.projectId ?? null, raw.scope?.workspaceRoot ?? null]),
@@ -739,7 +890,32 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                     bridgeable: raw.humanReviewRequired !== true && raw.reviewDue !== true && bridgeableOf(raw.state) && trimmedText(raw.id) !== "",
                     candidate: state === "candidate" && raw.state === "candidate",
                     disputed: state === "disputed",
-                });
+                };
+                if (rationale !== "")
+                    row.rationale = rationale;
+                if (problemKey !== "")
+                    row.problemKey = problemKey;
+                if (prevents !== "")
+                    row.prevents = prevents;
+                if (files !== null && files.length > 0)
+                    row.files = files;
+                if (origin !== null)
+                    row.origin = origin;
+                if (carriedFrom !== null)
+                    row.carriedFrom = carriedFrom;
+                if (supersedes !== null && supersedes.length > 0)
+                    row.supersedes = supersedes;
+                if (observations !== null)
+                    row.observations = observations;
+                else if (Object.hasOwn(raw, "observations") && raw.observations === null)
+                    row.observations = null;
+                if (reviewSignal !== null)
+                    row.reviewSignal = reviewSignal;
+                else if (Object.hasOwn(raw, "reviewSignal") && raw.reviewSignal === null)
+                    row.reviewSignal = null;
+                if (evolution !== null)
+                    row.evolution = evolution;
+                rows.push(row);
             }
             const total = typeof statsSource.lessons === "number" && statsSource.lessons >= 0 ? statsSource.lessons : rawLessons.length;
             const evidenceTotal = typeof statsSource.evidence === "number" && statsSource.evidence >= 0 ? statsSource.evidence : 0;
@@ -1330,6 +1506,68 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 failed === true ? h("span", { key: "hint", className: css['dshd-note'] }, t("剪贴板不可用：请手动选中上面的命令复制。")) : null,
             ]);
         }
+        function BridgeSemanticDiffSummary({ semanticDiff }) {
+            if (!semanticDiff || typeof semanticDiff !== "object")
+                return null;
+            const retained = Array.isArray(semanticDiff.retained) ? semanticDiff.retained : [];
+            const added = Array.isArray(semanticDiff.added) ? semanticDiff.added : [];
+            const revised = Array.isArray(semanticDiff.revised) ? semanticDiff.revised : [];
+            const evicted = Array.isArray(semanticDiff.evicted) ? semanticDiff.evicted : [];
+            const clip = function (value) {
+                const text = trimmedText(value);
+                return text.length > 160 ? text.slice(0, 159) + "…" : text;
+            };
+            const renderList = function (entries, keyPrefix, showVersionDiff) {
+                return h("ul", { className: css.settingsList }, entries.map(function (entry, idx) {
+                    const title = trimmedText(entry?.title) || trimmedText(entry?.lessonId);
+                    const version = showVersionDiff && entry?.previousRevision != null
+                        ? " (v" + String(entry.previousRevision) + " → v" + String(entry.revision ?? "") + ")"
+                        : (entry?.revision != null ? " (v" + String(entry.revision) + ")" : "");
+                    const rationale = clip(entry?.rationale);
+                    return h("li", { key: keyPrefix + "-" + (entry?.lessonId || String(idx)) }, [
+                        h("strong", { key: "t" }, title),
+                        version ? h("span", { key: "v", className: css.muted }, version) : null,
+                        rationale ? h("div", { key: "r", className: css.muted }, rationale) : null,
+                    ]);
+                }));
+            };
+            const Tag = nativeUI().Tag;
+            return h("div", { className: css['dshd-reviewform'], 'data-dream-semantic-diff': 'true' }, [
+                h("div", { key: "head", className: css.actions, style: { marginBlockEnd: "6px" } }, [
+                    h("span", { key: "label", className: css.muted }, t("语义变更摘要")),
+                    h(Tag, { key: "retained", tone: "neutral" }, t("保留") + " " + String(retained.length)),
+                    h(Tag, { key: "added", tone: added.length > 0 ? "success" : "neutral" }, t("新增") + " " + String(added.length)),
+                    h(Tag, { key: "revised", tone: revised.length > 0 ? "info" : "neutral" }, t("修订") + " " + String(revised.length)),
+                    h(Tag, { key: "evicted", tone: evicted.length > 0 ? "danger" : "neutral" }, t("移除") + " " + String(evicted.length)),
+                ]),
+                evicted.length > 0 ? h("div", {
+                    key: "evicted-box",
+                    'data-dream-semantic-evicted': 'true',
+                    style: {
+                        marginBlockEnd: "8px",
+                        padding: "6px 8px",
+                        borderRadius: "var(--dream-row-radius, 8px)",
+                        border: "1px solid color-mix(in oklab, var(--dsw-alias-state-error-primary, #b9382c) 35%, transparent)",
+                        background: "color-mix(in oklab, var(--dsw-alias-state-error-primary, #b9382c) 8%, transparent)",
+                    },
+                }, [
+                    h(W.Status, { key: "warn", tone: "warning" }, t("以下已写入 AGENTS.md 的规则将在应用后被移除，请确认：")),
+                    renderList(evicted, "evicted", false),
+                ]) : null,
+                added.length > 0 ? h("div", { key: "added-box", 'data-dream-semantic-added': 'true', style: { marginBlockEnd: "6px" } }, [
+                    h("div", { key: "label", className: css.muted }, t("将新增规则")),
+                    renderList(added, "added", false),
+                ]) : null,
+                revised.length > 0 ? h("div", { key: "revised-box", 'data-dream-semantic-revised': 'true', style: { marginBlockEnd: "6px" } }, [
+                    h("div", { key: "label", className: css.muted }, t("将修订规则")),
+                    renderList(revised, "revised", true),
+                ]) : null,
+                retained.length > 0 ? h("details", { key: "retained-box" }, [
+                    h("summary", { key: "sum", className: css.muted }, t("保留原规则") + " (" + String(retained.length) + ")"),
+                    renderList(retained, "retained", false),
+                ]) : null,
+            ]);
+        }
         function ReviewControls(props) {
             const row = props.row;
             const reviewFormId = typeof useId === "function" ? useId() : "dream-review-" + row.id;
@@ -1445,6 +1683,7 @@ __stardustUpdatesGuard(React, "dsh-dream.review-note", { dirty: !!note.trim() ||
                 h(React.Fragment, { key: 'checks' }, props.children),
                 preview && !props.masked ? h(W.Dialog, { key: "preview", title: t("规则变更预览"), busy: pending, onClose: () => setPreview(null) }, [
                     h("div", { key: "target", className: css['dshd-note'] }, t("目标：") + preview.resolvedPath),
+                    preview.semanticDiff ? h(BridgeSemanticDiffSummary, { key: "semantic-diff", semanticDiff: preview.semanticDiff }) : null,
                     h("pre", { key: "diff", className: css['dshd-diff'], tabIndex: 0 }, preview.diff
                         ? preview.diff.split('\n').map((line, index) => h('span', {
                             key: index, className: clsx(css.diffLine, line.startsWith('+') && !line.startsWith('+++') && css.diffAdd,

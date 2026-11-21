@@ -24,8 +24,8 @@ import type { Evidence, Lesson } from './knowledge.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { isDreamReference, maskSecrets } from './mask.js'
 import { createEvidenceSummarizer, lessonScopeLabel } from './retrieval.js'
-import { isHumanAccepted, memoryDirectory, needsMemoryReview, reviewDeadline } from './memory.js'
-import { readAutomaticState } from './automatic-state.js'
+import { isHumanAccepted, memoryDirectory, needsMemoryReview, needsObservationReview, reviewDeadline, type ObservationReviewSignal } from './memory.js'
+import { readAutomaticState, type LessonObservation } from './automatic-state.js'
 
 /** 面板与浏览器说话的同源路由。 */
 export const DREAM_ROUTE = '/_dsh/dsh-dream/journal'
@@ -142,10 +142,30 @@ export interface KnowledgeWebStats {
   badLines: number
 }
 
+/** 经验演化关系（纯内存推导，零写盘）。 */
+export interface KnowledgeLessonEvolution {
+  supersedes: string[]
+  supersededBy: string[]
+  relatedByProblemKey: string[]
+}
+
+/** 知识路由中单条经验的投影形状。 */
+export type KnowledgeWebLesson = Lesson & {
+  scopeLabel: string
+  evidenceSummary: string
+  humanReviewRequired?: boolean
+  reviewDue?: boolean
+  nextReviewAt?: string
+  lastRetrievedAt?: string
+  observations: LessonObservation | null
+  reviewSignal: ObservationReviewSignal
+  evolution: KnowledgeLessonEvolution
+}
+
 /** 知识路由的 JSON 形状：脱敏后的经验 / 证据 / 统计。 */
 export interface KnowledgeWebPayload {
-  /** 每条经验额外带 scopeLabel 与 evidenceSummary（与 dream_context 同源文案）。 */
-  lessons: Array<Lesson & { scopeLabel: string; evidenceSummary: string; humanReviewRequired?: boolean; reviewDue?: boolean; nextReviewAt?: string; lastRetrievedAt?: string }>
+  /** 每条经验额外带 scopeLabel、evidenceSummary、观测与演化链（只读投影）。 */
+  lessons: KnowledgeWebLesson[]
   memory?: ReturnType<typeof memoryDirectory>
   /** 脱敏后的证据记录。 */
   evidence: Evidence[]
@@ -295,15 +315,33 @@ function requestGate(req: any, res: any, readOnlyMessage: string, policy: GatePo
 
 /** 哈希字段不做二次脱敏：它们是校验值，不是密钥（面板要展示前 12 位）。 */
 const HASH_KEY_RE = /^(?:sourceHash|beforeSha256|afterSha256|afterBlockSha256|afterFileSha256|sha256)$/
-const REFERENCE_KEYS = new Set(['id', 'lessonId', 'lessonIds', 'evidenceIds', 'conflictIds', 'supersedes', 'targetId', 'affectedIds', 'backupId', 'previewId'])
+const REFERENCE_KEYS = new Set([
+  'id',
+  'lessonId',
+  'lessonIds',
+  'evidenceIds',
+  'conflictIds',
+  'supersedes',
+  'supersededBy',
+  'relatedByProblemKey',
+  'targetId',
+  'affectedIds',
+  'backupId',
+  'previousBackupId',
+  'previewId',
+])
 const PATH_KEYS = new Set(['target', 'path', 'resolvedPath', 'workspaceRoot'])
+const RELATIVE_PATH_KEYS = new Set(['files'])
 
-/** 递归脱敏；结构化绝对路径按目录分段，避免 Unix 分隔符把正常路径连成长令牌。 */
+/** 递归脱敏；结构化路径按目录分段，避免路径分隔符把正常路径连成长令牌。 */
 export function maskDeep<T>(value: T, key?: string): T {
   if (typeof value === 'string') {
     if (key !== undefined && HASH_KEY_RE.test(key) && /^[0-9a-f]{64}$/i.test(value)) return value
     if (key !== undefined && REFERENCE_KEYS.has(key) && isDreamReference(value)) return value
     if (key !== undefined && PATH_KEYS.has(key) && (isAbsolute(value) || win32.isAbsolute(value)) && !/[\x00-\x1f]/.test(value)) {
+      return value.split(/([\\/]+)/).map((part) => maskSecrets(part)).join('') as unknown as T
+    }
+    if (key !== undefined && RELATIVE_PATH_KEYS.has(key) && !/[\x00-\x1f]/.test(value)) {
       return value.split(/([\\/]+)/).map((part) => maskSecrets(part)).join('') as unknown as T
     }
     return maskSecrets(value) as unknown as T
@@ -492,6 +530,52 @@ export function createBridgeWebHandler(options: DreamWebOptions = {}): (req: any
   }
 }
 
+/** 纯内存推导经验之间的替代与同问题演化链，绝不写盘。 */
+function buildLessonEvolutionMap(lessons: Lesson[]): Map<string, KnowledgeLessonEvolution> {
+  const supersededByMap = new Map<string, string[]>()
+  const byProblemKey = new Map<string, string[]>()
+  for (const lesson of lessons) {
+    if (Array.isArray(lesson.supersedes)) {
+      for (const targetId of lesson.supersedes) {
+        if (typeof targetId !== 'string' || targetId === '' || targetId === lesson.id) continue
+        let list = supersededByMap.get(targetId)
+        if (list === undefined) {
+          list = []
+          supersededByMap.set(targetId, list)
+        }
+        if (!list.includes(lesson.id)) list.push(lesson.id)
+      }
+    }
+    const problemKey = typeof lesson.problemKey === 'string' ? lesson.problemKey.trim() : ''
+    if (problemKey !== '') {
+      let group = byProblemKey.get(problemKey)
+      if (group === undefined) {
+        group = []
+        byProblemKey.set(problemKey, group)
+      }
+      if (!group.includes(lesson.id)) group.push(lesson.id)
+    }
+  }
+  const evolutionMap = new Map<string, KnowledgeLessonEvolution>()
+  for (const lesson of lessons) {
+    const supersedes: string[] = []
+    if (Array.isArray(lesson.supersedes)) {
+      for (const targetId of lesson.supersedes) {
+        if (typeof targetId === 'string' && targetId !== '' && targetId !== lesson.id && !supersedes.includes(targetId)) {
+          supersedes.push(targetId)
+        }
+      }
+    }
+    const supersededBy = supersededByMap.get(lesson.id) ?? []
+    const problemKey = typeof lesson.problemKey === 'string' ? lesson.problemKey.trim() : ''
+    const relatedByProblemKey = problemKey !== ''
+      ? (byProblemKey.get(problemKey) ?? []).filter((id) => id !== lesson.id)
+      : []
+    evolutionMap.set(lesson.id, { supersedes, supersededBy, relatedByProblemKey })
+  }
+  return evolutionMap
+}
+
 /** 组装只读经验路由处理器；零写盘：目录不存在就直接返回空结果。 */
 export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: any, res: any) => Promise<void> {
   const knowledgeDir = knowledgeDirOf(options)
@@ -511,17 +595,31 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
       const summarizeEvidence = createEvidenceSummarizer(evidence)
       const stats = normalizeKnowledgeStats(reader.stats())
       let retrieved: Record<string, { at: number; count: number }> = {}
-      try { retrieved = readAutomaticState({ ...resolveConfig(options.config as Record<string, unknown> | null | undefined), journalDir: journalDirOf(options) }).retrieved ?? {} } catch { /* read-only panel still reports knowledge */ }
+      let observations: Record<string, LessonObservation> = {}
+      try {
+        const autoState = readAutomaticState({ ...resolveConfig(options.config as Record<string, unknown> | null | undefined), journalDir: journalDirOf(options) })
+        retrieved = autoState.retrieved ?? {}
+        observations = autoState.observations ?? {}
+      } catch { /* read-only panel still reports knowledge */ }
+      const evolutionMap = buildLessonEvolutionMap(lessons)
       const payload: KnowledgeWebPayload = {
-        lessons: lessons.map((lesson) => maskDeep({
-          ...lesson,
-          humanReviewRequired: lesson.state === 'usable' && !isHumanAccepted(lesson),
-          scopeLabel: lessonScopeLabel(lesson.scope),
-          evidenceSummary: summarizeEvidence(lesson),
-          reviewDue: needsMemoryReview(lesson),
-          ...(reviewDeadline(lesson) === undefined ? {} : { nextReviewAt: new Date(reviewDeadline(lesson)!).toISOString() }),
-          ...(retrieved[lesson.id] ? { lastRetrievedAt: new Date(retrieved[lesson.id].at).toISOString() } : {}),
-        })),
+        lessons: lessons.map((lesson) => {
+          const obs = observations[lesson.id] ?? null
+          const reviewSignal = needsObservationReview(lesson, obs ?? undefined)
+          const evolution = evolutionMap.get(lesson.id) ?? { supersedes: [], supersededBy: [], relatedByProblemKey: [] }
+          return maskDeep({
+            ...lesson,
+            humanReviewRequired: lesson.state === 'usable' && !isHumanAccepted(lesson),
+            scopeLabel: lessonScopeLabel(lesson.scope),
+            evidenceSummary: summarizeEvidence(lesson),
+            reviewDue: needsMemoryReview(lesson),
+            ...(reviewDeadline(lesson) === undefined ? {} : { nextReviewAt: new Date(reviewDeadline(lesson)!).toISOString() }),
+            ...(retrieved[lesson.id] ? { lastRetrievedAt: new Date(retrieved[lesson.id].at).toISOString() } : {}),
+            observations: obs,
+            reviewSignal,
+            evolution,
+          })
+        }),
         evidence: evidence.map((item) => maskDeep(item)),
         stats,
         memory: maskDeep(memoryDirectory(lessons, evidence)),

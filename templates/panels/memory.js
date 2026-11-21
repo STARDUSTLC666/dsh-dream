@@ -55,7 +55,8 @@ function historyAfter(previous, payload) {
 
 function lessonDiff(before, after) {
   const fields = [
-    ['标题', 'title'], ['建议行动', 'action'], ['适用条件', 'when'], ['适用范围', 'scopeLabel'],
+    ['标题', 'title'], ['建议行动', 'action'], ['制定理由', 'rationale'], ['预期预防', 'prevents'],
+    ['适用条件', 'when'], ['适用范围', 'scopeLabel'], ['关联文件', 'files'],
     ['例外与补充', 'exceptions'], ['适用环境', 'applicability'], ['审阅状态', 'stateLabel'],
   ];
   function textOf(row, field) {
@@ -66,6 +67,19 @@ function lessonDiff(before, after) {
     const oldText = textOf(before, field), newText = textOf(after, field);
     return oldText === newText ? [] : [{ path: t(label), oldText, newText }];
   });
+}
+
+function reviewSignalReasonText(reason) {
+  switch (reason) {
+    case 'native-negative-feedback':
+      return t('近期收到多次原生负反馈，建议人工复核此经验是否仍然适用（仅提示，不会自动修改状态）。');
+    case 'repeated-not-applicable':
+      return t('多次被标记为不适用，建议人工复核适用条件或补充例外（仅提示，不会自动修改状态）。');
+    case 'negative-observation-trend':
+      return t('负向观测与用户纠正高于正向反馈，建议人工复核（仅提示，不会自动修改状态）。');
+    default:
+      return t('实测观测提示此经验可能已偏离当前场景，建议人工复核（仅提示，不会自动修改状态）。');
+  }
 }
 
 function LessonDiffDialog({ row, base, onClose }) {
@@ -91,7 +105,7 @@ function LessonDiffDialog({ row, base, onClose }) {
     }) : h('p', { className: css.muted }, t('这两个版本的可展示字段相同。')));
 }
 
-function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batchPending }) {
+function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batchPending, lessonTitles }) {
   const [peek, setPeek] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const masked = privacy && !peek;
@@ -99,8 +113,30 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
   const canCompare = previous || (reviewMode && row.revision >= 1);
   const compareLabel = previous ? t('修订对比') : t('审阅变更预览');
   const sourcesRead = row.evidence.length > 0 && row.evidence.every(source => source.verification === 'read');
+  const originLabel = row.origin?.model || row.origin?.provider || row.origin?.agentPreset || '';
+  const originFull = row.origin ? [row.origin.provider, row.origin.model, row.origin.agentPreset].filter(Boolean).join(' / ') : '';
+  const obs = row.observations && typeof row.observations === 'object' ? row.observations : null;
+  const hasObservations = Boolean(obs && (obs.positive > 0 || obs.negative > 0 || obs.corrections > 0 || obs.repeatToolHits > 0));
+  const evoSupersedes = Array.isArray(row.evolution?.supersedes) && row.evolution.supersedes.length
+    ? row.evolution.supersedes : (Array.isArray(row.supersedes) ? row.supersedes : []);
+  const evoSupersededBy = Array.isArray(row.evolution?.supersededBy) ? row.evolution.supersededBy : [];
+  const evoRelated = Array.isArray(row.evolution?.relatedByProblemKey) ? row.evolution.relatedByProblemKey : [];
+  const carriedFromParts = row.carriedFrom ? [
+    row.carriedFrom.lessonId ? (lessonTitles?.get(row.carriedFrom.lessonId) || row.carriedFrom.lessonId) : '',
+    row.carriedFrom.projectId || '',
+    row.carriedFrom.workspaceRoot || '',
+    row.carriedFrom.model || '',
+  ].filter(Boolean) : [];
+  const hasEvolution = Boolean(row.problemKey || evoSupersedes.length || evoSupersededBy.length || evoRelated.length || carriedFromParts.length);
+  const labelForLessonId = id => lessonTitles?.get(id) || id;
   const toolbar = h('div', { className: css.meta },
     h(ScopeBadge, { row }),
+    originLabel ? h(nativeUI().Tag, {
+      tone: 'neutral',
+      className: css.scopeBadge,
+      'data-dream-origin-model': row.origin?.model || originLabel,
+      title: t('模型来源：') + originFull,
+    }, h('span', { className: css.scopeCaption }, originLabel)) : null,
     h('span', null, 'v' + row.revision),
     privacy ? h(W.Button, { variant: 'ghost', size: 'sm', onClick: () => setPeek(!peek), 'aria-pressed': peek },
       t(peek ? '重新模糊' : '临时查看内容')) : null);
@@ -117,16 +153,37 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
           icon: 'diff', size: 'sm', disabled: masked, onClick: () => setDiffOpen(true),
           'data-dream-command': 'diff', className: css.diffShortcut,
         }, compareLabel) : null),
+      row.reviewSignal?.flagged === true ? h('div', {
+        'data-dream-review-signal': row.reviewSignal.reason || 'flagged',
+        style: {
+          marginBlockEnd: '12px',
+          borderRadius: 'var(--dream-row-radius, 8px)',
+          border: '1px solid color-mix(in oklab, var(--dsw-alias-state-warn-primary, #b45309) 35%, transparent)',
+          background: 'color-mix(in oklab, var(--dsw-alias-state-warn-primary, #b45309) 10%, transparent)',
+          color: 'var(--dsw-alias-state-warn-label, var(--dream-ink))',
+        },
+      }, h(W.Status, { tone: 'warning' },
+        h('span', null,
+          h(nativeUI().Tag, { tone: 'warning', style: { marginInlineEnd: '6px' } }, t('建议复核')),
+          reviewSignalReasonText(row.reviewSignal.reason),
+          ' (+', String(row.reviewSignal.positiveScore || 0), ' / -', String(row.reviewSignal.negativeScore || 0), ')'))) : null,
       h('div', { className: css.privateText },
         h(ReviewBlock, { index: 0, title: t('建议行动') },
           h('h2', { tabIndex: -1, 'data-dream-detail-title': true, 'data-dsh-editorial-heading': '', 'data-dsh-serif': '', className: css.inspectorTitle }, row.title),
-          h('p', null, row.action || t('未标注具体动作'))),
+          h('p', null, row.action || t('未标注具体动作')),
+          row.rationale ? h('p', { 'data-dream-rationale': '' },
+            h('strong', { className: css.muted }, t('制定理由：')),
+            h(EvidenceText, { text: row.rationale })) : null,
+          row.prevents ? h('p', { 'data-dream-prevents': '' },
+            h('strong', { className: css.muted }, t('预期预防：')),
+            h(EvidenceText, { text: row.prevents })) : null),
         h(ReviewBlock, { index: 1, title: t('来源与证据') },
           row.evidence.length ? row.evidence.map(source => h('div', { key: source.id, className: css.evidence },
             h('blockquote', { className: css['evidence-quote'] }, h(EvidenceText, { text: source.summary || t('未提供摘要') })),
             h('details', null, h('summary', null, t('查看来源记录')),
               h('p', { className: css.muted }, (source.verification === 'read' ? t('已读到来源') : t('待核验')) + ' · ' + t(source.kind === 'session' ? '会话' : source.kind === 'user-correction' ? '用户纠正' : '本地资料')),
               source.sessionId ? h('p', { className: css.muted }, t('会话：') + source.sessionId + (source.recordSeq != null ? t(' · 记录 ') + source.recordSeq : '')) : null,
+              source.model || source.provider || source.agentPreset ? h('p', { className: css.muted }, t('模型来源：') + [source.provider, source.model, source.agentPreset].filter(Boolean).join(' / ')) : null,
               h('p', { className: css.muted }, t('记录时间：') + formatDate(source.observedAt)),
               source.verificationReason ? h('p', { className: css.muted }, source.verificationReason === 'live-session-source-verified' ? t('已核对当前会话原文；不代表结论正确。') : source.verificationReason) : null,
               source.sourceHash ? h('code', { className: css.sourceHash }, t('来源校验值：') + source.sourceHash) : null))) : null,
@@ -137,11 +194,43 @@ function MemoryDetail({ row, base, privacy, reviewMode, onChanged, onExit, batch
         h(ReviewBlock, { index: 2, title: t('范围、条件与例外') },
           h('dl', { className: css.scopeFacts },
             h('dt', null, t('适用范围')), h('dd', null, row.scopeLabel),
+            originFull ? h(React.Fragment, null, h('dt', null, t('模型来源')), h('dd', null, originFull)) : null,
             h('dt', null, t('适用条件')), h('dd', null, row.when || t('未标注适用条件')),
+            Array.isArray(row.files) && row.files.length > 0 ? h(React.Fragment, null,
+              h('dt', null, t('关联文件')),
+              h('dd', { 'data-dream-files': '', className: css.actions },
+                row.files.map(file => h('code', { key: file, className: css['dshd-chip'] }, file)))) : null,
             row.applicability ? h(React.Fragment, null, h('dt', null, t('适用环境')), h('dd', null, row.applicability)) : null,
             h('dt', null, t('例外与补充')), h('dd', null, row.exceptions.length ? row.exceptions.join(' · ') : t('未记录例外'))),
           h('p', { className: css.muted, title: row.lastTitle }, t('最近核验：') + row.lastText),
-          row.lastRetrievedAt ? h('p', { className: css.muted, title: t('取回仅表示提供参考，不等于重新核验。') }, t('最近取回：') + formatDate(row.lastRetrievedAt) + ' ' + formatTime(row.lastRetrievedAt)) : null)),
+          row.lastRetrievedAt ? h('p', { className: css.muted, title: t('取回仅表示提供参考，不等于重新核验。') }, t('最近取回：') + formatDate(row.lastRetrievedAt) + ' ' + formatTime(row.lastRetrievedAt)) : null),
+        hasObservations ? h(ReviewBlock, { index: 3, title: t('原生反馈观测') },
+          h('div', { 'data-dream-observations': '', className: css.actions },
+            h(nativeUI().Tag, { tone: obs.negative > obs.positive ? 'warning' : 'neutral' }, '+' + String(obs.positive) + ' / -' + String(obs.negative)),
+            obs.corrections > 0 ? h(nativeUI().Tag, { tone: 'warning' }, t('用户纠正') + ' ' + String(obs.corrections)) : null,
+            obs.repeatToolHits > 0 ? h(nativeUI().Tag, { tone: 'warning' }, t('重复工具提醒') + ' ' + String(obs.repeatToolHits)) : null),
+          obs.lastModel ? h('p', { className: css.muted }, t('最近观测模型：') + obs.lastModel) : null,
+          obs.lastCategory ? h('p', { className: css.muted }, t('分类：') + obs.lastCategory) : null,
+          obs.lastNote ? h('p', { className: css.muted }, t('备注：'), h(EvidenceText, { text: obs.lastNote })) : null,
+          obs.lastAt > 0 ? h('p', { className: css.muted }, formatDate(new Date(obs.lastAt).toISOString()) + ' ' + formatTime(new Date(obs.lastAt).toISOString())) : null,
+          h('p', { className: css.muted }, t('来自 DSH 原生消息赞踩、纠正与重复工具观测；仅作参考，不改变审阅状态。'))) : null,
+        hasEvolution ? h(ReviewBlock, { index: hasObservations ? 4 : 3, title: t('演化与溯源') },
+          h('dl', { className: css.scopeFacts, 'data-dream-evolution': '' },
+            row.problemKey ? h(React.Fragment, null,
+              h('dt', null, t('问题标识')),
+              h('dd', null, h('code', { className: css['dshd-chip'] }, row.problemKey))) : null,
+            evoSupersedes.length > 0 ? h(React.Fragment, null,
+              h('dt', null, t('替代旧经验')),
+              h('dd', { className: css.actions }, evoSupersedes.map(id => h(nativeUI().Tag, { key: id, tone: 'neutral', title: id }, labelForLessonId(id))))) : null,
+            evoSupersededBy.length > 0 ? h(React.Fragment, null,
+              h('dt', null, t('已被替代')),
+              h('dd', { className: css.actions }, evoSupersededBy.map(id => h(nativeUI().Tag, { key: id, tone: 'warning', title: id }, labelForLessonId(id))))) : null,
+            evoRelated.length > 0 ? h(React.Fragment, null,
+              h('dt', null, t('同问题相关')),
+              h('dd', { className: css.actions }, evoRelated.map(id => h(nativeUI().Tag, { key: id, tone: 'info', title: id }, labelForLessonId(id))))) : null,
+            carriedFromParts.length > 0 ? h(React.Fragment, null,
+              h('dt', null, t('迁移来源')),
+              h('dd', null, carriedFromParts.join(' · '))) : null)) : null),
       row.holdReasonLabel ? h(W.Status, null, t('为什么被扣下：') + row.holdReasonLabel) : null),
     diffOpen && !masked ? h(LessonDiffDialog, { row, base: previous, onClose: () => setDiffOpen(false) }) : null);
 }
@@ -266,8 +355,9 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
   }
   const groupFilter = groups.has(group) ? group : '';
   const needle = search.trim().toLocaleLowerCase();
+  const lessonTitles = new Map(vm.rows.map(item => [item.id, item.title]));
   const rows = all.filter(row => (!groupFilter || row.groupKey === groupFilter) &&
-    (!needle || [row.title, row.when, row.action, row.scopeLabel].join(' ').toLocaleLowerCase().includes(needle)));
+    (!needle || [row.title, row.when, row.action, row.scopeLabel, row.rationale, row.problemKey, row.origin?.model, ...(row.files || [])].filter(Boolean).join(' ').toLocaleLowerCase().includes(needle)));
   const visible = rows.slice(0, limit);
   const active = rows.find(row => row.id === activeId) || visible[0];
   const picked = rows.filter(row => selected.includes(row.id) && row.candidate && !row.conflictIds.length);
@@ -514,7 +604,7 @@ function MemoryBoard({ vm, revisions, reviewMode, error, loading, privacy, onCha
         setActiveId(null);
       } }, t('返回列表')) : null,
       active && !error ? h(MemoryDetail, {
-        key: active.id, row: active, base: revisions.get(active.id), privacy, reviewMode, onChanged, batchPending: pending,
+        key: active.id, row: active, base: revisions.get(active.id), privacy, reviewMode, onChanged, batchPending: pending, lessonTitles,
         onExit: reviewMode ? action => animate([active.id], action) : null,
       }) : (loading && !all.length && !error)
         ? h('div', { className: css.skeletonInspector, role: 'status', 'aria-busy': 'true', 'aria-label': t('加载中…') },

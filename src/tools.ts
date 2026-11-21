@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { type ResolvedDreamConfig } from './config.js'
-import { maskSecrets } from './mask.js'
+import { isDreamReference, maskSecrets } from './mask.js'
 import { dreamStats, readDreams, saveDream, searchDreams } from './journal.js'
 import { isHumanAccepted } from './memory.js'
 import {
@@ -17,18 +17,22 @@ import {
   rollbackBridge,
   selectBridgeLessons,
 } from './bridge.js'
-import { digestSessionFile, listSessionFiles, type SessionDigest } from './sessions.js'
+import { type SessionDigest } from './sessions.js'
+import { digestSessionsWithFallback, verifyEvidenceWithSessionQuery } from './session-source.js'
+import { readAutomaticState } from './automatic-state.js'
 import {
   KnowledgeError,
   lessonFingerprint,
   type Evidence,
   type EvidenceInput,
   type Lesson,
+  type LessonCarriedFrom,
   type LessonInput,
   type LessonKind,
+  type LessonOrigin,
 } from './knowledge.js'
 import { KnowledgeStore } from './knowledge-store.js'
-import { verifyEvidence, type EvidenceClaim } from './evidence.js'
+import { type EvidenceClaim, type EvidenceContext } from './evidence.js'
 import {
   queryScopeLabel,
   resolveRetrievalBudget,
@@ -163,6 +167,11 @@ function maskIfNeeded(cfg: ResolvedDreamConfig, text: string): string {
   return cfg.maskSecrets ? maskSecrets(text) : text
 }
 
+/** 对可能是 Dream 引用 ID（如 lsn_<uuid>）的文本脱敏：合法引用保留，其它密钥照常打码。 */
+function maskReferenceIfNeeded(cfg: ResolvedDreamConfig, text: string): string {
+  return cfg.maskSecrets ? maskSecrets(text, isDreamReference(text) ? [text] : []) : text
+}
+
 function knowledgeDirOf(cfg: ResolvedDreamConfig): string {
   return join(cfg.journalDir, 'knowledge')
 }
@@ -178,6 +187,21 @@ function execCwdOf(exec: unknown): string | undefined {
   for (const candidate of candidates) {
     const cwd = candidate.cwd
     if (typeof cwd === 'string' && cwd.trim() !== '') return cwd.trim()
+  }
+  return undefined
+}
+
+function execModelOf(exec: unknown): string | undefined {
+  const root = asRecord(exec)
+  const agent = asRecord(root.agent)
+  const modelSvc = asRecord(agent.model)
+  if (typeof modelSvc.current === 'function') {
+    try {
+      const current = asRecord((modelSvc.current as () => unknown)())
+      if (typeof current.model === 'string' && current.model.trim() !== '') return current.model.trim()
+    } catch {
+      // 忽略宿主探测失败
+    }
   }
   return undefined
 }
@@ -207,15 +231,16 @@ function resolvedBridgePath(projectRoot: string, explicitPath: string | undefine
   }
 }
 
-/** 合并 bridge 自身 skipped 与工具层前置校验 skipped（按 lessonId 去重，bridge 结果优先）。 */
+/** 合并 bridge 自身 skipped 与工具层前置校验 skipped（按 lessonId 去重，bridge 结果与已入选集合优先）。 */
 function mergeSkipped(
   primary: Array<{ lessonId: string; reason: string }>,
   extra: Array<{ lessonId: string; reason: string }>,
+  selectedIds?: ReadonlySet<string>,
 ): Array<{ lessonId: string; reason: string }> {
   const out = [...primary]
   const seen = new Set(primary.map((entry) => entry.lessonId))
   for (const entry of extra) {
-    if (seen.has(entry.lessonId)) continue
+    if (seen.has(entry.lessonId) || selectedIds?.has(entry.lessonId)) continue
     seen.add(entry.lessonId)
     out.push(entry)
   }
@@ -287,6 +312,57 @@ function parseApplicability(args: Record<string, unknown>, key: string): Lesson[
     if (platform !== undefined) entry.platform = platform
     if (Object.keys(entry).length > 0) out.push(entry)
   })
+  return out
+}
+
+function parseOrigin(args: Record<string, unknown>, key: string, cfg: ResolvedDreamConfig): LessonOrigin | undefined {
+  const raw = args[key]
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('参数 ' + key + ' 必须是对象。')
+  const item = asRecord(raw)
+  const provider = optionalString(item, 'provider')
+  const model = optionalString(item, 'model')
+  const agentPreset = optionalString(item, 'agentPreset')
+  const out: LessonOrigin = {}
+  if (provider !== undefined) out.provider = maskIfNeeded(cfg, provider)
+  if (model !== undefined) out.model = maskIfNeeded(cfg, model)
+  if (agentPreset !== undefined) out.agentPreset = maskIfNeeded(cfg, agentPreset)
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function parseCarriedFrom(args: Record<string, unknown>, key: string, cfg: ResolvedDreamConfig): LessonCarriedFrom | undefined {
+  const raw = args[key]
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('参数 ' + key + ' 必须是对象。')
+  const item = asRecord(raw)
+  const lessonId = optionalString(item, 'lessonId')
+  const projectId = optionalString(item, 'projectId')
+  const workspaceRoot = optionalString(item, 'workspaceRoot')
+  const model = optionalString(item, 'model')
+  const out: LessonCarriedFrom = {}
+  if (lessonId !== undefined) out.lessonId = maskReferenceIfNeeded(cfg, lessonId)
+  if (projectId !== undefined) out.projectId = maskIfNeeded(cfg, projectId)
+  if (workspaceRoot !== undefined) out.workspaceRoot = maskIfNeeded(cfg, workspaceRoot)
+  if (model !== undefined) out.model = maskIfNeeded(cfg, model)
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+async function verifyEvidenceClaims(
+  cfg: ResolvedDreamConfig,
+  claims: EvidenceClaim[],
+  context: EvidenceContext,
+): Promise<EvidenceInput[]> {
+  const out: EvidenceInput[] = []
+  for (const claim of claims) {
+    const verified = await verifyEvidenceWithSessionQuery(claim, context)
+    out.push({
+      ...verified,
+      summary: maskIfNeeded(cfg, verified.summary),
+      ...(verified.provider !== undefined ? { provider: maskIfNeeded(cfg, verified.provider) } : {}),
+      ...(verified.model !== undefined ? { model: maskIfNeeded(cfg, verified.model) } : {}),
+      ...(verified.agentPreset !== undefined ? { agentPreset: maskIfNeeded(cfg, verified.agentPreset) } : {}),
+    })
+  }
   return out
 }
 
@@ -362,29 +438,20 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       const max = typeof maxRaw === 'number' && Number.isInteger(maxRaw) ? Math.min(50, Math.max(1, maxRaw)) : cfg.maxSessions
       const mode = optionalString(args, 'mode') === 'brief' ? 'brief' : 'full'
       const mask = (text: string): string => cfg.maskSecrets ? maskSecrets(text) : text
-      const files = listSessionFiles(cfg.sessionsRoot, max * 3)
-      const sessions: Array<Record<string, unknown>> = []
-      for (const file of files) {
-        if (sessions.length >= max) break
-        const digest = digestSessionFile(file, cfg.maxUserMessages)
-        if (digest === null) continue
-        if (digest.origin === 'subagent') continue
-        if (digest.turns === 0 && digest.userMessages.length === 0 && digest.assistantTail.length === 0
-          && digest.toolCalls.length === 0 && digest.streamTail.trim() === '') continue
-        sessions.push({
-          id: digest.id,
-          title: mask(digest.title),
-          createdAt: digest.createdAt,
-          endedAt: digest.endedAt,
-          cwd: mask(digest.cwd),
-          turns: digest.turns,
-          agentPreset: mask(digest.agentPreset),
-          userMessages: digest.userMessages.map((msg) => clip(mask(msg), 400)),
-          assistantTail: digest.assistantTail.map((msg) => clip(mask(msg), 600)),
-          toolCalls: [...new Set(digest.toolCalls)].map(mask),
-          digestText: clip(mask(buildDigestText(digest)), mode === 'brief' ? 400 : cfg.maxCharsPerSession),
-        })
-      }
+      const digests = await digestSessionsWithFallback(cfg, max)
+      const sessions: Array<Record<string, unknown>> = digests.map((digest) => ({
+        id: digest.id,
+        title: mask(digest.title),
+        createdAt: digest.createdAt,
+        endedAt: digest.endedAt,
+        cwd: mask(digest.cwd),
+        turns: digest.turns,
+        agentPreset: mask(digest.agentPreset),
+        userMessages: digest.userMessages.map((msg) => clip(mask(msg), 400)),
+        assistantTail: digest.assistantTail.map((msg) => clip(mask(msg), 600)),
+        toolCalls: [...new Set(digest.toolCalls)].map(mask),
+        digestText: clip(mask(buildDigestText(digest)), mode === 'brief' ? 400 : cfg.maxCharsPerSession),
+      }))
       return { count: sessions.length, sessions, mode }
     },
     timeoutMs: 120000,
@@ -520,6 +587,31 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
             const lesson = asRecord(item)
             lines.push('- [' + lesson.lessonId + '@' + lesson.revision + '] ' + lesson.title)
           }
+          const semanticDiff = rec.semanticDiff !== undefined && rec.semanticDiff !== null && typeof rec.semanticDiff === 'object'
+            ? asRecord(rec.semanticDiff)
+            : undefined
+          if (semanticDiff !== undefined) {
+            const retained = Array.isArray(semanticDiff.retained) ? semanticDiff.retained : []
+            const added = Array.isArray(semanticDiff.added) ? semanticDiff.added : []
+            const revised = Array.isArray(semanticDiff.revised) ? semanticDiff.revised : []
+            const evicted = Array.isArray(semanticDiff.evicted) ? semanticDiff.evicted : []
+            if (retained.length + added.length + revised.length + evicted.length > 0) {
+              lines.push(
+                '· 语义变更：保留 ' + retained.length
+                + ' / 新增 ' + added.length
+                + ' / 修订 ' + revised.length
+                + ' / 移出 ' + evicted.length,
+              )
+              for (const item of revised) {
+                const entry = asRecord(item)
+                lines.push('  ~ 修订 [' + entry.lessonId + ' r' + entry.previousRevision + '→r' + entry.revision + '] ' + entry.title)
+              }
+              for (const item of evicted) {
+                const entry = asRecord(item)
+                lines.push('  - 移出 [' + entry.lessonId + '@' + entry.revision + '] ' + entry.title)
+              }
+            }
+          }
           for (const item of skipped) {
             const entry = asRecord(item)
             lines.push('· 跳过 ' + entry.lessonId + '：' + entry.reason)
@@ -594,11 +686,12 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       }
       if (mode === 'preview') {
         const result = previewBridge(bridgeOptions)
+        const selectedIds = result.ok === true ? new Set(result.lessons.map((item) => item.lessonId)) : undefined
         return {
           mode,
           ...result,
           ...(resolvedPath !== undefined ? { resolvedPath } : {}),
-          skipped: mergeSkipped(result.ok === true ? result.skipped : [], preSelection.skipped),
+          skipped: mergeSkipped(result.ok === true ? result.skipped : [], preSelection.skipped, selectedIds),
         }
       }
       if (!Object.hasOwn(args, 'expectedSha256') || (args.expectedSha256 !== null && (typeof args.expectedSha256 !== 'string' || args.expectedSha256.trim() === ''))) {
@@ -612,11 +705,12 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         ...(previewId !== undefined ? { previewId } : {}),
       })
       if (result.ok === true) {
+        const selectedIds = new Set(result.lessons.map((item) => item.lessonId))
         return {
           mode,
           ...result,
           resolvedPath: result.path,
-          skipped: mergeSkipped(result.skipped, preSelection.skipped),
+          skipped: mergeSkipped(result.skipped, preSelection.skipped, selectedIds),
         }
       }
       return {
@@ -702,6 +796,30 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       action: { type: 'string', required: true, description: '可执行动作（动词开头）。' },
       when: { type: 'string', required: true, description: '适用条件（何时该用）；检索时不可截断。' },
       exceptions: { type: 'array', items: { type: 'string' }, description: '例外情形（可选）。' },
+      rationale: { type: 'string', description: '根因或制定理由（可选，与具体动作解耦，便于跨项目/跨模型判断是否仍适用）。' },
+      problemKey: { type: 'string', description: '归属问题聚类键（可选，用于串联同一问题的演化尝试链）。' },
+      files: { type: 'array', items: { type: 'string' }, description: '关联的工作区内相对文件路径（可选，仅路径不含正文，最多 20 条）。' },
+      prevents: { type: 'string', description: '预期预防的失败或误操作签名（可选）。' },
+      origin: {
+        type: 'object',
+        properties: {
+          provider: { type: 'string', description: '模型提供方（可选）。' },
+          model: { type: 'string', description: '模型 ID（可选）。' },
+          agentPreset: { type: 'string', description: '代理预设（可选）。' },
+        },
+        description: '产生该经验时的模型与预设来源（可选）。',
+      },
+      carriedFrom: {
+        type: 'object',
+        properties: {
+          lessonId: { type: 'string', description: '原经验 ID（可选）。' },
+          projectId: { type: 'string', description: '原项目 ID（可选）。' },
+          workspaceRoot: { type: 'string', description: '原工作区根目录（可选）。' },
+          model: { type: 'string', description: '原来源模型 ID（可选）。' },
+        },
+        description: '跨项目或升全局时的迁移来源（可选）。',
+      },
+      supersedes: { type: 'array', items: { type: 'string' }, description: '本候选拟替代的旧经验 ID 列表（可选）。' },
       projectId: { type: 'string', description: '项目 ID（可选）。' },
       workspaceRoot: { type: 'string', description: '项目工作区根目录（可选）。' },
       global: { type: 'boolean', description: '是否为显式全局经验（可选，默认 false）。' },
@@ -738,6 +856,22 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       const action = maskIfNeeded(cfg, requiredString(args, 'action', '可执行动作'))
       const when = maskIfNeeded(cfg, requiredString(args, 'when', '适用条件'))
       const exceptions = stringArray(args, 'exceptions').map((item) => maskIfNeeded(cfg, item))
+      const rationaleRaw = optionalString(args, 'rationale')
+      const rationale = rationaleRaw !== undefined ? maskIfNeeded(cfg, rationaleRaw) : undefined
+      const problemKeyRaw = optionalString(args, 'problemKey')
+      const problemKey = problemKeyRaw !== undefined ? maskIfNeeded(cfg, problemKeyRaw) : undefined
+      if (args.files !== undefined && args.files !== null && !Array.isArray(args.files)) {
+        throw new Error('参数 files 必须是字符串数组。')
+      }
+      const files = stringArray(args, 'files').map((item) => maskIfNeeded(cfg, item))
+      const preventsRaw = optionalString(args, 'prevents')
+      const prevents = preventsRaw !== undefined ? maskIfNeeded(cfg, preventsRaw) : undefined
+      const explicitOrigin = parseOrigin(args, 'origin', cfg)
+      const carriedFrom = parseCarriedFrom(args, 'carriedFrom', cfg)
+      if (args.supersedes !== undefined && args.supersedes !== null && !Array.isArray(args.supersedes)) {
+        throw new Error('参数 supersedes 必须是字符串数组。')
+      }
+      const supersedes = stringArray(args, 'supersedes').map((item) => maskReferenceIfNeeded(cfg, item))
       const projectId = optionalString(args, 'projectId')
       const workspaceRoot = optionalString(args, 'workspaceRoot')
       const isGlobal = args.global === true
@@ -747,9 +881,21 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         ...(entry.versions !== undefined ? { versions: maskIfNeeded(cfg, entry.versions) } : {}),
         ...(entry.platform !== undefined ? { platform: maskIfNeeded(cfg, entry.platform) } : {}),
       }))
-      const evidenceInputs = parseEvidenceArgs(args, 'evidence', projectId)
-        .map((entry) => verifyEvidence(entry, { sessionsRoot: cfg.sessionsRoot, projectId, workspaceRoot, cwd: execCwdOf(exec) }))
-        .map((entry) => ({ ...entry, summary: maskIfNeeded(cfg, entry.summary) }))
+      const evidenceInputs = await verifyEvidenceClaims(
+        cfg,
+        parseEvidenceArgs(args, 'evidence', projectId),
+        { sessionsRoot: cfg.sessionsRoot, projectId, workspaceRoot, cwd: execCwdOf(exec) },
+      )
+      const evidenceOrigin = (() => {
+        const first = evidenceInputs.find((item) => item.provider !== undefined || item.model !== undefined || item.agentPreset !== undefined)
+        if (first === undefined) return undefined
+        const out: LessonOrigin = {}
+        if (first.provider !== undefined) out.provider = first.provider
+        if (first.model !== undefined) out.model = first.model
+        if (first.agentPreset !== undefined) out.agentPreset = first.agentPreset
+        return Object.keys(out).length > 0 ? out : undefined
+      })()
+      const origin = explicitOrigin ?? evidenceOrigin
       const scope = {
         global: isGlobal,
         ...(projectId !== undefined ? { projectId } : {}),
@@ -761,6 +907,13 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         action,
         when,
         ...(exceptions.length > 0 ? { exceptions } : {}),
+        ...(rationale !== undefined ? { rationale } : {}),
+        ...(problemKey !== undefined ? { problemKey } : {}),
+        ...(files.length > 0 ? { files } : {}),
+        ...(prevents !== undefined ? { prevents } : {}),
+        ...(origin !== undefined ? { origin } : {}),
+        ...(carriedFrom !== undefined ? { carriedFrom } : {}),
+        ...(supersedes.length > 0 ? { supersedes } : {}),
         ...(projectId !== undefined ? { projectId } : {}),
         ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
         global: isGlobal,
@@ -769,6 +922,13 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       }
       const idempotencyKey = 'dream_learn:' + sha256Short(JSON.stringify({
         kind, title, action, when, exceptions,
+        ...(rationale !== undefined ? { rationale } : {}),
+        ...(problemKey !== undefined ? { problemKey } : {}),
+        ...(files.length > 0 ? { files } : {}),
+        ...(prevents !== undefined ? { prevents } : {}),
+        ...(origin !== undefined ? { origin } : {}),
+        ...(carriedFrom !== undefined ? { carriedFrom } : {}),
+        ...(supersedes.length > 0 ? { supersedes } : {}),
         projectId: projectId ?? null,
         workspaceRoot: workspaceRoot ?? null,
         global: isGlobal,
@@ -831,6 +991,8 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       packageVersion: { type: 'string', description: '当前相关依赖版本（可选；需配合包名被识别才参与版本判定）。' },
       packageName: { type: 'string', description: '当前相关依赖包名（可选；与 query 文本一起识别 applicability.package）。' },
       platform: { type: 'string', description: '任务目标平台（windows / linux / macos 等）；缺省从任务文本识别，否则使用宿主系统。平台不符的经验不注入。' },
+      activeFiles: { type: 'array', items: { type: 'string' }, description: '当前任务正在读写的工作区相对文件路径（可选；用于优先召回关联这些文件的经验）。' },
+      currentModel: { type: 'string', description: '当前执行步进的模型 ID（可选；用于对比经验来源模型 originModel，提示跨模型偏移）。' },
       includeCandidates: { type: 'boolean', description: '是否把候选经验纳入任务建议（默认 false；仅明确审阅候选时传 true，无证据候选仍不注入）。' },
     }),
     output: {
@@ -861,19 +1023,30 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           lines.push('  行动：' + lesson.action)
           const exceptions = Array.isArray(lesson.exceptions) ? lesson.exceptions : []
           if (exceptions.length > 0) lines.push('  例外：' + exceptions.join('；'))
+          if (typeof lesson.rationale === 'string' && lesson.rationale !== '') {
+            lines.push('  根因：' + clip(lesson.rationale, 200))
+          }
+          if (typeof lesson.originModel === 'string' && lesson.originModel !== '') {
+            const mismatchNote = lesson.modelMismatch === true
+              ? '（与当前模型不同，仅在条件仍适用时采纳）'
+              : ''
+            lines.push('  来源模型：' + lesson.originModel + mismatchNote)
+          }
           lines.push('  为何相关：' + lesson.whyRelevant)
           lines.push('  证据：' + lesson.evidenceSummary)
         }
         return [{ type: 'text', text: lines.join('\n') }]
       },
     },
-    async execute(rawArgs: unknown) {
+    async execute(rawArgs: unknown, exec: unknown) {
       const args = asRecord(rawArgs)
       const query = requiredString(args, 'query', '检索关键词')
       const projectId = optionalString(args, 'projectId')
       const workspaceRoot = optionalString(args, 'workspaceRoot')
       const packageVersion = optionalString(args, 'packageVersion')
       const packageName = optionalString(args, 'packageName')
+      const activeFiles = stringArray(args, 'activeFiles')
+      const currentModel = optionalString(args, 'currentModel') ?? execModelOf(exec)
       const { limit, maxChars } = resolveRetrievalBudget({
         limit: typeof args.limit === 'number' ? args.limit : undefined,
         maxChars: typeof args.maxChars === 'number' ? args.maxChars : undefined,
@@ -890,11 +1063,19 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
         ...(packageVersion !== undefined ? { packageVersion } : {}),
         ...(packageName !== undefined ? { packageName } : {}),
+        ...(activeFiles.length > 0 ? { activeFiles } : {}),
+        ...(currentModel !== undefined ? { currentModel } : {}),
       }
       const scopeLabel = queryScopeLabel(retrievalQuery)
       const dir = knowledgeDirOf(cfg)
       if (!existsSync(dir)) {
         return { items: [], skipped: [], scopeLabel, budget: { limit, maxChars, usedChars: 0 } }
+      }
+      try {
+        const observations = readAutomaticState(cfg).observations
+        if (observations !== undefined) retrievalQuery.observations = observations
+      } catch {
+        // 自动状态缺失或不可读时降级忽略，绝不写盘
       }
       const store = knowledgeStoreOf(cfg)
       const lessons = store.listLessons().map(lesson => lesson.state === 'usable' && !isHumanAccepted(lesson)
@@ -1013,9 +1194,11 @@ export async function executeDreamReview(cfg: ResolvedDreamConfig, rawArgs: unkn
   const maskedNote = note === undefined ? undefined : maskIfNeeded(cfg, note)
   const resolutionArg = optionalString(args, 'resolution')
   const evidenceInputs = action === 'attach-evidence'
-    ? parseEvidenceArgs(args, 'evidence', before.scope.projectId).map(entry => verifyEvidence(entry, {
-      sessionsRoot: cfg.sessionsRoot, projectId: before.scope.projectId, workspaceRoot: before.scope.workspaceRoot, cwd: execCwdOf(exec),
-    })).map(entry => ({ ...entry, summary: maskIfNeeded(cfg, entry.summary) }))
+    ? await verifyEvidenceClaims(
+      cfg,
+      parseEvidenceArgs(args, 'evidence', before.scope.projectId),
+      { sessionsRoot: cfg.sessionsRoot, projectId: before.scope.projectId, workspaceRoot: before.scope.workspaceRoot, cwd: execCwdOf(exec) },
+    )
     : []
   const idempotencyKey = 'dream_review:' + sha256Short(JSON.stringify({
     actor, action, lessonId, expectedRevision, conflictWith, resolution: resolutionArg ?? null, note: maskedNote ?? null,

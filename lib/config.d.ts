@@ -22,6 +22,8 @@ export interface ResolvedDreamConfig {
     autoMaxOutputTokens: number;
     autoTimeoutMs: number;
     autoIdleMs: number;
+    /** 完成前单次软门控（DSH agent/turn-stopping）；默认关闭，需显式开启。 */
+    enableVerificationGate: boolean;
     /** 反向代理来源地址白名单（默认空 = 只认回环）。 */
     trustedRemoteAddresses: string[];
     /** 反向代理 Host 白名单（默认空 = 只认 localhost）。 */

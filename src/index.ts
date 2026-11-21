@@ -12,6 +12,8 @@ import { buildDreamTools, type DreamToolDefinition } from './tools.js'
 import { installDreamWeb } from './web.js'
 import { installDreamActions } from './web-actions.js'
 import { installAutomaticDream } from './automatic.js'
+import { installSessionQueryBridge } from './session-source.js'
+import { installDreamCommands } from './commands.js'
 
 /** cordis 服务注入：要用 ctx.tools 与 ctx.skills。 */
 export const name = 'dream'
@@ -75,10 +77,12 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
       else console.warn(msg)
     }
   }
-  // 面板同源路由：宿主有 webServer 才由 web.ts 用 ctx.inject 挂上；headless 夹具没有 inject 就跳过。
+  // 面板同源路由与 DSH 原生桥接：宿主有 inject 才挂载；headless 夹具没有 inject 就跳过。
   if (typeof ctx.inject === 'function') {
     installDreamWeb(ctx, { journalDir: cfg.journalDir, config: cfg })
     installDreamActions(ctx, { config: cfg })
+    installSessionQueryBridge(ctx)
+    installDreamCommands(ctx, cfg)
   }
   installAutomaticDream(ctx, cfg)
   let disposed = false
@@ -97,6 +101,7 @@ export function apply(ctx: DreamPluginContext, config?: Record<string, unknown> 
 
 export * from './config.js'
 export * from './sessions.js'
+export * from './session-source.js'
 export * from './journal.js'
 export * from './tools.js'
 export * from './mask.js'
@@ -105,3 +110,17 @@ export * from './knowledge.js'
 export * from './knowledge-store.js'
 export * from './retrieval.js'
 export * from './automatic.js'
+export * from './commands.js'
+export * from './dsh-signals.js'
+export {
+  isHumanAccepted,
+  reviewDeadline,
+  needsMemoryReview,
+  needsObservationReview,
+  simDirectory,
+  memoryDirectory,
+  type ObservationReviewSignal,
+  type SimDirectoryUsableItem,
+  type SimDirectoryHistoryItem,
+  type SimDirectory,
+} from './memory.js'

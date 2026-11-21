@@ -1,5 +1,22 @@
 # 更新记录
 
+## 0.18.0 (2026-11-22)
+
+- **DeepSeek Harness `0.2.2-rc.3` 深度原生适配**：
+  - 修复 `systemPrompt.context` 注册遗漏 `interpolate: false` 导致含 `{{...}}`（如 GitHub Actions `${{ ... }}`、Jinja、Handlebars）的已采纳经验在组装时崩溃的现网问题，并按 Cordis 4 严格注入规范独立挂载全部可选服务。
+  - 接入 `workingDirectory` 与 `workspaceRegistry`（会话内 `cd` 动态追踪与规范 `workspaceId` 匹配）、`workspaceChanges` + `tools/result` 文件作用域召回与自动填充 `files`、以及 `sessionLogDeepSeek` 后台辅助请求排除钩子。
+  - 接入原生反馈与运行时信号归因（`feedback/message-put`、`feedback/committed`、`feedback/record`、`repeat-tool-reminder`），观测计数持久化至 `automatic/state.json` 并提示建议复核，**严格保持人工审阅边界不变**（绝不自动采纳或修改 `AGENTS.md`）。
+  - 接入实时优先 `sessionQuery` 桥接（无缝回退磁盘 zstd/JSONL 读取）、原生 `/` 斜杠命令（`/dream`、`/dream-learn`、`/dream-status`），以及默认关闭的 Opt-In 完成前单次软门控（`agent/turn-stopping` Verification Gate，仅在有文件修改的轮次最多提醒 1 次）。
+- **Self-Improvement Memory（SIM / CRSI）记忆与治理引擎升级**：
+  - 经验与证据新增可选结构化字段：`rationale`（根因理由）、`files`（工作区相对路径）、`prevents`（预期预防失败签名）、`problemKey`（问题聚类键）、`carriedFrom`（迁移溯源）与模型来源 `origin`（`provider` / `model` / `agentPreset`）；召回时自动检测跨模型偏移（`originModel` / `modelMismatch`）。
+  - 自动整理新增优化器目录 `simDirectory`（含已采纳规则与近期驳回/过期负向记忆，预算紧时优雅裁剪），支持同指纹字段补全与 `supersedes` 演化链关联；检索升级为零依赖纯内存 BM25/IDF（稀缺技术词优先、文件命中加权，严格保持 `rankInversionCount === 0`）。
+  - `AGENTS.md` 桥接引入源规则保活（Source Retention）与 `semanticDiff`（`retained` / `added` / `revised` / `evicted`）语义变更摘要；工作台面板、桥接预览弹窗与设置页同步升级并补齐全部 8 种界面语言。
+- **Deep DeepSeek Harness `0.2.2-rc.3` Native Integration**:
+  - Fix the live `systemPrompt.context` template interpolation crash by explicitly setting `interpolate: false` (preserving literal `{{...}}` / `${{ ... }}` lesson text), and isolate all optional service bindings for Cordis 4 strict-inject compatibility.
+  - Integrate `workingDirectory` + `workspaceRegistry` (mid-session `cd` tracking & canonical `workspaceId`), `workspaceChanges` + `tools/result` file-scoped recall, `sessionLogDeepSeek` auxiliary log upload exclusion, native feedback & signal attribution (`feedback/message-put`, `feedback/committed`, `feedback/record`, `repeat-tool-reminder`) strictly preserving the human-review boundary, live-preferred `sessionQuery` bridge with seamless disk fallback, native slash commands (`/dream`, `/dream-learn`, `/dream-status`), and an opt-in `agent/turn-stopping` Verification Gate (off by default, max 1 notice per file-modifying turn).
+- **Self-Improvement Memory (SIM / CRSI) Engine & Workbench Updates**:
+  - Add optional forward-compatible SIM fields (`rationale`, `files`, `prevents`, `problemKey`, `carriedFrom`, model provenance `origin`) and cross-model mismatch hints (`originModel` / `modelMismatch`), optimizer `simDirectory` with negative memory and tight-budget trimming, zero-dependency in-memory BM25/IDF retrieval (`rankInversionCount === 0`), `AGENTS.md` Bridge Source Retention + `semanticDiff` previews, and full 8-locale Workbench UI updates.
+
 ## 0.17.6 (2026-11-20)
 
 - 兼容官方宿主 session.header.cwd，使工作区内产物证据能正确核验与召回。

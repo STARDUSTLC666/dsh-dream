@@ -471,7 +471,20 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
     inject(names, callback) { injected.push(names); callback(webCtx) },
   }
   apply(ctx, { journalDir: dir })
-  assert.deepEqual(injected, [['profileContext', 'connection', 'pluginManager', 'agents', 'loader'], ['webServer', 'connection'], ['connection'], ['sessions', 'agents', 'llm', 'systemPrompt']])
+  assert.deepEqual(injected, [
+    ['profileContext', 'connection', 'pluginManager', 'agents', 'loader'],
+    ['webServer', 'connection'],
+    ['connection'],
+    ['sessionQuery'],
+    ['commands'],
+    ['sessions', 'agents', 'llm', 'systemPrompt'],
+    ['workingDirectory'],
+    ['workspaceRegistry'],
+    ['workspaceChanges'],
+    ['messageFeedback'],
+    ['sessionLogDeepSeek'],
+    ['tools'],
+  ])
   assert.equal(routes.length, 3)
   const journalRoute = routes.find((route) => route.path === DREAM_ROUTE)
   const knowledgeRoute = routes.find((route) => route.path === DREAM_KNOWLEDGE_ROUTE)

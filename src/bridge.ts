@@ -72,7 +72,25 @@ export interface BridgeLessonView {
   when: string
   action: string
   exceptions: string[]
+  rationale?: string
   scopeLabel: string
+}
+
+export interface BridgeSemanticDiffEntry {
+  lessonId: string
+  title: string
+  revision: number
+  previousRevision?: number
+  rationale?: string
+}
+
+/** 相对上次已应用 BridgeRecord 的语义变更（SIM retain / revise / replace / remove）。 */
+export interface BridgeSemanticDiff {
+  previousBackupId?: string
+  retained: BridgeSemanticDiffEntry[]
+  added: BridgeSemanticDiffEntry[]
+  revised: BridgeSemanticDiffEntry[]
+  evicted: BridgeSemanticDiffEntry[]
 }
 
 export interface BridgeSkipped {
@@ -165,6 +183,7 @@ export interface BridgePreviewSuccess {
   skipped: BridgeSkipped[]
   previewId: string
   blockPreview: string
+  semanticDiff?: BridgeSemanticDiff
 }
 
 export interface BridgeApplySuccess {
@@ -362,20 +381,29 @@ function toView(lesson: Lesson, mask: boolean): BridgeLessonView {
     when: sanitizeBlockText(lesson.when, mask),
     action: sanitizeBlockText(lesson.action, mask),
     exceptions: lesson.exceptions.map((item) => sanitizeBlockText(item, mask)).filter((item) => item !== ''),
+    ...(lesson.rationale !== undefined ? { rationale: sanitizeBlockText(lesson.rationale, mask) } : {}),
     scopeLabel: scopeLabelOf(lesson),
   }
 }
 
 // ---------- 资格筛选 ----------
 
+function bridgePriorityScore(lesson: Lesson): number {
+  const support = lesson.independentSupportCount
+  const netFeedback = (lesson.feedback?.useful ?? 0) - (lesson.feedback?.notApplicable ?? 0)
+  return support * 2 + netFeedback
+}
+
 /**
  * 经验资格：state=usable；scope 匹配当前项目；或显式 global 且 review.decision=accepted。
  * 解释为空或不满足一律进 skipped，绝不因频次入选或落选。
+ * 当提供 retainedIds（当前 AGENTS.md 管理块中已生效规则）时，优先保活旧规则（防遗忘），
+ * 再按独立支持数 + 净反馈 + 更新时间稳定排序。
  */
 export function selectBridgeLessons(
   lessons: Lesson[],
   scope: BridgeScope,
-  options: { lessonIds?: string[]; maxLessons?: number } = {},
+  options: { lessonIds?: string[]; maxLessons?: number; retainedIds?: ReadonlySet<string> } = {},
 ): { eligible: Lesson[]; skipped: BridgeSkipped[] } {
   const rawMax = options.maxLessons
   const maxLessons = typeof rawMax === 'number' && Number.isFinite(rawMax)
@@ -420,7 +448,18 @@ export function selectBridgeLessons(
     return { eligible, skipped }
   }
 
-  const sorted = lessons.slice().sort((a, b) => (a.updatedAt === b.updatedAt ? a.id.localeCompare(b.id) : b.updatedAt.localeCompare(a.updatedAt)))
+  const retainedIds = options.retainedIds
+  const sorted = lessons.slice().sort((a, b) => {
+    if (retainedIds !== undefined && retainedIds.size > 0) {
+      const aRetained = retainedIds.has(a.id) ? 1 : 0
+      const bRetained = retainedIds.has(b.id) ? 1 : 0
+      if (aRetained !== bRetained) return bRetained - aRetained
+    }
+    const aScore = bridgePriorityScore(a)
+    const bScore = bridgePriorityScore(b)
+    if (aScore !== bScore) return bScore - aScore
+    return a.updatedAt === b.updatedAt ? a.id.localeCompare(b.id) : b.updatedAt.localeCompare(a.updatedAt)
+  })
   for (const lesson of sorted) {
     const reason = reasonFor(lesson)
     if (reason !== undefined) {
@@ -922,6 +961,60 @@ function normalizeScope(options: BridgeOptions): BridgeScope {
   return scope
 }
 
+function latestAppliedRecordForTarget(journalDir: string | undefined, targetPath: string): BridgeRecord | undefined {
+  if (typeof journalDir !== 'string' || journalDir.trim() === '') return undefined
+  const records = readBridgeRecords(journalDir).filter((record) => record.phase !== 'aborted' && samePath(record.target, targetPath))
+  if (records.length === 0) return undefined
+  records.sort((a, b) => (a.at === b.at ? b.backupId.localeCompare(a.backupId) : b.at.localeCompare(a.at)))
+  return records[0]
+}
+
+function buildSemanticDiff(
+  previous: BridgeRecord | undefined,
+  nextViews: BridgeLessonView[],
+  allLessons: Lesson[],
+  mask: boolean,
+): BridgeSemanticDiff {
+  const byId = new Map(allLessons.map((lesson) => [lesson.id, lesson]))
+  const prevMap = new Map<string, number>()
+  for (const item of previous?.lessons ?? []) prevMap.set(item.lessonId, item.revision)
+  const nextIds = new Set(nextViews.map((view) => view.lessonId))
+  const retained: BridgeSemanticDiffEntry[] = []
+  const added: BridgeSemanticDiffEntry[] = []
+  const revised: BridgeSemanticDiffEntry[] = []
+  const evicted: BridgeSemanticDiffEntry[] = []
+  for (const view of nextViews) {
+    const prevRev = prevMap.get(view.lessonId)
+    const entry: BridgeSemanticDiffEntry = {
+      lessonId: view.lessonId,
+      title: view.title,
+      revision: view.revision,
+      ...(view.rationale !== undefined ? { rationale: view.rationale } : {}),
+    }
+    if (prevRev === undefined) added.push(entry)
+    else if (prevRev !== view.revision) revised.push({ ...entry, previousRevision: prevRev })
+    else retained.push(entry)
+  }
+  for (const [lessonId, prevRev] of prevMap) {
+    if (nextIds.has(lessonId)) continue
+    const old = byId.get(lessonId)
+    evicted.push({
+      lessonId,
+      title: old ? sanitizeBlockText(old.title, mask) : lessonId,
+      revision: old?.revision ?? prevRev,
+      previousRevision: prevRev,
+      ...(old?.rationale !== undefined ? { rationale: sanitizeBlockText(old.rationale, mask) } : {}),
+    })
+  }
+  return {
+    ...(previous !== undefined ? { previousBackupId: previous.backupId } : {}),
+    retained,
+    added,
+    revised,
+    evicted,
+  }
+}
+
 /** preview：只读计算 diff / expected / 管理块；绝不写盘。 */
 export function previewBridge(options: BridgeOptions): BridgePreviewResult {
   if (options === null || typeof options !== 'object') {
@@ -932,16 +1025,25 @@ export function previewBridge(options: BridgeOptions): BridgePreviewResult {
   const read = readTargetState(target.target)
   if (!('ok' in read) || read.ok !== true) return withPreviewShape(read, target.target.path)
   const state = read.state
-  const selection = selectBridgeLessons(Array.isArray(options.lessons) ? options.lessons : [], normalizeScope(options), {
+  const lessons = Array.isArray(options.lessons) ? options.lessons : []
+  const hasExistingBlock = state.exists && locateDreamBlock(state.text).status === 'ok'
+  const previousRecord = hasExistingBlock ? latestAppliedRecordForTarget(options.journalDir, target.target.path) : undefined
+  const retainedIds = previousRecord !== undefined && previousRecord.lessons.length > 0
+    ? new Set(previousRecord.lessons.map((item) => item.lessonId))
+    : undefined
+  const selection = selectBridgeLessons(lessons, normalizeScope(options), {
     lessonIds: options.lessonIds,
     maxLessons: options.maxLessons,
+    ...(retainedIds !== undefined ? { retainedIds } : {}),
   })
-  const views = selection.eligible.map((lesson) => toView(lesson, options.maskSecrets !== false))
+  const mask = options.maskSecrets !== false
+  const views = selection.eligible.map((lesson) => toView(lesson, mask))
   const block = withEol(buildDreamBlock(views), state.eol)
   const planned = planBridgeWrite(state, block)
   if (!('ok' in planned) || planned.ok !== true) return withPreviewShape(planned, target.target.path, expectedOf(state))
   const expected = expectedOf(state)
   const action: BridgeAction = planned.plan.unchanged ? 'unchanged' : planned.plan.action
+  const semanticDiff = buildSemanticDiff(previousRecord, views, lessons, mask)
   return {
     ok: true,
     action,
@@ -952,6 +1054,7 @@ export function previewBridge(options: BridgeOptions): BridgePreviewResult {
     skipped: selection.skipped,
     previewId: previewIdOf(target.target.path, planned.plan.action, expected.sha256, block),
     blockPreview: block,
+    semanticDiff,
   }
 }
 
@@ -974,9 +1077,16 @@ export function applyBridge(options: BridgeApplyOptions): BridgeApplyResult {
     if (!('ok' in read) || read.ok !== true) return read
     const state = read.state
 
-    const selection = selectBridgeLessons(Array.isArray(options.lessons) ? options.lessons : [], normalizeScope(options), {
+    const lessons = Array.isArray(options.lessons) ? options.lessons : []
+    const hasExistingBlock = state.exists && locateDreamBlock(state.text).status === 'ok'
+    const previousRecord = hasExistingBlock ? latestAppliedRecordForTarget(options.journalDir, target.target.path) : undefined
+    const retainedIds = previousRecord !== undefined && previousRecord.lessons.length > 0
+      ? new Set(previousRecord.lessons.map((item) => item.lessonId))
+      : undefined
+    const selection = selectBridgeLessons(lessons, normalizeScope(options), {
       lessonIds: options.lessonIds,
       maxLessons: options.maxLessons,
+      ...(retainedIds !== undefined ? { retainedIds } : {}),
     })
     const views = selection.eligible.map((lesson) => toView(lesson, options.maskSecrets !== false))
     const block = withEol(buildDreamBlock(views), state.eol)

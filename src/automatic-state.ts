@@ -7,10 +7,26 @@ import type { ResolvedDreamConfig } from './config.js'
 export interface PendingMemory {
   key: string; sessionId: string; cwd: string; endSeq: number; createdAt: number; readyAt: number
   provider: string; model: string
+  agentPreset?: string
+  workspaceId?: string
+  touchedFiles?: string[]
+  triggerKind?: 'tools' | 'correction' | 'feedback'
   sources: Array<{ seq: number; role: 'user' | 'assistant'; text: string; hash: string }>
   lease?: { job: string; pid: number; until: number }
 }
 export interface ChatMemoryPolicy { sessionId: string; cwd?: string; use?: boolean; contribute?: boolean }
+
+/** 经验回用后的观测统计（DSH 原生赞/踩、纠正与重复工具信号；不修改审阅状态）。 */
+export interface LessonObservation {
+  positive: number
+  negative: number
+  corrections: number
+  repeatToolHits: number
+  lastAt: number
+  lastModel?: string
+  lastCategory?: string
+  lastNote?: string
+}
 
 export interface AutomaticState {
   version: 1
@@ -18,6 +34,7 @@ export interface AutomaticState {
   calls: number
   enabled?: boolean
   retrievalEnabled?: boolean
+  verificationGateEnabled?: boolean
   lastAttemptAt?: number
   cursors: Record<string, number>
   pending?: PendingMemory[]
@@ -25,6 +42,7 @@ export interface AutomaticState {
   expired?: number
   overflow?: number
   retrieved?: Record<string, { at: number; count: number }>
+  observations?: Record<string, LessonObservation>
   last?: { at: number; reason: string; saved: number; job?: string }
 }
 
@@ -45,6 +63,7 @@ export function readAutomaticState(cfg: ResolvedDreamConfig, now = Date.now()): 
     || Object.entries(raw.cursors).some(([key, value]) => !/^[a-f0-9]{24}$/.test(key) || !Number.isSafeInteger(value) || Number(value) < 0)
     || (raw.enabled !== undefined && typeof raw.enabled !== 'boolean')
     || (raw.retrievalEnabled !== undefined && typeof raw.retrievalEnabled !== 'boolean')
+    || (raw.verificationGateEnabled !== undefined && typeof raw.verificationGateEnabled !== 'boolean')
     || (raw.lastAttemptAt !== undefined && (!Number.isSafeInteger(raw.lastAttemptAt) || raw.lastAttemptAt < 0))
     || (raw.last !== undefined && (!Number.isSafeInteger(raw.last.at) || typeof raw.last.reason !== 'string' || raw.last.reason.length > 80 || !Number.isSafeInteger(raw.last.saved) || raw.last.saved < 0 || (raw.last.job !== undefined && typeof raw.last.job !== 'string')))) {
     throw new Error('automatic-state-invalid')
@@ -54,6 +73,10 @@ export function readAutomaticState(cfg: ResolvedDreamConfig, now = Date.now()): 
   if ((raw.pending !== undefined && (!Array.isArray(raw.pending) || raw.pending.length > 32 || raw.pending.some((p: any) =>
     !p || !text(p.key, 64) || !text(p.sessionId, 200) || !text(p.cwd, 2000) || !integer(p.endSeq)
     || !integer(p.createdAt) || !integer(p.readyAt) || !text(p.provider, 200) || !text(p.model, 200)
+    || (p.agentPreset !== undefined && !text(p.agentPreset, 200))
+    || (p.workspaceId !== undefined && !text(p.workspaceId, 200))
+    || (p.touchedFiles !== undefined && (!Array.isArray(p.touchedFiles) || p.touchedFiles.length > 32 || p.touchedFiles.some((f: any) => !text(f, 260))))
+    || (p.triggerKind !== undefined && !['tools', 'correction', 'feedback'].includes(p.triggerKind))
     || !Array.isArray(p.sources) || p.sources.length < 1 || p.sources.length > 6 || p.sources.some((s: any) =>
       !s || !integer(s.seq) || !['user', 'assistant'].includes(s.role) || !text(s.text, 1800) || !/^[a-f0-9]{64}$/.test(s.hash))
     || (p.lease !== undefined && (!text(p.lease.job, 64) || !integer(p.lease.pid) || p.lease.pid < 1 || !integer(p.lease.until))))))
@@ -64,7 +87,14 @@ export function readAutomaticState(cfg: ResolvedDreamConfig, now = Date.now()): 
     || ['expired', 'overflow'].some(k => raw[k] !== undefined && !integer(raw[k]))
     || (raw.retrieved !== undefined && (!raw.retrieved || Array.isArray(raw.retrieved) || typeof raw.retrieved !== 'object'
       || Object.keys(raw.retrieved).length > 2000 || Object.entries(raw.retrieved).some(([key, v]: [string, any]) =>
-        !text(key, 200) || !v || !integer(v.at) || !integer(v.count))))) throw new Error('automatic-state-invalid')
+        !text(key, 200) || !v || !integer(v.at) || !integer(v.count))))
+    || (raw.observations !== undefined && (!raw.observations || Array.isArray(raw.observations) || typeof raw.observations !== 'object'
+      || Object.keys(raw.observations).length > 2000 || Object.entries(raw.observations).some(([key, v]: [string, any]) =>
+        !text(key, 200) || !v || !integer(v.positive) || !integer(v.negative) || !integer(v.corrections)
+        || !integer(v.repeatToolHits) || !integer(v.lastAt)
+        || (v.lastModel !== undefined && !text(v.lastModel, 200))
+        || (v.lastCategory !== undefined && !text(v.lastCategory, 80))
+        || (v.lastNote !== undefined && !text(v.lastNote, 500)))))) throw new Error('automatic-state-invalid')
   return raw as AutomaticState
 }
 

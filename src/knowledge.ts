@@ -27,6 +27,29 @@ export interface LessonReviewResolution {
 
 /** 审阅备注最大长度；超出截断而不是报错。 */
 export const REVIEW_NOTE_MAX_LENGTH = 500
+/** 根因/理由最大长度。 */
+export const LESSON_RATIONALE_MAX_LENGTH = 1000
+/** 问题聚类键最大长度。 */
+export const LESSON_PROBLEM_KEY_MAX_LENGTH = 160
+/** 预期预防的失败签名最大长度。 */
+export const LESSON_PREVENTS_MAX_LENGTH = 400
+/** 单条经验最多关联的工作区相对路径数。 */
+export const LESSON_FILES_MAX_COUNT = 20
+
+/** 产生该经验时的模型与预设来源（SIM provenance）。 */
+export interface LessonOrigin {
+  provider?: string
+  model?: string
+  agentPreset?: string
+}
+
+/** 跨项目/升全局迁移来源（SIM carried_from）。 */
+export interface LessonCarriedFrom {
+  lessonId?: string
+  projectId?: string
+  workspaceRoot?: string
+  model?: string
+}
 
 /** 一条可复用经验。 */
 export interface Lesson {
@@ -42,6 +65,18 @@ export interface Lesson {
   when: string
   /** 例外，检索时不得被截断。 */
   exceptions: string[]
+  /** 根因或制定理由（与具体实现解耦，便于跨项目/跨模型判断是否仍适用）。 */
+  rationale?: string
+  /** 归属的问题聚类键（串联同一问题的演化尝试链）。 */
+  problemKey?: string
+  /** 关联的工作区内相对文件路径（仅路径，不含正文）。 */
+  files?: string[]
+  /** 预期预防的失败/误操作签名（SIM predicted）。 */
+  prevents?: string
+  /** 创建时的模型/预设来源（SIM provenance）。 */
+  origin?: LessonOrigin
+  /** 跨项目或升全局时的原始来源（SIM carried_from）。 */
+  carriedFrom?: LessonCarriedFrom
   scope: { projectId?: string; workspaceRoot?: string; global: boolean }
   applicability: { package?: string; versions?: string; platform?: string }[]
   state: LessonState
@@ -73,6 +108,10 @@ export interface Evidence {
   sessionId?: string
   recordSeq?: number | string
   projectId?: string
+  /** 产生该证据时的模型提供方与模型 ID（可选）。 */
+  provider?: string
+  model?: string
+  agentPreset?: string
   observedAt: string
   /** 已脱敏的一句话。 */
   summary: string
@@ -90,6 +129,13 @@ export interface LessonInput {
   action: string
   when: string
   exceptions?: string[]
+  rationale?: string
+  problemKey?: string
+  files?: string[]
+  prevents?: string
+  origin?: LessonOrigin
+  carriedFrom?: LessonCarriedFrom
+  supersedes?: string[]
   projectId?: string
   workspaceRoot?: string
   global?: boolean
@@ -245,6 +291,69 @@ function readReview(value: unknown): Lesson['review'] {
   return review
 }
 
+/** 归一化工作区内相对文件路径（仅路径，不含正文；拒绝绝对路径、.. 与控制字符）。 */
+export function normalizeRelativeLessonFile(raw: string): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const trimmed = raw.trim()
+  if (trimmed === '' || trimmed.length > 260 || /[\x00-\x1f]/.test(trimmed)) return undefined
+  const slash = trimmed.replace(/\\/g, '/').replace(/\/+/g, '/')
+  if (slash.startsWith('/') || /^[a-zA-Z]:/.test(slash) || slash.startsWith('~')) return undefined
+  const parts = slash.split('/').filter((segment) => segment !== '' && segment !== '.')
+  if (parts.length === 0 || parts.some((segment) => segment === '..')) return undefined
+  return parts.join('/')
+}
+
+function readOptionalClippedString(value: unknown, field: string, maxLength: number): string | undefined {
+  const text = readString(value, field)
+  if (text === undefined) return undefined
+  const trimmed = text.trim()
+  if (trimmed === '') return undefined
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed
+}
+
+function readLessonFiles(value: unknown, field: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) fail(field, '必须是字符串数组')
+  const out: string[] = []
+  for (let i = 0; i < value.length; i++) {
+    const item = value[i]
+    if (typeof item !== 'string') fail(field + '[' + i + ']', '必须是字符串')
+    const normalized = normalizeRelativeLessonFile(item)
+    if (normalized === undefined) fail(field + '[' + i + ']', '必须是工作区内相对路径')
+    if (!out.includes(normalized)) out.push(normalized)
+    if (out.length >= LESSON_FILES_MAX_COUNT) break
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function readOrigin(value: unknown): LessonOrigin | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isRecord(value)) fail('origin', '必须是对象')
+  const provider = readOptionalClippedString(value.provider, 'origin.provider', 200)
+  const model = readOptionalClippedString(value.model, 'origin.model', 200)
+  const agentPreset = readOptionalClippedString(value.agentPreset, 'origin.agentPreset', 200)
+  const out: LessonOrigin = {}
+  if (provider !== undefined) out.provider = provider
+  if (model !== undefined) out.model = model
+  if (agentPreset !== undefined) out.agentPreset = agentPreset
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function readCarriedFrom(value: unknown): LessonCarriedFrom | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isRecord(value)) fail('carriedFrom', '必须是对象')
+  const lessonId = readOptionalClippedString(value.lessonId, 'carriedFrom.lessonId', 200)
+  const projectId = readOptionalClippedString(value.projectId, 'carriedFrom.projectId', 200)
+  const workspaceRoot = readOptionalClippedString(value.workspaceRoot, 'carriedFrom.workspaceRoot', 2000)
+  const model = readOptionalClippedString(value.model, 'carriedFrom.model', 200)
+  const out: LessonCarriedFrom = {}
+  if (lessonId !== undefined) out.lessonId = lessonId
+  if (projectId !== undefined) out.projectId = projectId
+  if (workspaceRoot !== undefined) out.workspaceRoot = workspaceRoot
+  if (model !== undefined) out.model = model
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 function readFeedback(value: unknown): LessonFeedback | undefined {
   if (value === undefined) return undefined
   if (!isRecord(value)) fail('feedback', '必须是对象')
@@ -315,6 +424,12 @@ export function validateLesson(value: unknown, options: ValidateLessonOptions = 
   const action = readString(value.action, 'action', { required: true, nonEmpty: true }) as string
   const when = readString(value.when, 'when', { required: true, nonEmpty: true }) as string
   const exceptions = readStringArray(value.exceptions, 'exceptions') ?? []
+  const rationale = readOptionalClippedString(value.rationale, 'rationale', LESSON_RATIONALE_MAX_LENGTH)
+  const problemKey = readOptionalClippedString(value.problemKey, 'problemKey', LESSON_PROBLEM_KEY_MAX_LENGTH)
+  const files = readLessonFiles(value.files, 'files')
+  const prevents = readOptionalClippedString(value.prevents, 'prevents', LESSON_PREVENTS_MAX_LENGTH)
+  const origin = readOrigin(value.origin)
+  const carriedFrom = readCarriedFrom(value.carriedFrom)
   const scope = readScope(value.scope)
   const applicability = readApplicability(value.applicability)
   const state = value.state
@@ -351,6 +466,12 @@ export function validateLesson(value: unknown, options: ValidateLessonOptions = 
     updatedAt,
     conflictIds,
   }
+  if (rationale !== undefined) lesson.rationale = rationale
+  if (problemKey !== undefined) lesson.problemKey = problemKey
+  if (files !== undefined) lesson.files = files
+  if (prevents !== undefined) lesson.prevents = prevents
+  if (origin !== undefined) lesson.origin = origin
+  if (carriedFrom !== undefined) lesson.carriedFrom = carriedFrom
   if (lastValidatedAt !== undefined) lesson.lastValidatedAt = lastValidatedAt
   if (reviewAfter !== undefined) lesson.reviewAfter = reviewAfter
   if (supersedes !== undefined) lesson.supersedes = supersedes
@@ -372,6 +493,9 @@ export function validateEvidence(value: unknown): Evidence {
   const summary = readString(value.summary, 'evidence.summary', { required: true, nonEmpty: true }) as string
   const sessionId = readString(value.sessionId, 'evidence.sessionId', { nonEmpty: true })
   const projectId = readString(value.projectId, 'evidence.projectId', { nonEmpty: true })
+  const provider = readOptionalClippedString(value.provider, 'evidence.provider', 200)
+  const model = readOptionalClippedString(value.model, 'evidence.model', 200)
+  const agentPreset = readOptionalClippedString(value.agentPreset, 'evidence.agentPreset', 200)
   const sourceHash = readString(value.sourceHash, 'evidence.sourceHash', { nonEmpty: true })
   const verificationReason = readString(value.verificationReason, 'evidence.verificationReason', { nonEmpty: true })
   const recordSeqRaw = value.recordSeq
@@ -391,6 +515,9 @@ export function validateEvidence(value: unknown): Evidence {
   if (sessionId !== undefined) evidence.sessionId = sessionId
   if (recordSeq !== undefined) evidence.recordSeq = recordSeq
   if (projectId !== undefined) evidence.projectId = projectId
+  if (provider !== undefined) evidence.provider = provider
+  if (model !== undefined) evidence.model = model
+  if (agentPreset !== undefined) evidence.agentPreset = agentPreset
   if (sourceHash !== undefined) evidence.sourceHash = sourceHash
   if (verificationReason !== undefined) evidence.verificationReason = verificationReason
   return evidence

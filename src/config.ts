@@ -30,6 +30,8 @@ export interface ResolvedDreamConfig {
   autoMaxOutputTokens: number
   autoTimeoutMs: number
   autoIdleMs: number
+  /** 完成前单次软门控（DSH agent/turn-stopping）；默认关闭，需显式开启。 */
+  enableVerificationGate: boolean
   /** 反向代理来源地址白名单（默认空 = 只认回环）。 */
   trustedRemoteAddresses: string[]
   /** 反向代理 Host 白名单（默认空 = 只认 localhost）。 */
@@ -78,6 +80,7 @@ export function resolveConfig(raw?: Record<string, unknown> | null, env: NodeJS.
     autoMaxOutputTokens: clamp(cfg.autoMaxOutputTokens, 1200, 200, 2000),
     autoTimeoutMs: clamp(cfg.autoTimeoutMs, 30000, 1000, 60000),
     autoIdleMs: clamp(cfg.autoIdleMs, 60000, 0, 3600000),
+    enableVerificationGate: cfg.enableVerificationGate === true,
     trustedRemoteAddresses: list(cfg.trustedRemoteAddresses, list(env.DSH_DREAM_TRUSTED_REMOTE_ADDRESSES, [])),
     trustedHosts: list(cfg.trustedHosts, list(env.DSH_DREAM_TRUSTED_HOSTS, [])),
   }

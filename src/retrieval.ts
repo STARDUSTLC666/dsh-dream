@@ -9,8 +9,9 @@
  * @module dsh-dream/retrieval
  */
 import type { Evidence, Lesson, LessonState } from './knowledge.js'
-import { normalizeLessonText } from './knowledge.js'
+import { normalizeLessonText, normalizeRelativeLessonFile } from './knowledge.js'
 import { needsMemoryReview } from './memory.js'
+import type { LessonObservation } from './automatic-state.js'
 
 /** 检索入参；limit/maxChars 在内部按硬上限裁剪。 */
 export interface RetrievalQuery {
@@ -27,6 +28,12 @@ export interface RetrievalQuery {
   packageName?: string
   /** 任务目标平台；宿主工具缺省使用当前系统，跨平台任务可显式指定。 */
   platform?: string
+  /** 当前任务正在读写的工作区相对路径（用于匹配 lesson.files）。 */
+  activeFiles?: string[]
+  /** 当前执行步进的模型 ID（用于对比 lesson.origin.model，识别跨模型偏移）。 */
+  currentModel?: string
+  /** DSH 原生反馈与回用观测映射（仅用于同级温和破平，不改写资格过滤）。 */
+  observations?: Record<string, Pick<LessonObservation, 'positive' | 'negative' | 'corrections' | 'repeatToolHits'>>
   /** 是否返回 candidate；默认 true（面板/审计需要）。dream_context 默认传 false（R1）。 */
   includeCandidates?: boolean
   /** 是否保留 independentSupportCount===0 且非 usable 的条目；默认 true。dream_context 传 false（R1）。 */
@@ -42,6 +49,11 @@ export interface RetrievedLesson {
   when: string
   action: string
   exceptions: string[]
+  rationale?: string
+  problemKey?: string
+  files?: string[]
+  originModel?: string
+  modelMismatch?: boolean
   state: LessonState
   scopeLabel: string
   whyRelevant: string
@@ -77,7 +89,10 @@ interface ApplicabilityMatch {
 interface Candidate {
   lesson: Lesson
   keywordHits: string[]
+  fileHits: string[]
   applicability: ApplicabilityMatch
+  bm25Score: number
+  feedbackFactor: number
 }
 
 function trimmed(value: string | undefined): string | undefined {
@@ -402,32 +417,110 @@ function matchApplicability(lesson: Lesson, q: RetrievalQuery, queryText: string
   return out
 }
 
+const QUERY_BOILERPLATE = new Set([
+  '请帮我', '帮我', '请问', '一下', '这个', '那个', '这些', '那些', '可以', '能否', '需要', '想要', '怎么', '如何', '为什么', '什么', '处理', '看看', '检查',
+  'please', 'help', 'with', 'this', 'that', 'these', 'those', 'the', 'for', 'and', 'from', 'into', 'about', 'just', 'could', 'would', 'should', 'can', 'you', 'how', 'why', 'what',
+])
+
 function queryTerms(query: string): string[] {
   const normalized = normalizeText(query)
-  const terms = new Set<string>()
+  const rawSet = new Set<string>()
   const rawTokens = normalized.split(/[^\p{L}\p{N}+#._-]+/u)
   for (const token of rawTokens) {
     if (token === '') continue
-    if (token.length >= 2) terms.add(token)
+    if (token.length >= 2) rawSet.add(token)
     const cjkRuns = token.match(/\p{Script=Han}+/gu)
     if (cjkRuns === null) continue
     for (const run of cjkRuns) {
-      if (run.length === 1) terms.add(run)
-      for (let i = 0; i + 1 < run.length; i += 1) terms.add(run.slice(i, i + 2))
-      for (let i = 0; i + 2 < run.length; i += 1) terms.add(run.slice(i, i + 3))
+      if (run.length === 1) rawSet.add(run)
+      for (let i = 0; i + 1 < run.length; i += 1) rawSet.add(run.slice(i, i + 2))
+      for (let i = 0; i + 2 < run.length; i += 1) rawSet.add(run.slice(i, i + 3))
     }
   }
-  return [...terms]
+  const filtered = [...rawSet].filter((term) => !QUERY_BOILERPLATE.has(term))
+  return filtered.length > 0 ? filtered : [...rawSet]
 }
 
-function keywordHits(lesson: Lesson, terms: string[]): string[] {
+interface LessonFieldTexts {
+  title: string
+  action: string
+  when: string
+  rationale: string
+  problemKey: string
+  all: string[]
+}
+
+function lessonFieldTexts(lesson: Lesson): LessonFieldTexts {
+  const title = normalizeText(lesson.title)
+  const action = normalizeText(lesson.action)
+  const when = normalizeText(lesson.when)
+  const rationale = lesson.rationale ? normalizeText(lesson.rationale) : ''
+  const problemKey = lesson.problemKey ? normalizeText(lesson.problemKey) : ''
+  const all = [title, action, when, ...(rationale ? [rationale] : []), ...(problemKey ? [problemKey] : [])]
+  return { title, action, when, rationale, problemKey, all }
+}
+
+function keywordHits(fields: LessonFieldTexts, terms: string[]): string[] {
   if (terms.length === 0) return []
-  const fields = [normalizeText(lesson.title), normalizeText(lesson.action), normalizeText(lesson.when)]
   const hits: string[] = []
   for (const term of terms) {
-    if (fields.some((field) => field.includes(term))) hits.push(term)
+    if (fields.all.some((field) => field.includes(term))) hits.push(term)
   }
   return hits
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!haystack || !needle) return 0
+  let count = 0
+  let pos = 0
+  while ((pos = haystack.indexOf(needle, pos)) !== -1) {
+    count += 1
+    pos += needle.length
+    if (count >= 6) break
+  }
+  return count
+}
+
+function normalizeActiveFiles(files: string[] | undefined): string[] {
+  if (!Array.isArray(files) || files.length === 0) return []
+  const out: string[] = []
+  for (const file of files) {
+    const normalized = normalizeRelativeLessonFile(file)
+    if (normalized !== undefined) {
+      const lowered = normalized.toLowerCase()
+      if (!out.includes(lowered)) out.push(lowered)
+    }
+  }
+  return out
+}
+
+function matchLessonFiles(lesson: Lesson, activeFiles: string[]): string[] {
+  if (activeFiles.length === 0 || !Array.isArray(lesson.files) || lesson.files.length === 0) return []
+  const hits: string[] = []
+  for (const raw of lesson.files) {
+    const file = raw.toLowerCase()
+    const matched = activeFiles.some((active) => active === file || active.endsWith('/' + file) || file.endsWith('/' + active))
+    if (matched && !hits.includes(raw)) hits.push(raw)
+  }
+  return hits
+}
+
+function feedbackFactorOf(lesson: Lesson, q: RetrievalQuery): number {
+  const fbPos = lesson.feedback?.useful ?? 0
+  const fbNeg = lesson.feedback?.notApplicable ?? 0
+  const obs = q.observations?.[lesson.id]
+  const obsPos = obs?.positive ?? 0
+  const obsNeg = obs?.negative ?? 0
+  const obsCorr = obs?.corrections ?? 0
+  const net = (fbPos - fbNeg) + (obsPos - obsNeg) - obsCorr * 0.5
+  if (net === 0) return 1
+  return Math.round((1 + Math.max(-0.25, Math.min(0.25, net * 0.06))) * 10000) / 10000
+}
+
+function normalizeModelId(model: string | undefined): string | undefined {
+  if (typeof model !== 'string') return undefined
+  const value = model.trim().toLowerCase()
+  return value === '' ? undefined : value
 }
 
 function scopeMatches(lesson: Lesson, q: RetrievalQuery): boolean {
@@ -444,6 +537,10 @@ function scopeMatches(lesson: Lesson, q: RetrievalQuery): boolean {
 function buildWhyRelevant(entry: Candidate, q: RetrievalQuery): string {
   const lesson = entry.lesson
   const parts: string[] = []
+  if (entry.fileHits.length > 0) {
+    const shown = entry.fileHits.slice(0, 2).map((file) => '「' + file + '」').join('、')
+    parts.push('关联文件' + shown + (entry.fileHits.length > 2 ? ' 等' : ''))
+  }
   if (entry.keywordHits.length > 0) {
     const shown = entry.keywordHits.slice(0, 3).map((term) => '「' + term + '」').join('、')
     parts.push('命中关键词' + shown + (entry.keywordHits.length > 3 ? ' 等' : ''))
@@ -477,6 +574,11 @@ function buildWhyRelevant(entry: Candidate, q: RetrievalQuery): string {
 
 function toRetrievedLesson(entry: Candidate, summarizeEvidence: (lesson: Lesson) => string, q: RetrievalQuery): RetrievedLesson {
   const lesson = entry.lesson
+  const originModel = trimmed(lesson.origin?.model)
+  const currentModel = normalizeModelId(q.currentModel)
+  const modelMismatch = originModel !== undefined && currentModel !== undefined
+    ? normalizeModelId(originModel) !== currentModel
+    : undefined
   const item: RetrievedLesson = {
     lessonId: lesson.id,
     revision: lesson.revision,
@@ -484,6 +586,11 @@ function toRetrievedLesson(entry: Candidate, summarizeEvidence: (lesson: Lesson)
     when: lesson.when,
     action: lesson.action,
     exceptions: [...lesson.exceptions],
+    ...(lesson.rationale !== undefined ? { rationale: lesson.rationale } : {}),
+    ...(lesson.problemKey !== undefined ? { problemKey: lesson.problemKey } : {}),
+    ...(lesson.files !== undefined && lesson.files.length > 0 ? { files: [...lesson.files] } : {}),
+    ...(originModel !== undefined ? { originModel } : {}),
+    ...(modelMismatch === true ? { modelMismatch: true } : {}),
     state: lesson.state,
     scopeLabel: lessonScopeLabel(lesson.scope),
     whyRelevant: buildWhyRelevant(entry, q),
@@ -523,10 +630,17 @@ export function retrieveLessons(
   const { limit, maxChars } = resolveRetrievalBudget(q)
   const terms = queryTerms(q.query ?? '')
   const queryText = normalizeText(q.query ?? '')
+  const activeFiles = normalizeActiveFiles(q.activeFiles)
   const includeCandidates = q.includeCandidates !== false
   const includeNoEvidence = q.includeNoEvidence !== false
   const skipped: Array<{ lessonId: string; reason: string }> = []
-  const candidates: Candidate[] = []
+  const eligiblePool: Array<{
+    lesson: Lesson
+    fields: LessonFieldTexts
+    applicability: ApplicabilityMatch
+    hits: string[]
+    fileHits: string[]
+  }> = []
 
   for (const lesson of lessons) {
     if (!scopeMatches(lesson, q)) continue
@@ -557,23 +671,64 @@ export function retrieveLessons(
       skipped.push({ lessonId: lesson.id, reason: 'candidate-hold' })
       continue
     }
-    const hits = keywordHits(lesson, terms)
-    const applicabilityCount = applicability.packages.length + applicability.versions.length + applicability.platforms.length
-    if (hits.length === 0 && applicabilityCount === 0) continue
-    candidates.push({ lesson, keywordHits: hits, applicability })
+    const fields = lessonFieldTexts(lesson)
+    const hits = keywordHits(fields, terms)
+    const fileHits = matchLessonFiles(lesson, activeFiles)
+    eligiblePool.push({ lesson, fields, applicability, hits, fileHits })
+  }
+
+  // 零依赖内存 IDF / BM25 词频饱和打分：稀缺技术词权重高于高频泛词，避免中文 2-gram 噪声淹没精准词。
+  const corpusSize = Math.max(1, eligiblePool.length)
+  const df = new Map<string, number>()
+  for (const term of terms) {
+    let count = 0
+    for (const row of eligiblePool) {
+      if (row.fields.all.some((field) => field.includes(term))) count += 1
+    }
+    df.set(term, count)
+  }
+
+  const candidates: Candidate[] = []
+  for (const row of eligiblePool) {
+    const applicabilityCount = row.applicability.packages.length + row.applicability.versions.length + row.applicability.platforms.length
+    if (row.hits.length === 0 && row.fileHits.length === 0 && applicabilityCount === 0) continue
+    let bm25 = 0
+    for (const term of row.hits) {
+      const freq = df.get(term) ?? 1
+      const idf = Math.log(1 + (corpusSize - freq + 0.5) / (freq + 0.5))
+      const weightedTf = countOccurrences(row.fields.title, term) * 1.5
+        + countOccurrences(row.fields.when, term)
+        + countOccurrences(row.fields.action, term)
+        + countOccurrences(row.fields.rationale, term) * 0.8
+        + countOccurrences(row.fields.problemKey, term) * 0.8
+      const saturated = weightedTf > 0 ? (weightedTf * 2.2) / (weightedTf + 1.2) : 0
+      bm25 += idf * saturated
+    }
+    if (row.fileHits.length > 0) bm25 += row.fileHits.length * 3.5
+    const feedbackFactor = feedbackFactorOf(row.lesson, q)
+    const bm25Score = Math.round(bm25 * feedbackFactor * 10000) / 10000
+    candidates.push({
+      lesson: row.lesson,
+      keywordHits: row.hits,
+      fileHits: row.fileHits,
+      applicability: row.applicability,
+      bm25Score,
+      feedbackFactor,
+    })
   }
 
   candidates.sort((a, b) => {
-    const aKeyword = a.keywordHits.length > 0 ? 1 : 0
-    const bKeyword = b.keywordHits.length > 0 ? 1 : 0
-    if (aKeyword !== bKeyword) return bKeyword - aKeyword
-    if (a.keywordHits.length !== b.keywordHits.length) return b.keywordHits.length - a.keywordHits.length
+    const aDirect = (a.keywordHits.length > 0 || a.fileHits.length > 0) ? 1 : 0
+    const bDirect = (b.keywordHits.length > 0 || b.fileHits.length > 0) ? 1 : 0
+    if (aDirect !== bDirect) return bDirect - aDirect
+    if (a.bm25Score !== b.bm25Score) return b.bm25Score - a.bm25Score
     const aApp = a.applicability.packages.length + a.applicability.versions.length + a.applicability.platforms.length
     const bApp = b.applicability.packages.length + b.applicability.versions.length + b.applicability.platforms.length
     if (aApp !== bApp) return bApp - aApp
     const aRank = stateRank(a.lesson.state)
     const bRank = stateRank(b.lesson.state)
     if (aRank !== bRank) return bRank - aRank
+    if (a.feedbackFactor !== b.feedbackFactor) return b.feedbackFactor - a.feedbackFactor
     const aTime = validatedAtValue(a.lesson)
     const bTime = validatedAtValue(b.lesson)
     if (aTime !== bTime) return bTime - aTime

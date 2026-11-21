@@ -550,6 +550,13 @@ export class KnowledgeStore {
       action: input.action === undefined ? null : input.action,
       when: input.when === undefined ? null : input.when,
       exceptions: input.exceptions === undefined ? null : input.exceptions,
+      ...(input.rationale === undefined ? {} : { rationale: input.rationale }),
+      ...(input.problemKey === undefined ? {} : { problemKey: input.problemKey }),
+      ...(input.files === undefined ? {} : { files: input.files }),
+      ...(input.prevents === undefined ? {} : { prevents: input.prevents }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
+      ...(input.carriedFrom === undefined ? {} : { carriedFrom: input.carriedFrom }),
+      ...(input.supersedes === undefined ? {} : { supersedes: input.supersedes }),
       projectId: input.projectId === undefined ? null : input.projectId,
       workspaceRoot: input.workspaceRoot === undefined ? null : input.workspaceRoot,
       global: input.global === true,
@@ -583,6 +590,13 @@ export class KnowledgeStore {
         action: input.action,
         when: input.when,
         exceptions: input.exceptions === undefined ? [] : input.exceptions,
+        ...(input.rationale === undefined ? {} : { rationale: input.rationale }),
+        ...(input.problemKey === undefined ? {} : { problemKey: input.problemKey }),
+        ...(input.files === undefined ? {} : { files: input.files }),
+        ...(input.prevents === undefined ? {} : { prevents: input.prevents }),
+        ...(input.origin === undefined ? {} : { origin: input.origin }),
+        ...(input.carriedFrom === undefined ? {} : { carriedFrom: input.carriedFrom }),
+        ...(input.supersedes === undefined ? {} : { supersedes: input.supersedes }),
         scope,
         applicability: input.applicability === undefined ? [] : input.applicability,
         state: 'candidate',
@@ -620,6 +634,25 @@ export class KnowledgeStore {
         }
         const supportCount = mergeEvidenceSupport({ evidenceIds: mergedIds }, Array.from(state.evidence.values()))
         if (supportCount !== existing.independentSupportCount) patch.independentSupportCount = supportCount
+        if (input.files && input.files.length > 0) {
+          const mergedFiles = [...(existing.files ?? [])]
+          for (const file of input.files) {
+            if (!mergedFiles.includes(file) && mergedFiles.length < 20) mergedFiles.push(file)
+          }
+          if (mergedFiles.length > (existing.files?.length ?? 0)) patch.files = mergedFiles
+        }
+        if (existing.rationale === undefined && input.rationale !== undefined) patch.rationale = input.rationale
+        if (existing.problemKey === undefined && input.problemKey !== undefined) patch.problemKey = input.problemKey
+        if (existing.prevents === undefined && input.prevents !== undefined) patch.prevents = input.prevents
+        if (existing.origin === undefined && input.origin !== undefined) patch.origin = input.origin
+        if (existing.carriedFrom === undefined && input.carriedFrom !== undefined) patch.carriedFrom = input.carriedFrom
+        if (input.supersedes && input.supersedes.length > 0) {
+          const mergedSupersedes = [...(existing.supersedes ?? [])]
+          for (const id of input.supersedes) {
+            if (!mergedSupersedes.includes(id)) mergedSupersedes.push(id)
+          }
+          if (mergedSupersedes.length > (existing.supersedes?.length ?? 0)) patch.supersedes = mergedSupersedes
+        }
         // R2′：候选经验遇到 read 证据可升为 usable；disputed/stale/rejected 状态保持不变。
         if (existing.state === 'candidate' && hasRead && !options.requireReview) {
           patch.state = 'usable'
@@ -649,6 +682,13 @@ export class KnowledgeStore {
         action: input.action,
         when: input.when,
         exceptions: input.exceptions === undefined ? [] : input.exceptions,
+        ...(input.rationale === undefined ? {} : { rationale: input.rationale }),
+        ...(input.problemKey === undefined ? {} : { problemKey: input.problemKey }),
+        ...(input.files === undefined ? {} : { files: input.files }),
+        ...(input.prevents === undefined ? {} : { prevents: input.prevents }),
+        ...(input.origin === undefined ? {} : { origin: input.origin }),
+        ...(input.carriedFrom === undefined ? {} : { carriedFrom: input.carriedFrom }),
+        ...(input.supersedes === undefined ? {} : { supersedes: input.supersedes }),
         scope,
         applicability: input.applicability === undefined ? [] : input.applicability,
         state: initialState,
@@ -1590,6 +1630,9 @@ export class KnowledgeStore {
     if (input.sessionId !== undefined) raw.sessionId = input.sessionId
     if (input.recordSeq !== undefined) raw.recordSeq = input.recordSeq
     if (input.projectId !== undefined) raw.projectId = input.projectId
+    if (input.provider !== undefined) raw.provider = input.provider
+    if (input.model !== undefined) raw.model = input.model
+    if (input.agentPreset !== undefined) raw.agentPreset = input.agentPreset
     if (input.sourceHash !== undefined) raw.sourceHash = input.sourceHash
     if (input.verificationReason !== undefined) raw.verificationReason = input.verificationReason
     const evidence = this.maskEvidence(validateEvidence(raw))
@@ -1662,6 +1705,25 @@ export class KnowledgeStore {
       action: maskSecrets(lesson.action),
       when: maskSecrets(lesson.when),
       exceptions: lesson.exceptions.map((item) => maskSecrets(item)),
+      ...(lesson.rationale === undefined ? {} : { rationale: maskSecrets(lesson.rationale) }),
+      ...(lesson.problemKey === undefined ? {} : { problemKey: maskSecrets(lesson.problemKey) }),
+      ...(lesson.prevents === undefined ? {} : { prevents: maskSecrets(lesson.prevents) }),
+      ...(lesson.files === undefined ? {} : { files: lesson.files.map((item) => maskSecrets(item)) }),
+      ...(lesson.origin === undefined ? {} : {
+        origin: {
+          ...(lesson.origin.provider === undefined ? {} : { provider: maskSecrets(lesson.origin.provider) }),
+          ...(lesson.origin.model === undefined ? {} : { model: maskSecrets(lesson.origin.model) }),
+          ...(lesson.origin.agentPreset === undefined ? {} : { agentPreset: maskSecrets(lesson.origin.agentPreset) }),
+        },
+      }),
+      ...(lesson.carriedFrom === undefined ? {} : {
+        carriedFrom: {
+          ...(lesson.carriedFrom.lessonId === undefined ? {} : { lessonId: maskSecrets(lesson.carriedFrom.lessonId, [lesson.carriedFrom.lessonId]) }),
+          ...(lesson.carriedFrom.projectId === undefined ? {} : { projectId: maskSecrets(lesson.carriedFrom.projectId) }),
+          ...(lesson.carriedFrom.workspaceRoot === undefined ? {} : { workspaceRoot: maskSecrets(lesson.carriedFrom.workspaceRoot) }),
+          ...(lesson.carriedFrom.model === undefined ? {} : { model: maskSecrets(lesson.carriedFrom.model) }),
+        },
+      }),
     }
     if (lesson.review.note !== undefined) {
       const refs = [lesson.id, ...(lesson.review.resolution?.affectedIds ?? []), ...(lesson.review.resolution?.targetId ? [lesson.review.resolution.targetId] : [])]
@@ -1676,7 +1738,13 @@ export class KnowledgeStore {
 
   private maskEvidence(evidence: Evidence): Evidence {
     if (!this.mask) return evidence
-    return { ...evidence, summary: maskSecrets(evidence.summary) }
+    return {
+      ...evidence,
+      summary: maskSecrets(evidence.summary),
+      ...(evidence.provider === undefined ? {} : { provider: maskSecrets(evidence.provider) }),
+      ...(evidence.model === undefined ? {} : { model: maskSecrets(evidence.model) }),
+      ...(evidence.agentPreset === undefined ? {} : { agentPreset: maskSecrets(evidence.agentPreset) }),
+    }
   }
 
   // ---------- checkpoint / index ----------

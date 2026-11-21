@@ -8,6 +8,10 @@ export interface PendingMemory {
     readyAt: number;
     provider: string;
     model: string;
+    agentPreset?: string;
+    workspaceId?: string;
+    touchedFiles?: string[];
+    triggerKind?: 'tools' | 'correction' | 'feedback';
     sources: Array<{
         seq: number;
         role: 'user' | 'assistant';
@@ -26,12 +30,24 @@ export interface ChatMemoryPolicy {
     use?: boolean;
     contribute?: boolean;
 }
+/** 经验回用后的观测统计（DSH 原生赞/踩、纠正与重复工具信号；不修改审阅状态）。 */
+export interface LessonObservation {
+    positive: number;
+    negative: number;
+    corrections: number;
+    repeatToolHits: number;
+    lastAt: number;
+    lastModel?: string;
+    lastCategory?: string;
+    lastNote?: string;
+}
 export interface AutomaticState {
     version: 1;
     day: string;
     calls: number;
     enabled?: boolean;
     retrievalEnabled?: boolean;
+    verificationGateEnabled?: boolean;
     lastAttemptAt?: number;
     cursors: Record<string, number>;
     pending?: PendingMemory[];
@@ -42,6 +58,7 @@ export interface AutomaticState {
         at: number;
         count: number;
     }>;
+    observations?: Record<string, LessonObservation>;
     last?: {
         at: number;
         reason: string;

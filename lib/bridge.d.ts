@@ -18,7 +18,23 @@ export interface BridgeLessonView {
     when: string;
     action: string;
     exceptions: string[];
+    rationale?: string;
     scopeLabel: string;
+}
+export interface BridgeSemanticDiffEntry {
+    lessonId: string;
+    title: string;
+    revision: number;
+    previousRevision?: number;
+    rationale?: string;
+}
+/** 相对上次已应用 BridgeRecord 的语义变更（SIM retain / revise / replace / remove）。 */
+export interface BridgeSemanticDiff {
+    previousBackupId?: string;
+    retained: BridgeSemanticDiffEntry[];
+    added: BridgeSemanticDiffEntry[];
+    revised: BridgeSemanticDiffEntry[];
+    evicted: BridgeSemanticDiffEntry[];
 }
 export interface BridgeSkipped {
     lessonId: string;
@@ -89,6 +105,7 @@ export interface BridgePreviewSuccess {
     skipped: BridgeSkipped[];
     previewId: string;
     blockPreview: string;
+    semanticDiff?: BridgeSemanticDiff;
 }
 export interface BridgeApplySuccess {
     ok: true;
@@ -157,10 +174,13 @@ type BlockLocation = {
 /**
  * 经验资格：state=usable；scope 匹配当前项目；或显式 global 且 review.decision=accepted。
  * 解释为空或不满足一律进 skipped，绝不因频次入选或落选。
+ * 当提供 retainedIds（当前 AGENTS.md 管理块中已生效规则）时，优先保活旧规则（防遗忘），
+ * 再按独立支持数 + 净反馈 + 更新时间稳定排序。
  */
 export declare function selectBridgeLessons(lessons: Lesson[], scope: BridgeScope, options?: {
     lessonIds?: string[];
     maxLessons?: number;
+    retainedIds?: ReadonlySet<string>;
 }): {
     eligible: Lesson[];
     skipped: BridgeSkipped[];

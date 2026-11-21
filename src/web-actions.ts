@@ -113,10 +113,22 @@ export function createDreamActionHandler(options: Options = {}): (request: Reque
         return json(200, maskDeep({ ok: true, lessons, message: '已完成所选候选的审阅' }))
       }
       if (operation === 'automatic') {
-        if ((body.enabled !== undefined && typeof body.enabled !== 'boolean') || (body.retrievalEnabled !== undefined && typeof body.retrievalEnabled !== 'boolean') || (body.enabled === undefined && body.retrievalEnabled === undefined)) throw new KnowledgeError('invalid', '自动功能开关必须是布尔值')
+        const hasEnabled = body.enabled !== undefined
+        const hasRetrieval = body.retrievalEnabled !== undefined
+        const hasVerificationGate = body.verificationGateEnabled !== undefined
+        if ((hasEnabled && typeof body.enabled !== 'boolean')
+          || (hasRetrieval && typeof body.retrievalEnabled !== 'boolean')
+          || (hasVerificationGate && typeof body.verificationGateEnabled !== 'boolean')
+          || (!hasEnabled && !hasRetrieval && !hasVerificationGate)) {
+          throw new KnowledgeError('invalid', '自动功能开关必须是布尔值')
+        }
         const runtime = automaticRuntime(cfg)
         if (!runtime) return fail(503, 'unavailable', '自动功能尚未就绪，请刷新或重新启用插件')
-        runtime.control({ enabled: body.enabled, retrievalEnabled: body.retrievalEnabled })
+        runtime.control({
+          ...(hasEnabled ? { enabled: body.enabled as boolean } : {}),
+          ...(hasRetrieval ? { retrievalEnabled: body.retrievalEnabled as boolean } : {}),
+          ...(hasVerificationGate ? { verificationGateEnabled: body.verificationGateEnabled as boolean } : {}),
+        })
         return json(200, { ok: true, automatic: runtime.status() })
       }
       if (operation === 'review') {
@@ -179,7 +191,7 @@ export function installDreamActions(ctx: any, options: Options = {}): void {
     const removeAction = host.connection.fetch.register({ path: DREAM_ACTION_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch })
     const cfg = { ...resolveConfig(options.config as Record<string, unknown>), ...(options.journalDir === undefined ? {} : { journalDir: options.journalDir }) }
     const removeAuto = host.connection.fetch.register({ path: DREAM_AUTOMATIC_ROUTE, methods: ['GET'], requestBody: 'buffered', fetch: async () => json(200, {
-      ok: true, automatic: automaticRuntime(cfg)?.status() ?? { available: false, enabled: false, retrievalEnabled: false, problem: 'unavailable' },
+      ok: true, automatic: automaticRuntime(cfg)?.status() ?? { available: false, enabled: false, retrievalEnabled: false, verificationGateEnabled: false, problem: 'unavailable' },
     }) })
     let released = false
     const release = () => {

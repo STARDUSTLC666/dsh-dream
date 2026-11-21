@@ -1,4 +1,5 @@
 import type { Evidence, Lesson } from './knowledge.js'
+import type { LessonObservation } from './automatic-state.js'
 
 /** A model recommendation or an old actor-less record is not human approval. */
 export function isHumanAccepted(lesson: Lesson): boolean {
@@ -18,6 +19,144 @@ export function reviewDeadline(lesson: Lesson): number | undefined {
 export function needsMemoryReview(lesson: Lesson, now = Date.now()): boolean {
   const deadline = reviewDeadline(lesson)
   return lesson.state === 'usable' && deadline !== undefined && deadline <= now
+}
+
+export interface ObservationReviewSignal {
+  flagged: boolean
+  reason?: string
+  negativeScore: number
+  positiveScore: number
+}
+
+/**
+ * Advisory-only signal combining explicit usage feedback and DSH native observations.
+ * Never mutates lesson state or overrides human review; highlights lessons needing re-check.
+ */
+export function needsObservationReview(
+  lesson: Pick<Lesson, 'state' | 'feedback'>,
+  observation?: LessonObservation,
+): ObservationReviewSignal {
+  const fbPos = lesson.feedback?.useful ?? 0
+  const fbNeg = lesson.feedback?.notApplicable ?? 0
+  const obsPos = observation?.positive ?? 0
+  const obsNeg = observation?.negative ?? 0
+  const corrections = observation?.corrections ?? 0
+  const positiveScore = fbPos + obsPos
+  const negativeScore = fbNeg + obsNeg + corrections
+  if (lesson.state !== 'usable') return { flagged: false, negativeScore, positiveScore }
+  if (obsNeg >= 2 && obsNeg >= obsPos) {
+    return { flagged: true, reason: 'native-negative-feedback', negativeScore, positiveScore }
+  }
+  if (fbNeg >= 2 && fbNeg > fbPos) {
+    return { flagged: true, reason: 'repeated-not-applicable', negativeScore, positiveScore }
+  }
+  if (negativeScore >= 3 && negativeScore > positiveScore) {
+    return { flagged: true, reason: 'negative-observation-trend', negativeScore, positiveScore }
+  }
+  return { flagged: false, negativeScore, positiveScore }
+}
+
+function normPath(value: string): string {
+  const slash = value.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-zA-Z]:/.test(slash) || value.includes('\\') ? slash.toLowerCase() : slash
+}
+
+function scopeMatchesProject(lesson: Lesson, workspaceRoot?: string, projectId?: string): boolean {
+  if (lesson.scope.global === true) return true
+  if (projectId && lesson.scope.projectId === projectId) return true
+  if (workspaceRoot && lesson.scope.workspaceRoot && normPath(lesson.scope.workspaceRoot) === normPath(workspaceRoot)) return true
+  return false
+}
+
+export interface SimDirectoryUsableItem {
+  id: string
+  kind: Lesson['kind']
+  title: string
+  when: string
+  rationale?: string
+  problemKey?: string
+  originModel?: string
+  files?: string[]
+  negSignals?: number
+}
+
+export interface SimDirectoryHistoryItem {
+  id: string
+  state: 'rejected' | 'stale' | 'disputed'
+  title: string
+  reason?: string
+}
+
+export interface SimDirectory {
+  usable: SimDirectoryUsableItem[]
+  history: SimDirectoryHistoryItem[]
+}
+
+/**
+ * SIM-style optimizer directory for extraction / review / consolidation:
+ * supplies existing accepted rules (with rationale, origin model, files) plus recent
+ * rejected/stale attempts (negative memory) within a strict character budget.
+ */
+export function simDirectory(
+  lessons: Lesson[],
+  options: {
+    workspaceRoot?: string
+    projectId?: string
+    observations?: Record<string, LessonObservation>
+    maxChars?: number
+    now?: number
+  } = {},
+): SimDirectory {
+  const maxChars = Math.max(400, Math.min(4000, options.maxChars ?? 2400))
+  const now = options.now ?? Date.now()
+  const scoped = lessons
+    .filter((lesson) => scopeMatchesProject(lesson, options.workspaceRoot, options.projectId))
+    .slice()
+    .sort((a, b) => (a.updatedAt === b.updatedAt ? a.id.localeCompare(b.id) : b.updatedAt.localeCompare(a.updatedAt)))
+
+  const usable: SimDirectoryUsableItem[] = []
+  const history: SimDirectoryHistoryItem[] = []
+  let chars = 32
+  const clip = (text: string, max: number) => (text.length > max ? text.slice(0, max - 1) + '…' : text)
+
+  for (const lesson of scoped) {
+    if (usable.length >= 16) break
+    if (!isHumanAccepted(lesson) || needsMemoryReview(lesson, now)) continue
+    const sig = needsObservationReview(lesson, options.observations?.[lesson.id])
+    const item: SimDirectoryUsableItem = {
+      id: lesson.id,
+      kind: lesson.kind,
+      title: clip(lesson.title, 120),
+      when: clip(lesson.when, 100),
+      ...(lesson.rationale ? { rationale: clip(lesson.rationale, 140) } : {}),
+      ...(lesson.problemKey ? { problemKey: clip(lesson.problemKey, 60) } : {}),
+      ...(lesson.origin?.model ? { originModel: lesson.origin.model } : {}),
+      ...(lesson.files && lesson.files.length > 0 ? { files: lesson.files.slice(0, 4) } : {}),
+      ...(sig.negativeScore > 0 ? { negSignals: sig.negativeScore } : {}),
+    }
+    const cost = JSON.stringify(item).length + 2
+    if (chars + cost > Math.floor(maxChars * 0.7)) continue
+    usable.push(item)
+    chars += cost
+  }
+
+  for (const lesson of scoped) {
+    if (history.length >= 10) break
+    if (lesson.state !== 'rejected' && lesson.state !== 'stale' && lesson.state !== 'disputed') continue
+    const reason = lesson.review.note ?? lesson.rationale
+    const item: SimDirectoryHistoryItem = {
+      id: lesson.id,
+      state: lesson.state,
+      title: clip(lesson.title, 120),
+      ...(reason ? { reason: clip(reason, 140) } : {}),
+    }
+    const cost = JSON.stringify(item).length + 2
+    if (chars + cost > maxChars) break
+    history.push(item)
+    chars += cost
+  }
+
+  return { usable, history }
 }
 
 /** Derived layers contain pointers; authoritative lessons and evidence remain untouched. */

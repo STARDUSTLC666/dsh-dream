@@ -1957,6 +1957,15 @@ __stardustUpdatesGuard(React, "dsh-dream.rollback", { busy: pending });
                             event.stopPropagation();
                             command.click();
                         }
+                    } else if (!event.repeat && (event.key === ' ' || event.code === 'Space')) {
+                        if (!focused?.closest?.('button, a, summary, [role="button"], [role="tab"], [role="switch"], [role="checkbox"], [role="menuitemradio"]')) {
+                            const flip = panel.querySelector('[data-dream-command="flip"]:enabled');
+                            if (flip) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                flip.click();
+                            }
+                        }
                     }
                 }
                 doc.addEventListener('keydown', handle, true);

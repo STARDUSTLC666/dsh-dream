@@ -1570,6 +1570,7 @@ function createStyleSwitcherComponent(React, requireFn) {
     disabled = false,
     align = 'end',
     className,
+    dataTour,
     formatOptionLabel,
     formatTriggerLabel,
     formatAriaLabel,
@@ -1606,6 +1607,7 @@ function createStyleSwitcherComponent(React, requireFn) {
       'div',
       {
         className: ['dsh-style-switcher', className].filter(Boolean).join(' '),
+        'data-tour': dataTour || undefined,
         'data-window-drag-exclude': '',
       },
       h(P.Menu, {

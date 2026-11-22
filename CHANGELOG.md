@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.19.0 (2026-11-22)
+
+- **全新「待审阅叠卡（Tactile Triage Deck）」默认工作台**：待审阅面板默认以实体卡片叠堆与顶部 Inbox Zero 进度带呈现候选经验，支持直接右拖采纳 / 左拖丢弃、`Space` 3D 翻面核查来源证据与 `rationale`/`files`/`prevents` 元信息、以及底部悬浮操作坞（`丢弃 (D)` / `翻面 (Space)` / `上一张 · 下一张` / `确认采纳 (A)` / `展开完整详情`）；顶栏提供 `叠卡 / 列表` 一键切换，可随时切回经典三栏列表视图；优化英文宽标签下顶栏选项卡自适应排版，避免窄面板重叠。
+- **更新 5 步 `? 引导`（Coachmark Tour）与文档配图**：5 步聚光灯引导完整覆盖「叠卡/列表切换与待分拣进度带」「拖拽手势与 `Space` 3D 翻面查证据」「底部悬浮操作坞」「13 套浅色风格 × 8 套双层中英文字体（默认幼圆等宽）」「自动整理/已采纳/设置」并补齐 8 种界面语言；同步更新 `README`、`USAGE`、`WORKBENCH` 文档、中英工作流示意图与最新界面截图。
+- **Bespoke Tactile Triage Deck (`叠卡`) Default Workbench**: The Awaiting Review workspace now opens in a tactile stacked card deck paired with an Inbox Zero triage ribbon—drag right to accept, drag left to discard, press `Space` (or click **Flip for evidence**) for a 3D flip showing source evidence and SIM provenance, or use the floating action dock (`Discard (D)` / `Flip (Space)` / `Prev · Next` / `Accept (A)` / `Full details`). Switch back to the classic 3-pane list view in one click via `Deck / List`. Also improves English header tab sizing and responsive wrapping so labels never overlap at compact widths.
+- **Refreshed 5-Step `? Tour` & Docs**: Updated the 5-step spotlight tour anchors across all 8 UI locales for the Tactile Triage Deck workflow (`Deck / List` & Inbox Zero ribbon, drag & `Space` 3D evidence flip, Floating Action Dock, 13 light themes × 8 dual-layer font pairings defaulting to YouYuan Mono, and Auto-collect/Accepted/Settings), alongside updated bilingual docs, workflow diagrams, and UI screenshots.
+
 ## 0.18.0 (2026-11-22)
 
 - **DeepSeek Harness `0.2.2-rc.3` 深度原生适配**：

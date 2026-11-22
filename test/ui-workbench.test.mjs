@@ -6,7 +6,7 @@ import { apply as applyDreamServer } from '../lib/index.js'
 
 const CLIENT_BUNDLE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 
-function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyData = false, onClipboardWrite = null } = {}) {
+function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyData = false, onClipboardWrite = null, knowledgeOverride = null, onAction = null } = {}) {
   const storage = new Map()
   if (initialStyle) storage.set('dsh-stardust:ui-style', initialStyle)
   const listeners = new Map()
@@ -79,12 +79,24 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
     matchMedia: () => ({ matches: false }),
   }
 
-  const states = []
-  const refs = []
+  const hookTable = new Map()
+  const mountedPaths = new Set()
   const effects = []
+  let activePath = 'root'
   let cursor = 0
   let refCursor = 0
   let idCounter = 0
+
+  function getSlot(tableKey, idx, init) {
+    let bucket = hookTable.get(activePath)
+    if (!bucket) {
+      bucket = { states: [], refs: [] }
+      hookTable.set(activePath, bucket)
+    }
+    const list = bucket[tableKey]
+    if (!(idx in list)) list[idx] = init()
+    return list
+  }
 
   const React = {
     Fragment: Symbol.for('react.fragment'),
@@ -93,7 +105,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
         type,
         props: {
           ...(props || {}),
-          children: children.flat(Infinity).filter(v => v !== null && v !== undefined && v !== false),
+          children: children.flat(Infinity),
         },
       }
     },
@@ -104,23 +116,23 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
           ...(el.props || {}),
           ...(extra || {}),
           children: children.length
-            ? children.flat(Infinity).filter(v => v !== null && v !== undefined && v !== false)
+            ? children.flat(Infinity)
             : el.props?.children,
         },
       }
     },
     useState(initial) {
       const idx = cursor++
-      if (!(idx in states)) states[idx] = typeof initial === 'function' ? initial() : initial
+      const list = getSlot('states', idx, () => (typeof initial === 'function' ? initial() : initial))
       const setState = next => {
-        states[idx] = typeof next === 'function' ? next(states[idx]) : next
+        list[idx] = typeof next === 'function' ? next(list[idx]) : next
       }
-      return [states[idx], setState]
+      return [list[idx], setState]
     },
     useRef(initial) {
       const idx = refCursor++
-      if (!(idx in refs)) refs[idx] = { current: initial }
-      return refs[idx]
+      const list = getSlot('refs', idx, () => ({ current: initial }))
+      return list[idx]
     },
     useCallback(fn) { return fn },
     useMemo(fn) { return fn() },
@@ -178,7 +190,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
     Tag: props => React.createElement('span', props, props.children),
   }
 
-  const sampleKnowledge = emptyData ? {
+  const sampleKnowledge = knowledgeOverride || (emptyData ? {
     lessons: [],
     evidence: [],
     stats: { lessons: 0, evidence: 0, byState: {} },
@@ -208,7 +220,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
       observedAt: '2026-11-17T12:00:00Z',
     }],
     stats: { lessons: 1, evidence: 1, byState: { candidate: 1 } },
-  }
+  })
 
   const sampleJournal = emptyData ? {
     dreams: [],
@@ -243,9 +255,14 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
     clearTimeout,
     document,
     navigator: { platform: 'Win32', clipboard: { async writeText(val) { onClipboardWrite?.(val) } } },
-    fetch: async url => {
+    fetch: async (url, init = {}) => {
       const target = String(url)
-      if (target.includes('/knowledge')) return { ok: true, status: 200, json: async () => sampleKnowledge }
+      if (target.includes('/actions')) {
+        const body = init.body ? JSON.parse(init.body) : {}
+        const result = (await onAction?.(body)) || { ok: true }
+        return { ok: true, status: 200, json: async () => result }
+      }
+      if (target.includes('/knowledge')) return { ok: true, status: 200, json: async () => (typeof sampleKnowledge === 'function' ? sampleKnowledge() : sampleKnowledge) }
       if (target.includes('/bridge')) return { ok: true, status: 200, json: async () => ({ records: [], stats: { total: 0, rollbackable: 0 } }) }
       if (target.includes('/automatic')) return { ok: true, status: 200, json: async () => ({ ok: true, automatic: { available: true, enabled: true, retrievalEnabled: true, pendingTurns: 1, mainTaskRunning: false, candidates: 1 } }) }
       return { ok: true, status: 200, json: async () => sampleJournal }
@@ -267,12 +284,25 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
     }),
   })
 
-  function materialize(vnode, ancestors = []) {
+  function materialize(vnode, ancestors = [], path = 'root') {
     if (vnode === null || vnode === undefined || typeof vnode === 'boolean') return null
     if (typeof vnode === 'string' || typeof vnode === 'number') return String(vnode)
-    if (Array.isArray(vnode)) return vnode.map(child => materialize(child, ancestors)).filter(Boolean)
+    if (Array.isArray(vnode)) return vnode.map((child, idx) => materialize(child, ancestors, path + '.a' + idx)).filter(Boolean)
     if (typeof vnode.type === 'function') {
-      return materialize(vnode.type(vnode.props || {}), ancestors)
+      const key = vnode.props?.key !== undefined ? '#' + String(vnode.props.key) : ''
+      const compPath = path + '/' + (vnode.type.name || 'fn') + key
+      mountedPaths.add(compPath)
+      const prevPath = activePath
+      const prevCursor = cursor
+      const prevRefCursor = refCursor
+      activePath = compPath
+      cursor = 0
+      refCursor = 0
+      const rendered = vnode.type(vnode.props || {})
+      activePath = prevPath
+      cursor = prevCursor
+      refCursor = prevRefCursor
+      return materialize(rendered, ancestors, compPath)
     }
     const attrs = {}
     for (const [k, v] of Object.entries(vnode.props || {})) {
@@ -318,7 +348,7 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
       vnode.props.ref.current = node
     }
     const nextAncestors = [node, ...ancestors]
-    node.children = (vnode.props?.children || []).map(child => materialize(child, nextAncestors)).flat(Infinity).filter(Boolean)
+    node.children = (vnode.props?.children || []).map((child, idx) => materialize(child, nextAncestors, path + '.' + idx)).flat(Infinity).filter(Boolean)
     return {
       ...node,
       get textContent() { return textOf(node) },
@@ -360,10 +390,14 @@ function createDreamUiEnv({ withPrimitives = false, initialStyle = null, emptyDa
       })
       const target = registrations.find(r => r.meta.name === (workbench ? 'main' : 'settings.section'))
       const render = () => {
+        mountedPaths.clear()
         cursor = 0
         refCursor = 0
         idCounter = 0
         const tree = materialize(React.createElement(target.component, { locale, workbench }))
+        for (const p of [...hookTable.keys()]) {
+          if (!mountedPaths.has(p)) hookTable.delete(p)
+        }
         flushEffects()
         return tree
       }
@@ -419,6 +453,8 @@ test('dsh-dream stylesheet enforces Never-Too-Dark slate, 13 [data-dsh-style] pr
     assert.match(cssText, /box-shadow:\s*2px 2px 0px #1e2826/)
     assert.match(cssText, /--dsh-frame-top-clearance/)
     assert.match(cssText, /--dsh-frame-leading-clearance/)
+    assert.match(cssText, /@container dream \(max-width:\s*1180px\)/)
+    assert.match(cssText, /min-width:\s*max-content/)
     assert.match(cssText, /\[data-window-drag-exclude\]/)
     assert.match(cssText, /@media \(prefers-reduced-motion: reduce\)/)
     assert.match(CLIENT_BUNDLE, /__stardustUpdatesInlinePage\(React,\s*h\(W\.Page/)
@@ -448,9 +484,31 @@ test('dsh-dream renders in standalone fallback mode, syncs 13 styles + 8 fonts a
     assert.ok(findNodes(root, n => Object.hasOwn(n.attrs || {}, 'data-dsh-serif')).length >= 2)
     assert.ok(findNodes(root, n => String(n.attrs?.className || '').includes('dsh-pixel-cursor')).length >= 1)
 
-    // Verify DshSplitResizer keyboard resize + double-click reset + localStorage persistence
+    // Default landing view in 待审阅 is the Tactile Triage Deck (叠卡 / Deck) with all 5 tour anchors mounted
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-triage-deck'] === 'true').length === 1)
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1').length === 1)
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-action-dock'] === 'true').length === 1)
+    for (const anchor of ['dream-ribbon', 'dream-card', 'dream-dock', 'dream-style', 'dream-auto']) {
+      assert.ok(findNodes(root, n => n.attrs?.['data-tour'] === anchor).length === 1, 'expected visible [data-tour="' + anchor + '"] in Deck view')
+    }
+
+    // Verify SVG icon micro-animation markers exist across Dream buttons in default Deck view
+    const iconNames = new Set(findNodes(root, n => n.tag === 'svg' && n.attrs['data-dsh-icon']).map(n => n.attrs['data-dsh-icon']))
+    for (const expected of ['moon', 'sparkle', 'down', 'shield', 'search', 'refresh', 'check', 'trash', 'diff']) {
+      assert.ok(iconNames.has(expected), 'missing data-dsh-icon=' + expected)
+    }
+    assert.ok(findNodes(root, n => Object.hasOwn(n.attrs, 'data-dsh-card')).length >= 3)
+
+    // Switch to classic 列表 (List) view via compact segmented toggle and verify SplitResizer + quick-actions stay 100% intact
+    const listToggleBtn = findNodes(root, n => n.attrs?.role === 'tab' && (textOf(n) === 'List' || textOf(n) === '列表'))[0]
+    assert.ok(listToggleBtn, 'compact Deck/List view toggle must render')
+    listToggleBtn.attrs.onClick()
+    root = mounted.rerender()
+    assert.equal(findNodes(root, n => n.attrs?.['data-dream-triage-deck'] === 'true').length, 0)
+
+    // Verify DshSplitResizer keyboard resize + double-click reset + localStorage persistence in List view
     const resizer = findNodes(root, n => n.attrs?.role === 'separator' && Object.hasOwn(n.attrs || {}, 'data-dsh-resizer'))[0]
-    assert.ok(resizer, 'DshSplitResizer must render in MemoryBoard')
+    assert.ok(resizer, 'DshSplitResizer must render in List view')
     assert.equal(resizer.attrs['aria-valuenow'], 340)
     resizer.attrs.onKeyDown({ key: 'ArrowRight', preventDefault() {} })
     root = mounted.rerender()
@@ -460,19 +518,18 @@ test('dsh-dream renders in standalone fallback mode, syncs 13 styles + 8 fonts a
     root = mounted.rerender()
     assert.equal(findNodes(root, n => n.attrs?.role === 'separator')[0].attrs['aria-valuenow'], 340)
 
-    // Verify row hover quick-action bar controls render on candidate row
+    // Verify row hover quick-action bar controls render on candidate row in List view
     assert.ok(findNodes(root, n => n.attrs?.['data-dream-quick-accept'] === 'lesson-1').length === 1)
     assert.ok(findNodes(root, n => n.attrs?.['data-dream-quick-copy'] === 'lesson-1').length === 1)
     assert.ok(findNodes(root, n => n.attrs?.['data-dream-quick-inspect'] === 'lesson-1').length === 1)
-
-    // Verify SVG icon micro-animation markers exist across Dream buttons
-    const iconNames = new Set(findNodes(root, n => n.tag === 'svg' && n.attrs['data-dsh-icon']).map(n => n.attrs['data-dsh-icon']))
-    for (const expected of ['moon', 'sparkle', 'down', 'shield', 'search', 'refresh', 'check', 'trash', 'diff']) {
-      assert.ok(iconNames.has(expected), 'missing data-dsh-icon=' + expected)
-    }
-
-    assert.ok(findNodes(root, n => Object.hasOwn(n.attrs, 'data-dsh-card')).length >= 3)
     assert.ok(findNodes(root, n => Object.hasOwn(n.attrs, 'data-dsh-row')).length >= 1)
+
+    // Switch back to Deck view (1-click)
+    const deckToggleBtn = findNodes(root, n => n.attrs?.role === 'tab' && (textOf(n) === 'Deck' || textOf(n) === '叠卡'))[0]
+    assert.ok(deckToggleBtn)
+    deckToggleBtn.attrs.onClick()
+    root = mounted.rerender()
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-triage-deck'] === 'true').length === 1)
 
     // Switch through all 13 styles via topbar SkinSwitcher
     for (const preset of ['cream', 'claude', 'pixel8bit', 'mint', 'glass', 'eink', 'blueprint', 'risograph', 'win98', 'songhui', 'frutiger', 'gazette', 'harness']) {
@@ -538,9 +595,19 @@ test('dsh-dream integrates host primitives and stamps [data-dsh-style] onto port
   try {
     let root = mounted.tree
     assert.equal(root.attrs['data-dsh-style'], 'cream')
-    for (const primitive of ['Button', 'Input', 'Checkbox', 'Switch', 'SegmentedTabs', 'Menu']) {
+    for (const primitive of ['Button', 'Input', 'Switch', 'SegmentedTabs', 'SegmentedControl', 'Menu']) {
       assert.ok(env.primitiveCalls.includes(primitive), 'expected host primitive ' + primitive)
     }
+
+    // Switch to List view briefly to verify host Checkbox primitive still integrates cleanly
+    const listTab = findNodes(root, n => n.attrs?.role === 'tab' && textOf(n) === '列表')[0]
+    assert.ok(listTab)
+    listTab.attrs.onClick()
+    root = mounted.rerender()
+    assert.ok(env.primitiveCalls.includes('Checkbox'), 'expected host primitive Checkbox in List view')
+    const deckTab = findNodes(root, n => n.attrs?.role === 'tab' && textOf(n) === '叠卡')[0]
+    deckTab.attrs.onClick()
+    root = mounted.rerender()
 
     // Open StyleSwitcher Menu in host mode and verify HostMenuWithStyle stamps data-dsh-style + data-window-drag-exclude
     const trigger = findNodes(root, n => n.attrs.id === 'dream-style-switcher')[0]
@@ -673,45 +740,236 @@ test('dsh-dream empty review & journal states provide 1-click copy prompts, tab 
     await new Promise(r => setTimeout(r, 10))
     assert.equal(copiedTexts.at(-1), '做个梦')
 
-    // 3) Interactive Coachmark Tour ("? 引导"): auto-switches tab when needed, renders directional arrow + spotlight, steps 1->4, and persists completion
+    // 3) Interactive Coachmark Tour ("? 引导"): auto-switches back to 待审阅 Deck tab, renders directional arrow + spotlight, steps 1->5, and persists completion
     const tourTrigger = findNodes(root, n => n.tag === 'button' && Object.hasOwn(n.attrs, 'data-dream-tour-trigger'))[0]
     assert.ok(tourTrigger, 'expected topbar "? 引导" trigger button')
     tourTrigger.attrs.onClick()
     root = mounted.rerender()
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-triage-deck'] === 'true').length === 1, 'opening tour switches back to 待审阅 Tactile Triage Deck')
 
     let tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
     assert.ok(tourCard, 'expected coachmark tour popover dialog to mount')
     assert.equal(tourCard.attrs.role, 'dialog')
     assert.equal(tourCard.attrs['aria-modal'], 'false')
-    assert.match(tourCard.textContent, /1 \/ 4/)
-    assert.match(tourCard.textContent, /开启自动整理与自动召回/)
+    assert.match(tourCard.textContent, /1 \/ 5/)
+    assert.match(tourCard.textContent, /叠卡 \/ 列表切换与分拣进度/)
     const arrow = findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-arrow'))[0]
     assert.ok(arrow, 'expected directional arrow inside coachmark card')
 
-    // Advance to Step 2 ("立即整理或发一句「做个梦」") and test inline prompt copy
+    // Step 2: Drag to triage & Space 3D flip
     findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
     root = mounted.rerender()
     tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
-    assert.match(tourCard.textContent, /2 \/ 4/)
-    const inlineDreamCopy = findNodes(tourCard, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '做个梦')[0]
-    assert.ok(inlineDreamCopy, 'Step 2 coachmark card should include inline 1-click "做个梦" copy button')
+    assert.match(tourCard.textContent, /2 \/ 5/)
+    assert.match(tourCard.textContent, /拖拽分拣与 Space 3D 翻面看证据/)
 
-    // Step 3 & Step 4 -> Finish ("完成引导") persists done to localStorage
+    // Step 3: Floating Action Dock
     findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
     root = mounted.rerender()
     tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
-    assert.match(tourCard.textContent, /3 \/ 4/)
+    assert.match(tourCard.textContent, /3 \/ 5/)
+    assert.match(tourCard.textContent, /悬浮操作坞/)
 
+    // Step 4: 13 Bright Styles & 8 Dual-Layer Fonts
     findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
     root = mounted.rerender()
     tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
-    assert.match(tourCard.textContent, /4 \/ 4/)
+    assert.match(tourCard.textContent, /4 \/ 5/)
+    assert.match(tourCard.textContent, /13 套明亮风格与 8 套双层字体/)
+
+    // Step 5: Auto-memory / Accepted / Settings + inline "做个梦" prompt copy -> Finish ("完成引导") persists done to localStorage
+    findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
+    root = mounted.rerender()
+    tourCard = findNodes(root, n => n.attrs['data-tour-card'])[0]
+    assert.match(tourCard.textContent, /5 \/ 5/)
+    assert.match(tourCard.textContent, /自动记忆、已采纳库与设置/)
     assert.match(tourCard.textContent, /完成引导/)
+    const inlineDreamCopy = findNodes(tourCard, n => n.tag === 'button' && n.attrs['data-copy-prompt'] === '做个梦')[0]
+    assert.ok(inlineDreamCopy, 'Step 5 coachmark card should include inline 1-click "做个梦" copy button')
 
     findNodes(tourCard, n => Object.hasOwn(n.attrs || {}, 'data-tour-next'))[0].attrs.onClick()
     root = mounted.rerender()
     assert.equal(findNodes(root, n => n.attrs['data-tour-card']).length, 0, 'coachmark closes on completion')
     assert.equal(env.win.localStorage.getItem('dsh-dream.tour.v1'), 'done', 'completion persists in localStorage')
+  } finally {
+    mounted.cleanup()
+  }
+})
+
+test('dsh-dream Tactile Triage Deck: 3-deep stack, ±90px pointer drag adopt/discard/spring-back, 3D flip back-face, Floating Dock, and Inbox Zero card', async () => {
+  const actions = []
+  let lessons = [
+    {
+      id: 'lesson-1', revision: 2, state: 'candidate', kind: 'procedure',
+      title: 'Card One: Compositor animations only',
+      action: 'Animate transform and opacity for smooth 60fps card flicks.',
+      when: 'Building tactile UI motion',
+      scope: { projectId: 'dsh-dream', global: false }, scopeLabel: '项目 dsh-dream',
+      evidenceIds: ['ev-1'],
+      evidenceSummary: '独立证据 1 条（已读 1 / 仅声明 0）', independentSupportCount: 1,
+      lastValidatedAt: '2026-11-22T01:00:00Z', exceptions: [], applicability: [],
+    },
+    {
+      id: 'lesson-2', revision: 1, state: 'candidate', kind: 'pitfall',
+      title: 'Card Two: Guard interactive descendants on drag',
+      action: 'Skip setPointerCapture when clicking buttons inside draggable cards.',
+      when: 'Handling pointer events on cards',
+      scope: { projectId: 'dsh-dream', global: false }, scopeLabel: '项目 dsh-dream',
+      evidenceIds: ['ev-2'],
+      evidenceSummary: '独立证据 1 条（已读 1 / 仅声明 0）', independentSupportCount: 1,
+      lastValidatedAt: '2026-11-22T02:00:00Z', exceptions: [], applicability: [],
+    },
+    {
+      id: 'lesson-3', revision: 1, state: 'candidate', kind: 'fact',
+      title: 'Card Three: Reduced motion swaps without spin',
+      action: 'Respect prefers-reduced-motion: reduce on 3D card flips.',
+      when: 'Implementing flip transitions',
+      scope: { projectId: 'dsh-email', global: false }, scopeLabel: '项目 dsh-email',
+      evidenceIds: ['ev-3'],
+      evidenceSummary: '独立证据 1 条（已读 1 / 仅声明 0）', independentSupportCount: 1,
+      lastValidatedAt: '2026-11-22T03:00:00Z', exceptions: [], applicability: [],
+    },
+  ]
+  const evidence = [
+    { id: 'ev-1', lessonId: 'lesson-1', kind: 'session', verification: 'read', summary: 'Verified GPU-accelerated transforms in Chromium.', observedAt: '2026-11-22T01:00:00Z' },
+    { id: 'ev-2', lessonId: 'lesson-2', kind: 'session', verification: 'read', summary: 'Observed button clicks cancelled without closest() guard.', observedAt: '2026-11-22T02:00:00Z' },
+    { id: 'ev-3', lessonId: 'lesson-3', kind: 'session', verification: 'read', summary: 'Reduced motion prefers cross-fade over 3D rotateY.', observedAt: '2026-11-22T03:00:00Z' },
+  ]
+  const env = createDreamUiEnv({
+    withPrimitives: false,
+    knowledgeOverride: () => ({
+      lessons,
+      evidence,
+      stats: { lessons: lessons.length, evidence: evidence.length, byState: { candidate: lessons.length } },
+    }),
+    onAction: body => {
+      actions.push(body)
+      if (body.operation === 'review') {
+        lessons = lessons.filter(item => item.id !== body.lessonId)
+      }
+      return { ok: true }
+    },
+  })
+  const mounted = await env.mountWorkbench(true, 'zh-CN')
+  try {
+    let root = mounted.tree
+    const cssText = env.headStyles.map(s => s.textContent).join('\n')
+    assert.match(cssText, /perspective:\s*1100px/)
+    assert.match(cssText, /rotateY\(180deg\)/)
+    assert.match(cssText, /prefers-reduced-motion:\s*reduce/)
+
+    // 1) Progress ribbon & 3-deep physical stack
+    const ribbon = findNodes(root, n => n.attrs?.['data-dream-progress-ribbon'] === 'true')[0]
+    assert.ok(ribbon)
+    assert.match(ribbon.textContent, /待分拣\s*3\s*\/\s*总计\s*3/)
+    assert.equal(findNodes(root, n => n.attrs?.['data-deck-depth'] === '0').length, 1)
+    const depth1 = findNodes(root, n => n.attrs?.['data-deck-depth'] === '1')[0]
+    const depth2 = findNodes(root, n => n.attrs?.['data-deck-depth'] === '2')[0]
+    assert.ok(depth1 && depth2, '3-deep physical card deck should render depth 0, 1, 2')
+    assert.match(String(depth1.attrs.style?.transform), /scale\(0\.95\).*rotate\(2\.2deg\)/)
+    assert.match(String(depth2.attrs.style?.transform), /scale\(0\.90\).*rotate\(-2\.6deg\)/)
+
+    // 2) 3D Flip ("↻ 翻面看证据") reveals back-face evidence, scope & review preview
+    let activeCard = findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0]
+    assert.equal(activeCard.attrs['data-flipped'], 'false')
+    const flipBtn = findNodes(activeCard, n => n.attrs?.['data-dream-flip'] === 'true')[0]
+    assert.ok(flipBtn)
+    flipBtn.attrs.onClick()
+    root = mounted.rerender()
+    activeCard = findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0]
+    assert.equal(activeCard.attrs['data-flipped'], 'true')
+    assert.match(activeCard.textContent, /来源与证据/)
+    assert.match(activeCard.textContent, /范围、条件与例外/)
+    assert.match(activeCard.textContent, /审阅变更预览/)
+    assert.match(activeCard.textContent, /Verified GPU-accelerated transforms/)
+    // Flip back via back-face button
+    findNodes(activeCard, n => n.attrs?.['data-dream-flip-back'] === 'true')[0].attrs.onClick()
+    root = mounted.rerender()
+    assert.equal(findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0].attrs['data-flipped'], 'false')
+
+    // 3) Floating Action Dock navigation (下一张 / 上一张) & Expand Full Details dialog
+    const dock = findNodes(root, n => n.attrs?.['data-dream-action-dock'] === 'true')[0]
+    assert.ok(dock)
+    assert.match(dock.textContent, /丢弃/)
+    assert.match(dock.textContent, /翻面/)
+    assert.match(dock.textContent, /确认采纳/)
+    assert.match(dock.textContent, /展开完整详情/)
+
+    findNodes(dock, n => n.attrs?.['data-dream-command'] === 'next')[0].attrs.onClick()
+    root = mounted.rerender()
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-2')[0], 'Next button advances active card')
+    findNodes(root, n => n.attrs?.['data-dream-command'] === 'prev')[0].attrs.onClick()
+    root = mounted.rerender()
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0], 'Prev button returns to first card')
+
+    findNodes(root, n => n.attrs?.['data-dream-command'] === 'expand')[0].attrs.onClick()
+    root = mounted.rerender()
+    assert.ok(findNodes(root, n => n.attrs?.role === 'dialog')[0], 'Expand Full Details opens modal dialog')
+    const closeBtn = findNodes(root, n => n.tag === 'button' && n.attrs?.['aria-label'] === '关闭')[0]
+    closeBtn.attrs.onClick()
+    root = mounted.rerender()
+
+    // 4) Sub-threshold pointer drag (+55px) shows adopt stamp and springs cleanly back without mutating
+    let capturedId = null
+    const mockTarget = {
+      closest: () => null,
+      setPointerCapture(id) { capturedId = id },
+      releasePointerCapture() {},
+    }
+    activeCard = findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0]
+    activeCard.attrs.onPointerDown({ pointerId: 1, button: 0, clientX: 200, clientY: 200, target: mockTarget, currentTarget: mockTarget })
+    assert.equal(capturedId, 1, 'pointer drag should capture pointer')
+    activeCard.attrs.onPointerMove({ pointerId: 1, clientX: 255, clientY: 202, currentTarget: mockTarget })
+    root = mounted.rerender()
+    const adoptStamp = findNodes(root, n => n.attrs?.['data-dream-stamp'] === 'accept')[0]
+    assert.ok(adoptStamp.attrs.style.opacity > 0.5, 'right drag fades in ✓ 采纳 stamp')
+    findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0].attrs.onPointerUp({ pointerId: 1, clientX: 255, clientY: 202, currentTarget: mockTarget })
+    root = mounted.rerender()
+    assert.equal(actions.length, 0, 'sub-threshold release springs back without adopting')
+    assert.equal(findNodes(root, n => n.attrs?.['data-dream-stamp'] === 'accept')[0].attrs.style.opacity, 0)
+
+    // 5) Right drag past +90px (+115px) triggers real adopt handler
+    activeCard = findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-1')[0]
+    activeCard.attrs.onPointerDown({ pointerId: 2, button: 0, clientX: 200, clientY: 200, target: mockTarget, currentTarget: mockTarget })
+    activeCard.attrs.onPointerMove({ pointerId: 2, clientX: 315, clientY: 200, currentTarget: mockTarget })
+    activeCard.attrs.onPointerUp({ pointerId: 2, clientX: 315, clientY: 200, currentTarget: mockTarget })
+    await new Promise(r => setTimeout(r, 230))
+    root = mounted.rerender()
+    await new Promise(r => setTimeout(r, 30))
+    root = mounted.rerender()
+    assert.equal(actions.length, 1)
+    assert.equal(actions[0].operation, 'review')
+    assert.equal(actions[0].action, 'accept')
+    assert.equal(actions[0].lessonId, 'lesson-1')
+    assert.match(findNodes(root, n => n.attrs?.['data-dream-progress-ribbon'] === 'true')[0].textContent, /待分拣\s*2\s*\/\s*总计\s*3/)
+
+    // 6) Left drag past -90px (-120px) fades in × 丢弃 stamp & triggers real reject handler
+    activeCard = findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-2')[0]
+    activeCard.attrs.onPointerDown({ pointerId: 3, button: 0, clientX: 300, clientY: 200, target: mockTarget, currentTarget: mockTarget })
+    activeCard.attrs.onPointerMove({ pointerId: 3, clientX: 180, clientY: 200, currentTarget: mockTarget })
+    root = mounted.rerender()
+    assert.ok(findNodes(root, n => n.attrs?.['data-dream-stamp'] === 'reject')[0].attrs.style.opacity > 0.8, 'left drag fades in × 丢弃 stamp')
+    findNodes(root, n => n.attrs?.['data-dream-deck-card'] === 'lesson-2')[0].attrs.onPointerUp({ pointerId: 3, clientX: 180, clientY: 200, currentTarget: mockTarget })
+    await new Promise(r => setTimeout(r, 230))
+    root = mounted.rerender()
+    await new Promise(r => setTimeout(r, 30))
+    root = mounted.rerender()
+    assert.equal(actions.length, 2)
+    assert.equal(actions[1].action, 'reject')
+    assert.equal(actions[1].lessonId, 'lesson-2')
+
+    // 7) Accept final card via Floating Action Dock -> renders Inbox Zero celebration card
+    findNodes(root, n => n.attrs?.['data-dream-command'] === 'accept')[0].attrs.onClick()
+    await new Promise(r => setTimeout(r, 230))
+    root = mounted.rerender()
+    await new Promise(r => setTimeout(r, 30))
+    root = mounted.rerender()
+    assert.equal(actions.length, 3)
+    const inboxZero = findNodes(root, n => n.attrs?.['data-dream-inbox-zero'] === 'true')[0]
+    assert.ok(inboxZero, '0 remaining candidates should render Inbox Zero celebration card')
+    assert.match(inboxZero.textContent, /Inbox Zero/)
+    assert.match(inboxZero.textContent, /查看已采纳/)
+    assert.match(inboxZero.textContent, /立即整理/)
   } finally {
     mounted.cleanup()
   }

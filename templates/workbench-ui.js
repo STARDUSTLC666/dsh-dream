@@ -309,6 +309,19 @@ function safeTourQuery(scope, selector) {
   }
 }
 
+function findVisibleTourTarget(scope, selectors) {
+  let firstMatch = null;
+  for (const sel of selectors) {
+    if (!sel) continue;
+    const node = safeTourQuery(scope, sel);
+    if (!node) continue;
+    if (!firstMatch) firstMatch = node;
+    const rect = node.getBoundingClientRect?.();
+    if (!rect || rect.width > 0 || rect.height > 0) return node;
+  }
+  return firstMatch;
+}
+
 function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, font, step, manual, layout: rawLayout, setLayout, onStep, onClose }) {
   const layerRef = useRef(null);
   const cardRef = useRef(null);
@@ -318,37 +331,49 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, font, 
   const tabSelector = suffix => '[id="' + String(tabId || '').replace(/["\\]/g, '\\$&') + '-' + suffix + '"]';
   const steps = [
     {
-      id: 'auto',
-      selector: '[data-tour="dream-auto"]',
+      id: 'deck-ribbon',
+      tab: 'review',
+      selector: '[data-tour="dream-ribbon"]',
       fallback: tabSelector('review'),
-      side: 'right',
-      title: t('开启自动整理与自动召回'),
-      desc: t('日常排障或写代码时保持开启，空闲时会自动从真实会话提取候选经验，无需手动记笔记。'),
-    },
-    {
-      id: 'flush',
-      selector: '[data-tour="dream-flush"]',
       side: 'bottom',
-      title: t('立即整理或发一句「做个梦」'),
-      desc: t('点这里立即整理待处理轮次；也可在下方一键复制指令发到聊天，让助手复盘最近对话并写下反思日记。'),
-      prompt: t('做个梦'),
-      promptLabel: t('复制「做个梦」'),
+      title: t('叠卡 / 列表切换与分拣进度'),
+      desc: t('默认以「叠卡」工作台逐张核对候选经验，并实时显示 Inbox Zero 分拣进度；点左侧按钮可一键切回经典「列表」分栏与批量审阅。'),
     },
     {
-      id: 'review',
-      selector: '[data-tour="dream-list"]',
-      fallback: tabSelector('review'),
+      id: 'deck-card',
+      tab: 'review',
+      selector: '[data-tour="dream-card"]',
+      fallback: '[data-tour="dream-list"]',
       side: 'right',
-      title: t('先核对原文证据，再确认采纳'),
-      desc: t('所有候选默认扣留在「待审阅」，展示原话出处、适用范围与密钥脱敏预览；只有你点「确认采纳」才会真正生效。'),
+      title: t('拖拽分拣与 Space 3D 翻面看证据'),
+      desc: t('按住卡片向右拖采纳、向左拖丢弃，松手未达阈值会自动回弹；按 Space 或点「翻面看证据」3D 翻转查看会话原文、适用范围与脱敏预览。'),
     },
     {
-      id: 'bridge',
-      selector: tabSelector('bridge'),
+      id: 'deck-dock',
+      tab: 'review',
+      selector: '[data-tour="dream-dock"]',
+      fallback: '[data-tour="dream-flush"]',
+      side: 'top',
+      title: t('悬浮操作坞：丢弃、翻面、采纳与展开'),
+      desc: t('底部悬浮操作坞支持点击与键盘快捷键（D 丢弃 / Space 翻面 / K·J 切卡 / A 确认采纳），点「展开完整详情」可处理冲突或对比修订差异。'),
+    },
+    {
+      id: 'style-font',
+      selector: '[data-tour="dream-style"]',
+      fallback: '.dsh-style-switcher',
+      side: 'bottom',
+      title: t('13 套明亮风格与 8 套双层字体'),
+      desc: t('随时切换 13 套明亮/柔和工作台风格与 8 套中英双层字体（默认「幼圆等宽」），并跨所有 DSH 插件自动同步。'),
+    },
+    {
+      id: 'auto-accepted',
+      selector: '[data-tour="dream-auto"]',
       fallback: '[data-tour="dream-tabs"]',
       side: 'bottom',
-      title: t('预览写入 AGENTS.md 与一键回滚'),
-      desc: t('在「已采纳」可将经验生成差异预览写入项目 AGENTS.md，每次写入都记录在「规则记录」中并支持随时回滚。'),
+      title: t('自动记忆、已采纳库与设置'),
+      desc: t('开启「自动整理」与「自动取回」让空闲会话自动提炼候选；确认采纳的经验沉淀在「已采纳」并可差异预览写入 AGENTS.md，也可前往「设置」调整预算与语言。'),
+      prompt: t('做个梦'),
+      promptLabel: t('复制「做个梦」'),
     },
   ];
   const current = steps[Math.max(0, Math.min(steps.length - 1, step))];
@@ -379,10 +404,16 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, font, 
   }, []);
 
   useEffect(() => {
+    if (current.tab && activeTab !== current.tab) {
+      changeTab?.(current.tab);
+    }
+  }, [current.tab, activeTab]);
+
+  useEffect(() => {
     function measure() {
       const scope = rootRef?.current || (typeof document !== 'undefined' ? document : null);
       if (!scope || typeof scope.querySelector !== 'function') return;
-      const target = safeTourQuery(scope, current.selector) || safeTourQuery(scope, current.fallback);
+      const target = findVisibleTourTarget(scope, [current.selector, current.fallback, tabSelector('review')]);
       setLayout(computeCoachmarkLayout(target, current.side, cardRef.current));
     }
     measure();
@@ -621,6 +652,7 @@ function SkinSwitcher({ value, onChange, font, onFontChange }) {
   const lang = languageOf();
   return h(DreamStyleSwitcher, {
     id: 'dream-style-switcher',
+    dataTour: 'dream-style',
     style: value,
     font,
     onChange,
@@ -717,6 +749,7 @@ function DreamChrome({
   }, [paletteActions]);
 
   function openTour(manual = true) {
+    if (activeTab !== 'review') changeTab?.('review');
     setTour({ open: true, step: 0, manual: Boolean(manual) });
   }
   function closeTour(restoreFocus = false) {

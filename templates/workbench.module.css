@@ -101,22 +101,38 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
 }
 .tabsWrap > :global(.dsh-tab-indicator) {
   pointer-events: none;
 }
-.topbar .view-tabs {
+.topbar .view-tabs,
+.topbar .view-tabs :global([role='tablist']) {
   position: relative;
   z-index: 1;
+  display: inline-flex !important;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  width: auto;
   min-width: 0;
+  max-width: 100%;
+  grid-template-columns: none !important;
   background: var(--dream-layer-2);
   border-radius: calc(var(--dream-row-radius) + 1px);
 }
-.view-tabs [role='tab'] { padding-inline: 8px; font-size: 12px; }
-.tabLabel { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.tabCount { color: var(--dream-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.topbar .view-tabs :global([role='tab']) {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: max-content;
+  padding-inline: 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tabLabel { display: inline-flex; align-items: center; gap: 5px; flex: none; white-space: nowrap; }
+.tabCount { flex: none; color: var(--dream-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .topbar-right { gap: 6px; }
 
 .control { flex-shrink: 0; max-width: 100%; }
@@ -276,7 +292,7 @@
   gap: 8px;
   flex-shrink: 0;
 }
-.list-toolbar { min-height: 42px; padding: 7px 12px; border-block-end: var(--dream-hairline); }
+.list-toolbar { min-height: 42px; padding: 7px 12px; border-block-end: var(--dream-hairline); flex-wrap: wrap; }
 .search { width: 100%; min-width: 0; }
 .list-toolbar .search { flex: 1; }
 .search input::placeholder { color: var(--dream-secondary); }
@@ -795,6 +811,23 @@
   .cand-row[data-exit='reject'] { animation: dshDiscardCollapse 0.28s var(--dsh-ease-out) forwards; transform-origin: left center; pointer-events: none; }
 }
 
+@container dream (max-width: 1180px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding-block: 6px;
+  }
+  .topbar-left {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+  .topbar-right {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    margin-inline-start: auto;
+  }
+}
 @container dream (max-width: 940px) {
   .pane-rail { width: 196px; }
   .workbench-grid[data-review='true'] { --rail-space: 196px; }
@@ -821,8 +854,502 @@
   .settingsPage, .documentPage { padding: 12px; }
 }
 
+/* Tactile Triage Deck (Default 待审阅 mode) */
+.triageViewToggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+.triageViewSegmented {
+  width: auto;
+}
+.triageDesk {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 24px 20px;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  background:
+    radial-gradient(ellipse 84% 58% at 50% 14%, color-mix(in oklab, var(--dream-accent) 7%, transparent), transparent 68%),
+    radial-gradient(ellipse 68% 55% at 50% 88%, color-mix(in oklab, var(--dream-layer-2) 60%, transparent), transparent 72%),
+    var(--dream-canvas);
+}
+.app-shell:is([data-dsh-style='glass'], [data-dsh-style='claude'], [data-dsh-style='blueprint'], [data-dsh-style='risograph'], [data-dsh-style='songhui'], [data-dsh-style='frutiger']) .triageDesk {
+  background:
+    radial-gradient(ellipse 80% 56% at 50% 16%, color-mix(in oklab, var(--dream-accent) 7%, transparent), transparent 68%);
+}
+.triageRibbon {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(1060px, 100%);
+  margin-inline: auto;
+  padding: 10px 14px;
+  border-radius: var(--dream-card-radius);
+  border: var(--dream-hairline);
+  background: color-mix(in oklab, var(--dream-paper) 90%, var(--dream-layer-1));
+  box-shadow: var(--dsh-card-shadow, 0 2px 10px rgba(15, 23, 42, 0.04));
+}
+.triageRibbonMain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.triageRibbonLead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.triageProgressWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+.triageProgressLabel {
+  font-size: 12px;
+  color: var(--dream-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.triageProgressLabel strong {
+  color: var(--dream-ink);
+  font-weight: 700;
+}
+.triageProgressTrack {
+  flex: 1 1 96px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--dream-ink) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--dream-ink) 8%, transparent);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+  overflow: clip;
+  position: relative;
+}
+.triageProgressFill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--dream-accent), color-mix(in oklab, var(--dsw-alias-state-success-primary, #1f7a4c) 72%, var(--dream-accent)));
+  transform-origin: left center;
+  transition: transform 320ms var(--dsh-ease-spring);
+  will-change: transform;
+}
+.triageRibbonTools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.triageSearch {
+  width: 184px;
+}
+.triageAutoInline {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--dream-row-radius);
+  background: var(--dream-layer-1);
+  border: var(--dream-hairline);
+}
+.triageAutoInline .switches {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.triageAutoInline .switchRow {
+  gap: 6px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.triageFilterBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.triageFilterPill {
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.triageAlert {
+  width: min(680px, 100%);
+  margin-inline: auto;
+  border-radius: var(--dream-row-radius);
+  border: 1px solid color-mix(in oklab, var(--dsw-alias-state-error-primary, #b9382c) 32%, transparent);
+  background: color-mix(in oklab, var(--dsw-alias-state-error-primary, #b9382c) 8%, var(--dream-paper));
+}
+.deckStage {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  perspective: 1100px;
+  padding: 12px 12px 26px;
+  min-height: 396px;
+  position: relative;
+}
+.deckStack {
+  position: relative;
+  width: min(680px, 100%);
+  min-height: 368px;
+  display: grid;
+  place-items: stretch;
+  transform-style: preserve-3d;
+}
+.deckCardShell {
+  grid-area: 1 / 1;
+  position: relative;
+  border-radius: calc(var(--dream-card-radius) + 4px);
+  will-change: transform, opacity;
+  transform-origin: 50% 80%;
+}
+.deckCardActive {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  transition: transform 280ms var(--dsh-ease-spring), opacity 220ms ease;
+}
+.deckCardDragging {
+  cursor: grabbing;
+}
+.deckCardBackdrop {
+  pointer-events: none;
+  border: var(--dream-hairline);
+  background: var(--dream-paper);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+  overflow: clip;
+  transition: transform 320ms var(--dsh-ease-spring), opacity 260ms ease;
+}
+.deckCardBackdropInner {
+  padding: 18px 22px;
+  display: grid;
+  gap: 10px;
+  opacity: 0.72;
+}
+.deckCardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.deckBackdropTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--dream-secondary);
+}
+.deckCardFlipper {
+  position: relative;
+  width: 100%;
+  min-height: 368px;
+  transform-style: preserve-3d;
+  transition: transform 460ms var(--dsh-ease-spring);
+}
+.deckCardFlipper[data-flipped='true'] {
+  transform: rotateY(180deg);
+}
+.deckCardFace {
+  border-radius: calc(var(--dream-card-radius) + 4px);
+  border: var(--dream-hairline);
+  background: var(--dream-paper);
+  box-shadow:
+    0 20px 44px -12px rgba(15, 23, 42, 0.14),
+    0 4px 12px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 color-mix(in oklab, #ffffff 65%, transparent);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow: clip;
+}
+.deckCardFront {
+  position: relative;
+  min-height: 368px;
+  max-height: min(58vh, 480px);
+}
+.deckCardBack {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  pointer-events: none;
+}
+.deckCardFlipper[data-flipped='true'] .deckCardFront {
+  pointer-events: none;
+}
+.deckCardFlipper[data-flipped='true'] .deckCardBack {
+  pointer-events: auto;
+}
+.deckStamp {
+  position: absolute;
+  top: 22px;
+  z-index: 6;
+  pointer-events: none;
+  padding: 6px 14px;
+  border-radius: var(--dream-row-radius);
+  border: 2.5px solid currentColor;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(4px);
+  transition: opacity 90ms linear;
+}
+.deckStampAdopt {
+  left: 22px;
+  transform: rotate(-12deg);
+  color: var(--dsw-alias-state-success-primary, #15803d);
+  background: color-mix(in oklab, var(--dsw-alias-state-success-primary, #15803d) 12%, var(--dream-paper));
+}
+.deckStampDiscard {
+  right: 22px;
+  transform: rotate(12deg);
+  color: var(--dsw-alias-state-error-primary, #b91c1c);
+  background: color-mix(in oklab, var(--dsw-alias-state-error-primary, #b91c1c) 12%, var(--dream-paper));
+}
+.deckCardHeader {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 18px;
+  border-block-end: var(--dream-hairline);
+  background: color-mix(in oklab, var(--dream-layer-1) 65%, var(--dream-paper));
+}
+.deckCardHeaderActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.deckSignalBanner {
+  margin: 10px 18px 0;
+  border-radius: var(--dream-row-radius);
+  border: 1px solid color-mix(in oklab, var(--dsw-alias-state-warn-primary, #b45309) 35%, transparent);
+  background: color-mix(in oklab, var(--dsw-alias-state-warn-primary, #b45309) 10%, transparent);
+  color: var(--dsw-alias-state-warn-label, var(--dream-ink));
+}
+.deckCardBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 22px;
+  user-select: text;
+}
+.deckTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 20px;
+  line-height: 1.32;
+  font-weight: 700;
+  color: var(--dream-ink);
+  overflow-wrap: anywhere;
+}
+.deckBackTitle {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--dream-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 340px;
+}
+.deckActionBox {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border-radius: var(--dream-row-radius);
+  border-inline-start: 3px solid var(--dream-accent);
+  background: var(--dream-layer-1);
+}
+.deckSectionLabel {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dream-tertiary);
+}
+.deckActionText {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--dream-ink);
+  overflow-wrap: anywhere;
+}
+.deckMetaLine {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--dream-secondary);
+  overflow-wrap: anywhere;
+}
+.deckTeaserGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-block-start: auto;
+  padding-block-start: 6px;
+}
+.deckTeaserCell {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  border-radius: var(--dream-row-radius);
+  border: var(--dream-hairline);
+  background: color-mix(in oklab, var(--dream-layer-1) 55%, var(--dream-paper));
+}
+.deckTeaserVal {
+  font-size: 12px;
+  color: var(--dream-secondary);
+  overflow-wrap: anywhere;
+}
+.deckGlobalConfirm {
+  flex: none;
+  padding: 8px 18px;
+  border-block-start: var(--dream-hairline);
+  background: color-mix(in oklab, var(--dsw-alias-state-warn-primary, #b45309) 7%, var(--dream-paper));
+}
+.deckCardHint {
+  flex: none;
+  padding: 7px 18px;
+  border-block-start: var(--dream-hairline);
+  background: color-mix(in oklab, var(--dream-layer-1) 55%, var(--dream-paper));
+  color: var(--dream-tertiary);
+  font-size: 11px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.deckBackScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px 20px;
+  user-select: text;
+}
+.deckDockWrap {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding-block: 2px 4px;
+}
+.deckDock {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: var(--dream-hairline);
+  background: color-mix(in oklab, var(--dream-paper) 94%, var(--dream-layer-1));
+  box-shadow: var(--dsw-elevation-prominent, 0 12px 30px rgba(15, 23, 42, 0.12));
+}
+.deckNavCluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-inline: 6px;
+  border-inline: var(--dream-hairline);
+}
+.deckCounter {
+  font-size: 11.5px;
+  color: var(--dream-secondary);
+  font-variant-numeric: tabular-nums;
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+.deckSkeletonCard {
+  width: min(640px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  border-radius: calc(var(--dream-card-radius) + 4px);
+  border: var(--dream-hairline);
+  background: var(--dream-paper);
+}
+.inboxZeroCard {
+  width: min(560px, 100%);
+  padding: 28px 26px;
+  border-radius: calc(var(--dream-card-radius) + 4px);
+  border: var(--dream-hairline);
+  background: var(--dream-paper);
+  box-shadow: 0 18px 40px -12px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+.inboxZeroCrest {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--dsw-alias-state-success-primary, #1f7a4c) 14%, transparent);
+  color: var(--dsw-alias-state-success-primary, #1f7a4c);
+}
+.inboxZeroBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--dsw-alias-state-success-primary, #1f7a4c);
+  background: color-mix(in oklab, var(--dsw-alias-state-success-primary, #1f7a4c) 12%, transparent);
+}
+.inboxZeroTitle {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--dream-ink);
+}
+.app-shell[data-dsh-style='pixel8bit'] :is(.triageRibbon, .deckCardShell, .deckCardFace, .deckDock, .inboxZeroCard, .triageProgressTrack) {
+  border-radius: 0;
+  border-width: 2px;
+}
+.app-shell[data-dsh-style='pixel8bit'] :is(.deckCardFace, .deckDock, .inboxZeroCard) {
+  box-shadow: 4px 4px 0px #1e2826;
+}
+.app-shell[data-dsh-style='win98'] :is(.triageRibbon, .deckCardShell, .deckCardFace, .deckDock, .inboxZeroCard) {
+  border-radius: 0;
+}
+.app-shell[data-dsh-style='risograph'] .deckCardFace {
+  border: 2px solid #18181b;
+  box-shadow: 6px 6px 0px rgba(255, 62, 127, 0.28), 10px 10px 0px rgba(37, 99, 235, 0.16);
+}
+
+@container dream (max-width: 760px) {
+  .triageDesk { padding: 10px 12px 16px; }
+  .triageSearch { width: 100%; }
+  .deckTeaserGrid { grid-template-columns: 1fr; }
+  .deckDock { border-radius: var(--dream-card-radius); }
+  .deckNavCluster { border-inline: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cand-row, .verify-block, .settings-card { animation: none !important; }
   :is(.cand-row, .verify-block, .settings-card, .control-card, .redacted-token):hover { transform: none; translate: none; }
+  .triageProgressFill, .deckCardShell, .deckCardActive, .deckCardBackdrop, .deckCardFlipper, .deckStamp { transition: none !important; }
+  .deckCardFlipper[data-flipped='true'], .deckCardBack { transform: none !important; }
+  .deckCardFlipper[data-flipped='true'] .deckCardFront { opacity: 0; visibility: hidden; }
+  .deckCardFlipper[data-flipped='false'] .deckCardBack { opacity: 0; visibility: hidden; }
   :global(::view-transition-old(dsh-dream-workbench)), :global(::view-transition-new(dsh-dream-workbench)) { animation: none; }
 }

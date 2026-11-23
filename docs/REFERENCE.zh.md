@@ -2,7 +2,7 @@
 
 # dsh-dream
 
-[English](../README.en.md)
+[English](./REFERENCE.en.md)
 
 ![dsh-dream 鲸鱼娘插件封面](https://raw.githubusercontent.com/STARDUSTLC666/dsh-dream/master/assets/cover-whale-girl.png)
 
@@ -50,7 +50,7 @@ dsh plugin --profile desktop add @stardustlc/dsh-dream
 
 ## 依赖与配置
 
-默认使用本机 DSH 会话与日记目录，支持隐私脱敏。自动功能通过官方会话事件和动态上下文接口接入；操作面板使用认证 Connection 通道。已验证 0.2.0-rc.2 与 0.2.1-alpha.1；缺少自动接口的宿主保留工具与技能入口。
+默认使用本机 DSH 会话与日记目录，支持隐私脱敏。自动功能通过官方会话事件和动态上下文接口接入，支持可选的完成前验证软门控（`enableVerificationGate`，默认关闭）及 `/dream`、`/dream-learn`、`/dream-status` 原生斜杠命令；操作面板使用认证 Connection 通道。当前要求 DSH `>=0.2.2-rc.3`（兼容 0.2.0-rc.2 与 0.2.1-alpha.1 起引入的自动接口）；缺少自动接口的宿主保留工具与技能入口。
 
 详细配置、工具参数与排错见[使用说明](USAGE.md)。从源码独立开发时，Node 要求以 [package.json](../package.json) 为准。
 
@@ -63,7 +63,7 @@ dsh plugin --profile desktop add @stardustlc/dsh-dream
 
 ## 插件更新
 
-需要 DSH 0.2.2-rc.3 或更新版本。更新控件直接位于原有工作台内容末尾；没有工作台的插件，位于原生插件详情页底部。检查、更新记录和偏好在原地展开，不增加独立更新页面或设置菜单。自动检查默认开启；**自动安装默认关闭**，明确授权后才会在空闲且没有未保存修改时安装兼容的稳定补丁。开关按插件独立保存，可关闭、推迟或忽略提醒；不会强制重启 DSH、升级 DSH 本体或替换本地源码安装。Suite 组件在当前页面底部明确说明并操作 Suite 整包更新。
+需要 DSH 0.2.2-rc.3 或更新版本。更新控件直接位于原有工作台内容末尾；没有工作台的插件，位于原生插件详情页底部。检查、更新记录和偏好在原地展开，不增加独立更新页面或设置菜单。自动检查默认开启；**自动安装默认关闭**，明确授权后才会在空闲且没有未保存修改时安装兼容版本更新（默认包含兼容次版本与补丁更新，也可切换为仅补丁）。开关按插件独立保存，可关闭、推迟或忽略提醒；不会强制重启 DSH、升级 DSH 本体或替换本地源码安装。Suite 组件在当前页面底部明确说明并操作 Suite 整包更新。
 
 旧版用户先在官方插件管理中手动更新一次，之后才会获得此入口。发布到 npm 不会直接替换用户已经安装的版本。
 

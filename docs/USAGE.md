@@ -24,7 +24,7 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 
 安装后正常完成任务即可，不需要记住「做梦」触发词。仅观察新产生的真人主会话事件：完成轮次出现明确偏好/纠正，或至少两次非 Dream 工具调用且有可见助手总结时，才会在预算内调用当前会话模型整理。它不扫描旧会话、子代理或失败轮次。
 
-「设置 → 梦境日记 → 日记」提供自动整理、自动取回的默认开关、今日次数、最近原因和待审阅入口。展开「聊天设置与整理预算」，可针对已观察到的聊天分别控制「使用记忆」与「贡献记忆」；独立设置优先于全局默认。关闭贡献清理该聊天尚未整理的片段，已有经验仍保留。控制值保存在 `journalDir/automatic/state.json`，重启后继续保留。
+工作台「设置」页（以及「待审阅」顶带快捷开关）提供自动整理、自动取回与完成前验证软门控（`enableVerificationGate`，默认关闭）的开关、今日次数、最近原因和待审阅入口。展开「聊天设置与整理预算」，可针对已观察到的聊天分别控制「使用记忆」与「贡献记忆」；独立设置优先于全局默认。关闭贡献清理该聊天尚未整理的片段，已有经验仍保留。控制值保存在 `journalDir/automatic/state.json`，重启后继续保留。
 
 0.9.0 起默认等待 60 秒安静时间，同项目、提供商和模型最多合并 4 轮进行一次整理。冷却和当日预算用完时保留轮次等待恢复，队列最多 32 轮、24 小时；容量不足先移除最早未被处理的轮次，过期片段清理并显示计数。新输入暂停辅助调用并保留未完成轮次。可以点「现在整理待处理轮次」跳过安静时间，但不能绕过主任务优先、冷却或每日预算。重启后会等待新的安静时间再继续，不扫描旧会话历史。
 
@@ -36,7 +36,17 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 
 自动取回不额外调用模型，只把有独立来源、已采纳且与当前任务/项目/平台匹配的少量经验加入动态上下文，最多 3 条、3000 字符，保留适用条件和例外。候选、过期、冲突、拒绝经验不注入。依赖版本未知，因此版本限定经验留给显式 `dream_context`，请提供已确认的包名和版本。自动功能不写日记、不采纳经验，也不修改 AGENTS.md。
 
-官方 0.2.0-rc.2 与 0.2.1-alpha.1 的会话事件、Agent Inbox 和 PromptContext 接口已验证。接口缺失的旧宿主显示不可用，工具与技能照常可用。
+当前要求官方 DSH `>=0.2.2-rc.3`；会话事件、Agent Inbox、PromptContext 与斜杠命令接口沿用兼容（历史验证涵盖 0.2.0-rc.2、0.2.1-alpha.1 与 0.2.2-rc.3）。接口缺失的旧宿主显示不可用，工具与技能照常可用。
+
+## 原生斜杠命令（0.18.0+）
+
+宿主提供 `commands` 服务时，插件自动注册三个聊天框斜杠命令（严格遵守人工审阅边界与隐私脱敏）：
+
+| 命令 | 参数 | 作用 |
+| :-- | :-- | :-- |
+| `/dream` | `[focus]`（可选） | 触发当前会话做梦复盘，或查看待整理队列摘要 |
+| `/dream-learn` | `[lesson text]`（可选） | 将要点记录为一条待审阅候选经验，或引导从当前会话提炼候选 |
+| `/dream-status` | 无 | 查看 Dream 记忆状态、待整理队列、观测计数与 DSH 原生能力接入情况 |
 
 ## 梦境日记面板（0.4.0+）
 
@@ -64,8 +74,8 @@ dsh plugin --profile web remove @stardustlc/dsh-dream
 | `dream_recall` | 忆梦：关键词检索梦境 | `query` 必填 |
 | `dream_bridge` | 渡梦：把已采纳、范围匹配的经验写入 AGENTS.md（`preview` 预览 / `apply` 应用 / `rollback` 回滚；省略模式只读预览） | `mode` 可选；`path` / `lessonIds` / `maxLessons` / `expectedSha256` / `previewId` / `projectId` |
 | `dream_health` | 自检：会话目录/梦境计数/配置汇总 | 无 |
-| `dream_learn` | 提交候选技术经验及证据（校验 / 脱敏 / 去重 / 按范围保存；无证据只能留在候选） | `kind`、`title`、`action`、`when` 必填；`evidence` 可选（缺省 `[]`） |
-| `dream_context` | 任务前取回少量适用经验（只读；候选默认不注入） | `query` 必填；`projectId` / `workspaceRoot` / `limit` / `maxChars` / `packageName` / `packageVersion` / `platform` / `includeCandidates` 可选 |
+| `dream_learn` | 提交候选技术经验及证据（校验 / 脱敏 / 去重 / 按范围保存；无证据只能留在候选） | `kind`、`title`、`action`、`when` 必填；`exceptions` / `rationale` / `problemKey` / `files` / `prevents` / `origin` / `carriedFrom` / `supersedes` / `projectId` / `workspaceRoot` / `global` / `applicability` / `evidence`（缺省 `[]`）可选 |
+| `dream_context` | 任务前取回少量适用经验（只读；候选默认不注入） | `query` 必填；`projectId` / `workspaceRoot` / `limit` / `maxChars` / `packageName` / `packageVersion` / `platform` / `activeFiles` / `currentModel` / `includeCandidates` 可选 |
 | `dream_review` | 审阅与状态流转：建议人工采纳 / 驳回 / 标记过期 / 标记冲突 / 处理冲突 / 补充证据 / 重新送审 | `action`、`lessonId`、`expectedRevision` 必填 |
 
 处理冲突时必须填写 resolution（prefer / drop / merge）、affectedIds 与 note；所有当事方一并校验并在同一事件中保存，校验失败不改任何经验。attach-evidence 核验并附加来源，reopen 把驳回经验重新置为候选。
@@ -132,6 +142,9 @@ dream_review { action: "accept", lessonId: "lesson-…", expectedRevision: 1 }
     autoMaxInputChars: 12000   # 辅助请求 system + JSON 字符预算（1000-20000）
     autoMaxOutputTokens: 1200  # 输出预算（200-2000）
     autoTimeoutMs: 30000       # 请求超时（1000-60000）
+    enableVerificationGate: false  # 完成前单次软门控（DSH agent/turn-stopping，默认关闭；可在设置页切换）
+    # trustedRemoteAddresses: []   # 反向代理来源地址白名单（默认空 = 只认回环；也可用 DSH_DREAM_TRUSTED_REMOTE_ADDRESSES）
+    # trustedHosts: []             # 反向代理 Host 白名单（默认空 = 只认 localhost；也可用 DSH_DREAM_TRUSTED_HOSTS）
 ```
 
 ## 隐私保护（默认开启）

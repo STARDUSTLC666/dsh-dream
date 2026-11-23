@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.19.1 (2026-11-23)
+
+- 加固认证操作路由守卫：对精确桌面来源 `Origin: dsh-app://app` 放行 `Sec-Fetch-Site` 校验，并拒绝 `Origin: null` 与非 `http(s):` 伪造来源。
+- 同步更新 `package.json` 简介（13 套明亮风格 × 8 套双层字体、8 种语言与叠卡分拣工作台）及全套中英文文档：补充 `enableVerificationGate`、`/dream` `/dream-learn` `/dream-status` 原生斜杠命令、`dream_learn`/`dream_context` SIM 参数、全部 18 项配置键与 DSH `>=0.2.2-rc.3` 宿主基线。
+- Harden the authenticated actions route guard to exempt exact `Origin: dsh-app://app` from `Sec-Fetch-Site` checks while rejecting opaque `null` and non-`http(s):` origins.
+- Update `package.json` description (13 styles × 8 fonts, 8 locales, Tactile Triage Deck) and align bilingual README/USAGE/REFERENCE/WORKBENCH docs with `enableVerificationGate`, native slash commands (`/dream`, `/dream-learn`, `/dream-status`), SIM tool parameters, all 18 config keys, and the `>=0.2.2-rc.3` host baseline.
+
 ## 0.19.0 (2026-11-22)
 
 - **全新「待审阅叠卡（Tactile Triage Deck）」默认工作台**：待审阅面板默认以实体卡片叠堆与顶部 Inbox Zero 进度带呈现候选经验，支持直接右拖采纳 / 左拖丢弃、`Space` 3D 翻面核查来源证据与 `rationale`/`files`/`prevents` 元信息、以及底部悬浮操作坞（`丢弃 (D)` / `翻面 (Space)` / `上一张 · 下一张` / `确认采纳 (A)` / `展开完整详情`）；顶栏提供 `叠卡 / 列表` 一键切换，可随时切回经典三栏列表视图；优化英文宽标签下顶栏选项卡自适应排版，避免窄面板重叠。

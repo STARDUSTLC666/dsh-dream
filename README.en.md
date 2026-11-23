@@ -24,7 +24,8 @@ Native task-memory workbench for DeepSeek Harness (`>=0.2.2-rc.3`): opens in the
 | **Tactile Triage Deck** | Review 3-deep candidate cards — drag right to accept / left to discard, press `Space` to 3D-flip for source evidence & secret redaction, Floating Action Dock (`D`/`Space`/`K·J`/`A`) & Inbox Zero progress; 1-click classic `List` view |
 | **Evidence-First Review** | Candidates are never auto-accepted; inspect session quotes, scope, conditions, exceptions, and secret redaction masks before approving |
 | **`AGENTS.md` Codify & Rollback** | Preview diffs before writing durable project conventions into `AGENTS.md`, with audit logs and 1-click rollback in **Rule history** |
-| **Budgeted Collect & Recall** | Separate switches for idle collection and task-relevant recall within your configured model quota |
+| **Budgeted Collect & Recall** | Separate switches for idle collection and task-relevant recall within your configured model quota, plus an opt-in pre-completion verification gate (`enableVerificationGate`, off by default) |
+| **Native Slash Commands** | Chat commands `/dream` (reflect/digest), `/dream-learn` (queue a candidate lesson), and `/dream-status` (inspect queue & host capabilities) while keeping the human-review boundary |
 | **Locales & Synced UI** | 8 UI languages, command palette switching, `? Tour` spotlight guide, 13 bright styles & 8 fonts (`YouYuan Mono` default) |
 
 ## Review before reuse
@@ -50,10 +51,11 @@ For the web profile, replace `desktop` with `web` and restart DSH. Requires DSH 
 3. **Triage on the Deck**: Drag right to accept or left to discard, press `Space` to 3D-flip for verbatim quotes & redaction previews, or switch to **List** for batch review.
 4. **Auto-recall & codify**: Approved lessons surface automatically in matching tasks; promote lasting rules to `AGENTS.md` with diff preview and 1-click rollback.
 
-### Ready-to-copy prompts
+### Ready-to-copy prompts & native slash commands
 
-- **Reflective journal**: `Have a dream` — replay recent sessions and record a reflection entry in **Journal**.
-- **Distill lessons**: `Review our recent conversation and distill reusable project lessons` — extract source-linked candidates into **Awaiting review**.
+- **Reflective journal**: `Have a dream` or `/dream [focus]` — replay recent sessions and record a reflection entry in **Journal** or inspect pending consolidation.
+- **Distill lessons**: `Review our recent conversation and distill reusable project lessons` or `/dream-learn [lesson text]` — extract source-linked candidates into **Awaiting review**.
+- **Check memory status**: `/dream-status` — view queue counts, observation metrics, and connected DSH native features.
 
 ## Before you start
 

@@ -57,6 +57,23 @@ test('the official HTTP bridge internal URL is checked against the preserved Hos
   assert.equal((await env.handler(request)).status, 200)
 })
 
+test('DSH Desktop origin dsh-app://app is accepted even with sec-fetch-site: cross-site, while opaque and lookalike origins are rejected', async () => {
+  const env = fixture()
+  const desktopReq = new Request('http://dsh.internal' + DREAM_ACTION_ROUTE, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-dsh-dream-action': '1', origin: 'dsh-app://app', 'sec-fetch-site': 'cross-site' },
+    body: JSON.stringify({ operation: 'review', action: 'accept', lessonId: env.lesson.id, expectedRevision: 1 }),
+  })
+  assert.equal((await env.handler(desktopReq)).status, 200)
+  for (const badHeaders of [
+    { origin: 'null' },
+    { origin: 'dsh-app://evil', 'sec-fetch-site': 'cross-site' },
+    { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+  ]) {
+    assert.equal((await env.call({ operation: 'review', action: 'reject', lessonId: env.lesson.id, expectedRevision: 2 }, badHeaders)).status, 403)
+  }
+})
+
 test('feedback persists, does not accept or validate a lesson, and retries are idempotent', async () => {
   const env = fixture()
   const body = { operation: 'feedback', lessonId: env.lesson.id, expectedRevision: 1, vote: 'not-applicable', requestId: 'feedback_retry_test', note: '当前任务不适用' }

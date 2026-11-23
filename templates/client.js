@@ -403,10 +403,10 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             }, [locale]);
         }
         // 相对路径按 document.baseURI 解析：反代挂在 /tools/dsh/ 这类前缀下也不会打偏。
-        const ROUTE = "_dsh/dsh-dream/journal";
+        const ROUTE = "api/dsh-dream/journal";
         const ACTION_ROUTE = "api/dsh-dream/actions";
-        const KNOWLEDGE_ROUTE = "_dsh/dsh-dream/knowledge";
-        const BRIDGE_ROUTE = "_dsh/dsh-dream/bridge";
+        const KNOWLEDGE_ROUTE = "api/dsh-dream/knowledge";
+        const BRIDGE_ROUTE = "api/dsh-dream/bridge";
         const KNOWLEDGE_LIMIT = 50;
         const BRIDGE_LIMIT = 50;
         const KNOWLEDGE_STATES = ["candidate", "usable", "disputed", "stale", "rejected"];
@@ -458,7 +458,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
             }
             return t("请求失败（HTTP ") + String(status) + "）";
         }
-        /** GET /_dsh/dsh-dream/journal：契约体 { dreams, stats, query, limit }。 */
+        /** GET /api/dsh-dream/journal：契约体 { dreams, stats, query, limit }。 */
         async function fetchJournal(query, limit) {
             const params = ["limit=" + String(limit)];
             if (query !== "")
@@ -492,7 +492,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 limit: typeof data.limit === "number" ? data.limit : limit,
             };
         }
-        /** GET /_dsh/dsh-dream/knowledge：只读契约体 { lessons, evidence, stats }，无查询参数。 */
+        /** GET /api/dsh-dream/knowledge：只读契约体 { lessons, evidence, stats }，无查询参数。 */
         async function fetchKnowledge() {
             const init = { credentials: "same-origin" };
             if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function")
@@ -521,7 +521,7 @@ window.__ModuleLoader__.load({ id: "@stardustlc/dsh-dream", factory: (require) =
                 stats: data.stats !== null && typeof data.stats === "object" ? data.stats : null,
             };
         }
-        /** GET /_dsh/dsh-dream/bridge：只读契约体 { records, stats }，无查询参数。 */
+        /** GET /api/dsh-dream/bridge：只读契约体 { records, stats }，无查询参数。 */
         async function fetchBridgeRecords() {
             const init = { credentials: "same-origin" };
             if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function")

@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.19.2 (2026-11-23)
+
+- 修复已连接 DSH 时经验、日记和规则写入记录仍返回 403 的问题。工作台通过宿主已鉴权的连接读取，沿用只读、访问范围和脱敏规则。
+- Restore access to lessons, journal and rule-write history in a connected DSH workbench. Reads use the authenticated host connection and retain read-only access, host checks and redaction.
+
 ## 0.19.1 (2026-11-23)
 
 - 加固认证操作路由守卫：对精确桌面来源 `Origin: dsh-app://app` 放行 `Sec-Fetch-Site` 校验，并拒绝 `Origin: null` 与非 `http(s):` 伪造来源。

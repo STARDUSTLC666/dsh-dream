@@ -162,9 +162,5 @@ export declare function createDreamWebHandler(options?: DreamWebOptions): (req: 
 export declare function createBridgeWebHandler(options?: DreamWebOptions): (req: any, res: any) => Promise<void>;
 /** 组装只读经验路由处理器；零写盘：目录不存在就直接返回空结果。 */
 export declare function createKnowledgeWebHandler(options?: DreamWebOptions): (req: any, res: any) => Promise<void>;
-/**
- * 把只读路由挂到宿主 webserver 上。
- * 与 dsh-calendar 相同：ctx.inject(['webServer']) + effect 注册，插件卸载即摘掉路由；
- * 同一个 effect 里注册日记 / 知识 / 写入记录三条 exact 路由，卸载时一起释放。
- */
+/** The workbench uses Connection auth. Legacy webServer routes retain their own auth gate. */
 export declare function installDreamWeb(ctx: any, options?: DreamWebOptions): void;

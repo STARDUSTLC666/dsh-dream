@@ -101,7 +101,7 @@ function mount(options) {
 /** 挂载并取出梦境路由 handler。 */
 function handlerFor(options) {
   const mounted = mount(options)
-  assert.equal(mounted.injected.length, 1)
+  assert.equal(mounted.injected.length, 2)
   const route = mounted.routes.find((item) => item.route.path === DREAM_ROUTE)
   assert.ok(route, '梦境日记路由应已注册')
   return { ...mounted, handler: route.route.handler }
@@ -110,7 +110,7 @@ function handlerFor(options) {
 /** 挂载并取出知识路由 handler。 */
 function knowledgeHandlerFor(options) {
   const mounted = mount(options)
-  assert.equal(mounted.injected.length, 1)
+  assert.equal(mounted.injected.length, 2)
   const route = mounted.routes.find((item) => item.route.path === DREAM_KNOWLEDGE_ROUTE)
   assert.ok(route, '知识路由应已注册')
   return { ...mounted, handler: route.route.handler }
@@ -119,7 +119,7 @@ function knowledgeHandlerFor(options) {
 /** 挂载并取出写入记录路由 handler。 */
 function bridgeHandlerFor(options) {
   const mounted = mount(options)
-  assert.equal(mounted.injected.length, 1)
+  assert.equal(mounted.injected.length, 2)
   const route = mounted.routes.find((item) => item.route.path === DREAM_BRIDGE_ROUTE)
   assert.ok(route, '写入记录路由应已注册')
   return { ...mounted, handler: route.route.handler }
@@ -169,7 +169,7 @@ test('三条只读路由：ctx.inject(["webServer"]) + 一个 effect 注册 jour
   assert.equal(DREAM_KNOWLEDGE_ROUTE, '/_dsh/dsh-dream/knowledge')
   assert.equal(DREAM_BRIDGE_ROUTE, '/_dsh/dsh-dream/bridge')
   const mounted = mount({ journalDir: makeJournal([]) })
-  assert.deepEqual(mounted.injected, [['webServer', 'connection']])
+  assert.deepEqual(mounted.injected, [['connection'], ['webServer', 'connection']])
   assert.equal(mounted.effects.length, 1)
   assert.equal(mounted.effects[0].label, 'dsh-dream: web routes')
   assert.deepEqual(
@@ -473,6 +473,7 @@ test('apply() 会通过 ctx.inject(["webServer"]) 挂上只读路由（index.ts 
   apply(ctx, { journalDir: dir })
   assert.deepEqual(injected, [
     ['profileContext', 'connection', 'pluginManager', 'agents', 'loader'],
+    ['connection'],
     ['webServer', 'connection'],
     ['connection'],
     ['sessionQuery'],

@@ -95,22 +95,22 @@ function toHost(value) {
 
 test('routeUrl()：按 document.baseURI 解析，反代前缀保留、入口不带前导斜杠', () => {
   const { internals } = loadClient({ document: { baseURI: 'http://127.0.0.1:5141/dsh/ui/' } })
-  assert.equal(internals.routeUrl(''), 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/journal')
+  assert.equal(internals.routeUrl(''), 'http://127.0.0.1:5141/dsh/ui/api/dsh-dream/journal')
   assert.equal(
     internals.routeUrl('q=%E6%87%92&limit=5'),
-    'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/journal?q=%E6%87%92&limit=5',
+    'http://127.0.0.1:5141/dsh/ui/api/dsh-dream/journal?q=%E6%87%92&limit=5',
   )
   const url = new URL(internals.routeUrl(''))
-  assert.equal(url.pathname, '/dsh/ui/_dsh/dsh-dream/journal', '前缀 /dsh/ui/ 不能被吃掉')
+  assert.equal(url.pathname, '/dsh/ui/api/dsh-dream/journal', '前缀 /dsh/ui/ 不能被吃掉')
   assert.ok(!url.pathname.includes('//'), '相对入口不能以 / 开头（否则反代前缀会被丢掉）')
 })
 
 test('routeUrl()：没有 document 时退回相对路径；只有 location 时也能解析', () => {
   const bare = loadClient().internals
-  assert.equal(bare.routeUrl('limit=50'), '_dsh/dsh-dream/journal?limit=50')
+  assert.equal(bare.routeUrl('limit=50'), 'api/dsh-dream/journal?limit=50')
   assert.ok(!bare.routeUrl('').startsWith('/'), '契约：无前导斜杠')
   const viaLocation = loadClient({ location: { href: 'http://localhost:3000/proxy/' } }).internals
-  assert.equal(viaLocation.routeUrl(''), 'http://localhost:3000/proxy/_dsh/dsh-dream/journal')
+  assert.equal(viaLocation.routeUrl(''), 'http://localhost:3000/proxy/api/dsh-dream/journal')
 })
 
 test('isCollapsible()：4 行 / 220 字阈值边界，CRLF 也按行数计', () => {
@@ -272,9 +272,9 @@ test('隐私开关：loadPrivacy()/savePrivacy() 往返，且存储键仍是 dsh
 
 test('knowledge 路由常量与 URL 解析：沿用同一套 baseURI / 反代语义，且与日记路由互不串路', () => {
   const { KNOWLEDGE_ROUTE, routeUrlFor, routeUrl } = loadClient({ document: { baseURI: 'http://127.0.0.1:5141/dsh/ui/' } }).internals
-  assert.equal(KNOWLEDGE_ROUTE, '_dsh/dsh-dream/knowledge', '入口不带前导斜杠，反代前缀才不会被吃掉')
-  assert.equal(routeUrl(''), 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/journal')
-  assert.equal(routeUrlFor(KNOWLEDGE_ROUTE, ''), 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/knowledge')
+  assert.equal(KNOWLEDGE_ROUTE, 'api/dsh-dream/knowledge', '入口不带前导斜杠，反代前缀才不会被吃掉')
+  assert.equal(routeUrl(''), 'http://127.0.0.1:5141/dsh/ui/api/dsh-dream/journal')
+  assert.equal(routeUrlFor(KNOWLEDGE_ROUTE, ''), 'http://127.0.0.1:5141/dsh/ui/api/dsh-dream/knowledge')
   assert.ok(!routeUrlFor(KNOWLEDGE_ROUTE, '').includes('?'), '知识路由是只读全量，不带查询参数')
 })
 
@@ -390,7 +390,7 @@ test('fetchKnowledge()：只发 GET、只带 same-origin、命中知识路由并
   }).internals
   const payload = await fetchKnowledge()
   assert.equal(seen.length, 1)
-  assert.equal(seen[0].url, 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/knowledge')
+  assert.equal(seen[0].url, 'http://127.0.0.1:5141/dsh/ui/api/dsh-dream/knowledge')
   assert.equal(seen[0].init.method, undefined, '只读路由不得带 method')
   assert.equal(seen[0].init.body, undefined, '只读路由不得带 body')
   assert.equal(seen[0].init.credentials, 'same-origin')
@@ -591,7 +591,7 @@ test('fetchBridgeRecords()：只发 GET、命中 bridge 路由、兼容信封；
   }).internals
   const payload = await fetchBridgeRecords()
   assert.equal(seen.length, 1)
-  assert.equal(seen[0].url, 'http://127.0.0.1:5141/dsh/ui/_dsh/dsh-dream/bridge')
+  assert.equal(seen[0].url, 'http://127.0.0.1:5141/dsh/ui/api/dsh-dream/bridge')
   assert.equal(seen[0].init.method, undefined, '只读路由不得带 method')
   assert.equal(seen[0].init.body, undefined, '只读路由不得带 body')
   assert.deepEqual(Array.from(payload.records, (r) => r.backupId), ['app-1'])

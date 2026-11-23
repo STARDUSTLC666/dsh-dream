@@ -675,7 +675,7 @@ test('Cordis 4 ctx.effect unload disposer cleans up registered Dream tools and r
     },
   }, {})
   assert.ok(activeTools > 0)
-  assert.equal(activeRoutes, 2)
+  assert.equal(activeRoutes, 5)
   for (const dispose of effects.splice(0).reverse()) dispose()
   assert.equal(activeTools, 0)
   assert.equal(activeRoutes, 0)

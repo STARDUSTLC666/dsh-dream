@@ -36,6 +36,8 @@ export const DREAM_KNOWLEDGE_ROUTE = '/_dsh/dsh-dream/knowledge'
 /** M2 写入记录面板的只读路由。 */
 export const DREAM_BRIDGE_ROUTE = '/_dsh/dsh-dream/bridge'
 
+const DREAM_READ_API = '/api/dsh-dream'
+
 /** ?limit 的默认值与上下界。 */
 export const DREAM_LIMIT_DEFAULT = 50
 export const DREAM_LIMIT_MIN = 1
@@ -270,7 +272,7 @@ function requestUrl(raw: unknown, fallback: string = DREAM_ROUTE): URL {
 function responseJson(res: any, status: number, payload: unknown, headers: Record<string, string> = {}): void {
   const text = JSON.stringify(payload)
   if (typeof res?.writeHead === 'function') {
-    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers })
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers })
   }
   if (typeof res?.end === 'function') res.end(text)
 }
@@ -631,46 +633,66 @@ export function createKnowledgeWebHandler(options: DreamWebOptions = {}): (req: 
   }
 }
 
-/**
- * 把只读路由挂到宿主 webserver 上。
- * 与 dsh-calendar 相同：ctx.inject(['webServer']) + effect 注册，插件卸载即摘掉路由；
- * 同一个 effect 里注册日记 / 知识 / 写入记录三条 exact 路由，卸载时一起释放。
- */
+/** Reuse the legacy read handlers after the host authenticates the Fetch request. */
+function fetchReadHandler(handler: ReturnType<typeof createDreamWebHandler>) {
+  return async (request: Request): Promise<Response> => {
+    const site = request.headers.get('sec-fetch-site')
+    const desktop = request.headers.get('origin') === 'dsh-app://app'
+    if (site !== null && site !== 'same-origin' && site !== 'none' && !desktop) {
+      return Response.json({ ok: false, error: { code: 'forbidden', message: '拒绝跨站读取' } }, {
+        status: 403, headers: { 'cache-control': 'no-store' },
+      })
+    }
+    let status = 500
+    let headers: Record<string, string> = { 'cache-control': 'no-store' }
+    let body: string | null = null
+    await handler({
+      url: request.url,
+      method: request.method,
+      headers: { host: request.headers.get('host') },
+    }, {
+      writeHead(code: number, fields: Record<string, string>) {
+        status = code
+        headers = fields
+      },
+      end(text: string) { body = text },
+    })
+    return new Response(body, { status, headers })
+  }
+}
+
+/** The workbench uses Connection auth. Legacy webServer routes retain their own auth gate. */
 export function installDreamWeb(ctx: any, options: DreamWebOptions = {}): void {
   if (ctx === null || ctx === undefined || typeof ctx.inject !== 'function') {
     throw new Error('dsh-dream: installDreamWeb 需要带 ctx.inject 的宿主上下文（宿主应提供 webServer 服务）')
   }
+  const routes = [
+    { legacy: DREAM_ROUTE, path: DREAM_READ_API + '/journal', handler: createDreamWebHandler(options), label: 'dream journal' },
+    { legacy: DREAM_KNOWLEDGE_ROUTE, path: DREAM_READ_API + '/knowledge', handler: createKnowledgeWebHandler(options), label: 'knowledge' },
+    { legacy: DREAM_BRIDGE_ROUTE, path: DREAM_READ_API + '/bridge', handler: createBridgeWebHandler(options), label: 'bridge log' },
+  ]
+  ctx.inject(['connection'], (host: any) => {
+    const carrier = host.connection?.fetch
+    if (typeof carrier?.register !== 'function') return
+    host.effect(() => {
+      const disposers = routes.map(({ path, handler }) => carrier.register({
+        path, methods: ['GET'], requestBody: 'buffered', fetch: fetchReadHandler(handler),
+      }))
+      return () => {
+        for (const dispose of disposers) if (typeof dispose === 'function') dispose()
+      }
+    }, 'dsh-dream: authenticated read routes')
+  })
   ctx.inject(['webServer', 'connection'], (webCtx: any) => {
-    const journalHandler = createDreamWebHandler(options)
-    const knowledgeHandler = createKnowledgeWebHandler(options)
-    const bridgeHandler = createBridgeWebHandler(options)
     webCtx.effect(() => {
-      const disposers: Array<() => void> = [
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: DREAM_ROUTE,
-          handler: async (req: any, res: any) => {
-            if (rejectUnauthenticated(req, res, webCtx.connection)) return
-            await journalHandler(req, res)
-          },
-        }, 'dsh-dream: dream journal route'),
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: DREAM_KNOWLEDGE_ROUTE,
-          handler: async (req: any, res: any) => {
-            if (rejectUnauthenticated(req, res, webCtx.connection)) return
-            await knowledgeHandler(req, res)
-          },
-        }, 'dsh-dream: knowledge route'),
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: DREAM_BRIDGE_ROUTE,
-          handler: async (req: any, res: any) => {
-            if (rejectUnauthenticated(req, res, webCtx.connection)) return
-            await bridgeHandler(req, res)
-          },
-        }, 'dsh-dream: bridge log route'),
-      ]
+      const disposers = routes.map(({ legacy, handler, label }) => webCtx.webServer.register({
+        kind: 'exact',
+        path: legacy,
+        handler: async (req: any, res: any) => {
+          if (rejectUnauthenticated(req, res, webCtx.connection)) return
+          await handler(req, res)
+        },
+      }, 'dsh-dream: ' + label + ' route'))
       return () => {
         for (const dispose of disposers) {
           if (typeof dispose === 'function') dispose()

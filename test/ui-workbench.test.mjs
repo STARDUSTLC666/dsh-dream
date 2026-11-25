@@ -468,13 +468,13 @@ test('dsh-dream renders in standalone fallback mode, syncs 13 styles + 8 fonts a
   assert.equal(env.primitivesRequestedAtLoad, false)
   assert.equal(env.client.__internals.DSH_STYLES.length, 13)
   assert.equal(env.client.__internals.DSH_FONTS.length, 8)
-  assert.equal(env.client.__internals.DSH_DEFAULT_FONT, 'arcade')
+  assert.equal(env.client.__internals.DSH_DEFAULT_FONT, 'auto')
 
   const mounted = await env.mountWorkbench(true, 'en-US')
   try {
     let root = mounted.tree
     assert.equal(root.attrs['data-dsh-style'], 'harness')
-    assert.equal(root.attrs['data-dsh-font'], 'arcade')
+    assert.equal(root.attrs['data-dsh-font'], 'auto')
     assert.equal(root.attrs['data-main'], 'true')
 
     // Verify v3 unified header, sliding tab indicator, panel enter, serif, and pixel cursor
@@ -616,7 +616,7 @@ test('dsh-dream integrates host primitives and stamps [data-dsh-style] onto port
     const hostMenu = findNodes(root, n => n.attrs['data-host-menu'] === 'true')[0]
     assert.ok(hostMenu)
     assert.equal(hostMenu.attrs['data-dsh-style'], 'cream')
-    assert.equal(hostMenu.attrs['data-dsh-font'], 'arcade')
+    assert.equal(hostMenu.attrs['data-dsh-font'], 'auto')
     assert.equal(hostMenu.attrs['data-window-drag-exclude'], '')
 
     // Open Preview review changes Modal and verify HostModalWithStyle stamps data-dsh-style + data-dsh-font + data-window-drag-exclude
@@ -627,7 +627,7 @@ test('dsh-dream integrates host primitives and stamps [data-dsh-style] onto port
     const hostModal = findNodes(root, n => n.attrs['data-host-modal'] === 'true')[0]
     assert.ok(hostModal)
     assert.equal(hostModal.attrs['data-dsh-style'], 'cream')
-    assert.equal(hostModal.attrs['data-dsh-font'], 'arcade')
+    assert.equal(hostModal.attrs['data-dsh-font'], 'auto')
     assert.equal(hostModal.attrs['data-window-drag-exclude'], '')
 
     // Switch to Settings tab and verify host SegmentedControl

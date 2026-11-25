@@ -707,14 +707,14 @@ const DREAM_MESSAGES = {
     '13 estilos claros y 8 tipografías dobles',
     '13 светлых стилей и 8 шрифтовых пар',
   ],
-  '随时切换 13 套明亮/柔和工作台风格与 8 套中英双层字体（默认「幼圆等宽」），并跨所有 DSH 插件自动同步。': [
-    'Switch live across 13 bright/soft workbench styles and 8 Chinese+Latin font pairings (default: YouYuan Mono), automatically synced across all DSH plugins.',
+  '随时切换 13 套明亮/柔和工作台风格与 8 套中英双层字体（默认「跟随风格专属字」），并跨所有 DSH 插件自动同步。': [
+    'Switch live across 13 bright/soft workbench styles and 8 Chinese+Latin font pairings (default: style-matched font), automatically synced across all DSH plugins.',
     '13 種の明るいワークベンチスタイルと 8 種の日中英フォント（既定：幼圓モノ）を即時切替でき、全 DSH プラグインで自動同期されます。',
     '13가지 밝은 워크벤치 스타일과 8가지 한중영 글꼴 조합(기본: 유원 모노)을 실시간 전환하며 모든 DSH 플러그인에 자동 동기화됩니다.',
-    'Wechseln Sie live zwischen 13 hellen Stilen und 8 Schriftpaaren (Standard: YouYuan Mono) – automatisch über alle DSH-Plugins synchronisiert.',
-    'Changez à la volée parmi 13 styles lumineux et 8 paires de polices (YouYuan Mono par défaut), synchronisés dans tous les plugins DSH.',
-    'Alterna en vivo entre 13 estilos claros y 8 pares tipográficos (YouYuan Mono por defecto), sincronizados en todos los complementos DSH.',
-    'Мгновенно переключайтесь между 13 светлыми стилями и 8 шрифтовыми парами (по умолчанию YouYuan Mono) с синхронизацией во всех плагинах DSH.',
+    'Wechseln Sie live zwischen 13 hellen Stilen und 8 Schriftpaaren (Standard: stilpassende Schrift) – automatisch über alle DSH-Plugins synchronisiert.',
+    'Changez à la volée parmi 13 styles lumineux et 8 paires de polices (police assortie au style par défaut), synchronisés dans tous les plugins DSH.',
+    'Alterna en vivo entre 13 estilos claros y 8 pares tipográficos (fuente del estilo por defecto), sincronizados en todos los complementos DSH.',
+    'Мгновенно переключайтесь между 13 светлыми стилями и 8 шрифтовыми парами (по умолчанию — шрифт стиля) с синхронизацией во всех плагинах DSH.',
   ],
   '自动记忆、已采纳库与设置': [
     'Auto-memory, Accepted lessons & Settings',

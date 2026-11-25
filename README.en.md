@@ -26,7 +26,7 @@ Native task-memory workbench for DeepSeek Harness (`>=0.2.2-rc.3`): opens in the
 | **`AGENTS.md` Codify & Rollback** | Preview diffs before writing durable project conventions into `AGENTS.md`, with audit logs and 1-click rollback in **Rule history** |
 | **Budgeted Collect & Recall** | Separate switches for idle collection and task-relevant recall within your configured model quota, plus an opt-in pre-completion verification gate (`enableVerificationGate`, off by default) |
 | **Native Slash Commands** | Chat commands `/dream` (reflect/digest), `/dream-learn` (queue a candidate lesson), and `/dream-status` (inspect queue & host capabilities) while keeping the human-review boundary |
-| **Locales & Synced UI** | 8 UI languages, command palette switching, `? Tour` spotlight guide, 13 bright styles & 8 fonts (`YouYuan Mono` default) |
+| **Locales & Synced UI** | 8 UI languages, command palette switching, `? Tour` spotlight guide, 13 bright styles & 8 fonts (style-matched font by default) |
 
 ## Review before reuse
 

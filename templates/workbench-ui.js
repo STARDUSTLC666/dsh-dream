@@ -363,7 +363,7 @@ function DreamCoachmarkTour({ rootRef, tabId, activeTab, changeTab, skin, font, 
       fallback: '.dsh-style-switcher',
       side: 'bottom',
       title: t('13 套明亮风格与 8 套双层字体'),
-      desc: t('随时切换 13 套明亮/柔和工作台风格与 8 套中英双层字体（默认「幼圆等宽」），并跨所有 DSH 插件自动同步。'),
+      desc: t('随时切换 13 套明亮/柔和工作台风格与 8 套中英双层字体（默认「跟随风格专属字」），并跨所有 DSH 插件自动同步。'),
     },
     {
       id: 'auto-accepted',

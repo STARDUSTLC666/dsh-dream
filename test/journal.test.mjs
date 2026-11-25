@@ -1,9 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { saveDream, readDreams, searchDreams } from '../lib/index.js'
+import { saveDream, readDreams, readDreamsDetailed, searchDreams } from '../lib/index.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'dsh-dream-journal-'))
 
@@ -23,6 +25,49 @@ test('readDreams 倒序读取（新梦在前）', () => {
   const dreams = readDreams(dir, 10)
   assert.equal(dreams.length, 2)
   assert.match(dreams[0].reflection, /第二个梦/)
+})
+
+test('readDreams streams JSONL and keeps only the newest requested records', t => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-dream-journal-stream-'))
+  const file = join(root, 'dreams.jsonl')
+  writeFileSync(file, Array.from({ length: 5000 }, (_, index) => JSON.stringify({ id: String(index), reflection: 'entry ' + index })).join('\n') + '\n')
+  const original = fs.readFileSync
+  t.mock.method(fs, 'readFileSync', function (path, ...args) {
+    if (String(path) === file) throw new Error('journal must be scanned in chunks')
+    return original.call(this, path, ...args)
+  })
+  syncBuiltinESMExports()
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }) })
+  const result = readDreamsDetailed(root, 3)
+  assert.deepEqual(result.dreams.map(row => row.id), ['4999', '4998', '4997'])
+  assert.equal(result.skippedLines, 0)
+})
+
+test('oversized journal rows are reported and saveDream rejects records the reader cannot retain', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-dream-journal-size-'))
+  try {
+    writeFileSync(join(root, 'dreams.jsonl'), JSON.stringify({ id: 'old', reflection: 'x'.repeat(1024 * 1024 + 1) }) + '\n' + JSON.stringify({ id: 'new', reflection: 'readable' }) + '\n')
+    const result = readDreamsDetailed(root, 10)
+    assert.deepEqual(result.dreams.map(row => row.id), ['new'])
+    assert.equal(result.skippedLines, 1)
+    assert.throws(() => saveDream(root, 'x'.repeat(1024 * 1024), [], ''), /不能超过 1 MiB/)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('reverse chunk scanning preserves UTF-8, BOM, CRLF and an unfinished final line', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-dream-journal-utf8-'))
+  try {
+    const rows = [
+      { id: 'old', reflection: '旧梦：鲸鱼', lessons: ['星光'] },
+      { id: 'new', reflection: '新梦：' + '海'.repeat(30000) },
+    ]
+    writeFileSync(join(root, 'dreams.jsonl'), '\uFEFF' + rows.map(row => JSON.stringify(row)).join('\r\n'))
+    const result = readDreamsDetailed(root, 2)
+    assert.deepEqual(result.dreams.map(row => row.id), ['new', 'old'])
+    assert.equal(result.dreams[0].reflection, rows[1].reflection)
+    assert.equal(result.dreams[1].reflection, rows[0].reflection)
+    assert.equal(result.skippedLines, 0)
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
 test('searchDreams 不区分大小写命中 lessons', () => {

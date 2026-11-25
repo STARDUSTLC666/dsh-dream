@@ -16,10 +16,7 @@ export interface DreamReadResult {
 }
 /**
  * 倒序读取梦境并**报告**跳过了多少行。
- *
- * 两个健壮性要求（评审实测发现）：
- * - 文件开头的 UTF-8 BOM 必须剥离，否则第一行解析失败会让整份日记读空；
- * - 坏行跳过要可计数，不能静默——调用方（dream_health / 只读路由）可以透出。
+ * BOM is ignored, malformed rows are counted, and only the requested newest rows are retained.
  */
 export declare function readDreamsDetailed(journalDir: string, limit: number): DreamReadResult;
 /** 倒序读取梦境（新梦在前）；损坏行跳过。 */

@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.19.3 (2026-11-25)
+
+- 日记改为 64 KiB 分块倒序读取，单条记录限制为 1 MiB，避免整份 JSONL 一次性读入内存；新写入的超限记录明确拒绝，历史坏行与超限行继续计数。
+- 读取、关键词检索与统计保持最新 100000 条有效记录的口径，仅保留请求数量的结果；修复大日记中最新保存记录被旧窗口遗漏的问题。
+- 验证：完整构建与 376 项测试通过，1 项压力测试按原规则跳过；覆盖 100001 条记录窗口、UTF-8 跨块、BOM、CRLF 和末行无换行。
+- Stream journal rows in bounded reverse chunks while retaining the newest record window and malformed-row counts; pass 376 tests with one explicit stress-test skip.
+
 ## 0.19.2 (2026-11-23)
 
 - 修复已连接 DSH 时经验、日记和规则写入记录仍返回 403 的问题。工作台通过宿主已鉴权的连接读取，沿用只读、访问范围和脱敏规则。

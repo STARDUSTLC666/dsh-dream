@@ -1,6 +1,6 @@
 {
   "name": "@stardustlc/dsh-dream",
-  "version": "0.19.2",
+  "version": "0.19.3",
   "description": "DeepSeek Harness 原生任务经验记忆插件：默认「叠卡」触感分拣工作台（1 键切经典列表），支持任务复盘候选整理、来源与适用范围核对、审阅采纳、AGENTS.md 写入与回滚、相关任务召回、原生斜杠命令与可选完成前软门控；内置 13 套明亮风格 × 8 套双层字体与 8 种界面语言，兼容浅色与柔和深色模式。",
   "type": "module",
   "main": "lib/index.js",

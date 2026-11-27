@@ -1,5 +1,25 @@
 # 更新记录
 
+## 0.20.0 (2026-11-28)
+
+- **DeepSeek Harness `0.2.2-rc.3` 全栈深度原生适配**：
+  - 全部 9 个工具补齐 `isConcurrencySafe`（读类工具与 `dream_bridge` `preview` 并行安全，写类与非法 `mode` fail-closed 串行）、`presentCall` / `presentResult` 与无损 JSON `output.presentationMeta`；`dream_digest({ workspaceOnly: true })` 无法解析 `cwd` 时 fail-closed 拒绝跨工作区回放，并在传入 `query` / `workspaceOnly` 时输出明确的检索命中标题。
+  - 直连 DSH SQLite FTS5 `sessionQuery.searchSessions` / `filterSessions` 并支持 `AbortSignal`，修复 Windows 路径大小写/软链差异及 FTS5 短语包裹导致多词非相邻查询、标题与 `compaction/summary` 零命中的回退问题。
+  - 完整接入 `compaction/start` / `compaction/summary` / `compaction/end` 压缩边界保活与去重（避免与 `turn/end` 重复入队且不绕过 `autoMinToolCalls`）、`agent/created` 恢复首步预热、`working-directory/change` 会话内 `cd` 同步与 `workspace/session-archived` 待整理队列清理；全链路隔离合成/中继消息（`source.form`），防止污染用户原话或伪造 `user-correction` 证据。
+  - 补齐 DSH `read_image`、`str_replace_editor`（精确区分只读 `command: 'view'` 与修改类操作，避免误触完成前软门控）、`apply_patch` `*** Move to:` 目标路径提取与 `model/selection` 路由追踪。
+- **零依赖混合 BM25F 检索引擎与评测体系**：
+  - 升级为多字段混合 BM25F（覆盖 `title` / `when` / `action` / `prevents` / `problemKey` / `rationale` / `files` / `read` 核验摘录）、`WeakMap` 压缩倒排词频缓存（含 `files` 内容键失效校验）、英文词边界与确定性词形还原（含 3 字母词根隔离命名空间 `3:fix`/`3:log`/`3:bug`/`3:run`）、`camelCase`/路径拆分、内嵌中文技术词双语同义桥接与多概念强命中弱噪声尾部剪枝；在 `locomo-zh-500` 查询提速 `8.1×`、`memory-bench-1000` 提速 `10.1×`、`bench6-100-zh-en (raw-en)` 英文首位命中提升 `+13.0%` 至 `73.0%`、`dsh-agent-eval-40` 达 `40/40 (100.0%)`（详见 `docs/BENCHMARK.md` 与 `scripts/benchmark-memory.mjs`）。
+- **脱敏加固、跨进程锁稳定性与主题皮肤升级**：
+  - 加固 `maskSecrets`（覆盖 `Bearer`、`Authorization: Basic`、PEM 私钥、Postgres/Redis/HTTPS 连接串、引号包裹含空格口令、前缀环境变量、URL 查询参数保留 `&page=2`、`hf_`/`npm_`/`AIza`、全角绕过与 `src/<token>` 绕过，同时保护 TS 类型、长路径含 UUID 目录段与合法 Dream 引用 ID）；`dream_save` 与 `dream_digest` 统一按 `maskSecrets` 脱敏并保留合法引用。
+  - 优化 `KnowledgeStore` 跨进程文件锁（节流锁检查、随机退避抖动与 Windows 瞬态 `EPERM`/`EACCES` 重试），消除高并发压测争用失败。
+  - 焕新 `mint`（晴空薄荷）、`glass`（晴昼琉璃）、`frutiger`（晴空水晶）与 `mica`（云母流光）皮肤，并将默认字体设为 `auto`（跟随风格专属字）。
+- **验证**：`npm run typecheck` 通过、`DSH_DREAM_STRESS=1 npm test` 392/392 全通过（含 8 进程并发压测与 5 个本地真实 DSH `0.2.2-rc.3` 模块集成测试），并在隔离 `DSH_HOME` 的真实 DSH Headless + Web UI + DeepSeek API 环境下完成全链路端到端验收。
+- **Deep DeepSeek Harness `0.2.2-rc.3` Native Adaptation, Hybrid BM25F Retrieval & Hardening**:
+  - Add `isConcurrencySafe`, `presentCall`/`presentResult`, and lossless `output.presentationMeta` across all 9 tools; enforce fail-closed `dream_digest({ workspaceOnly: true })` and filtered search headers; add SQLite FTS5 `searchSessions`/`filterSessions` with Windows path & multi-term fallback; support `compaction/*` boundary extraction deduplication, `agent/created` resume hydration, `working-directory/change`, `workspace/session-archived`, relay/formed-source isolation, `read_image`, `str_replace_editor` (`view` vs mutating), `apply_patch` `Move to:`, and `model/selection`.
+  - Upgrade retrieval to zero-dependency multi-field hybrid BM25F with `WeakMap` field caches, word-boundary + deterministic stemming (isolated 3-char root namespace), identifier splitting, embedded CJK bilingual bridging, and weak tail pruning (`8.1×–10.1×` faster, `40/40` on `dsh-agent-eval-40`; see `docs/BENCHMARK.md`).
+  - Harden `maskSecrets` (18/18 secret classes caught, 8/8 benign preserved, including UUID directory paths & embedded Dream reference preservation in `dream_save`/`dream_digest`), harden Windows NTFS cross-process locking in `KnowledgeStore`, and refresh light skins with style-matched default fonts (`auto`).
+  - Verified with `npm run typecheck`, `DSH_DREAM_STRESS=1 npm test` (392/392 passing, 0 skipped), and live DSH `0.2.2-rc.3` Headless + Web UI + real DeepSeek API end-to-end acceptance.
+
 ## 0.19.3 (2026-11-25)
 
 - 日记改为 64 KiB 分块倒序读取，单条记录限制为 1 MiB，避免整份 JSONL 一次性读入内存；新写入的超限记录明确拒绝，历史坏行与超限行继续计数。

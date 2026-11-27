@@ -11,7 +11,7 @@ export interface PendingMemory {
     agentPreset?: string;
     workspaceId?: string;
     touchedFiles?: string[];
-    triggerKind?: 'tools' | 'correction' | 'feedback';
+    triggerKind?: 'tools' | 'correction' | 'feedback' | 'compaction';
     sources: Array<{
         seq: number;
         role: 'user' | 'assistant';

@@ -41,8 +41,12 @@ export declare function extractAssistantMessageModel(events: readonly unknown[],
 export declare function recordLessonObservation(cfg: ResolvedDreamConfig, lessonIds: readonly string[], signal: ObservationSignal, now?: number | string): void;
 /** 将相对或绝对路径归一化为工作区内相对路径（脱敏且拒绝越界路径）。 */
 export declare function normalizePathToWorkspace(rawPath: string, cwd?: string): string | undefined;
-/** 判断工具名称是否属于文件修改类工具（用于区分只读问答轮与真实改文件轮）。 */
-export declare function isMutatingFileTool(toolName: unknown): boolean;
+/**
+ * 判断工具调用是否属于文件修改类操作（用于区分只读问答轮与真实改文件轮）。
+ * 对 `str_replace_editor` 这类读写复合工具，传入 `rawArgs` 时将 `command: 'view'` 识别为只读；
+ * 未传 `rawArgs` 时保持向后兼容，按默认修改类工具处理。
+ */
+export declare function isMutatingFileTool(toolName: unknown, rawArgs?: unknown): boolean;
 /** 从一次工具执行对象提取全部工作区内相对文件路径（仅路径，不含正文）。 */
 export declare function extractToolFilePaths(exec: unknown, cwd?: string): string[];
 /** 从文件类工具执行对象提取单个工作区内相对文件路径。 */

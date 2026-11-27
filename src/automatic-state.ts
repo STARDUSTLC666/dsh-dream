@@ -10,7 +10,7 @@ export interface PendingMemory {
   agentPreset?: string
   workspaceId?: string
   touchedFiles?: string[]
-  triggerKind?: 'tools' | 'correction' | 'feedback'
+  triggerKind?: 'tools' | 'correction' | 'feedback' | 'compaction'
   sources: Array<{ seq: number; role: 'user' | 'assistant'; text: string; hash: string }>
   lease?: { job: string; pid: number; until: number }
 }
@@ -76,7 +76,7 @@ export function readAutomaticState(cfg: ResolvedDreamConfig, now = Date.now()): 
     || (p.agentPreset !== undefined && !text(p.agentPreset, 200))
     || (p.workspaceId !== undefined && !text(p.workspaceId, 200))
     || (p.touchedFiles !== undefined && (!Array.isArray(p.touchedFiles) || p.touchedFiles.length > 32 || p.touchedFiles.some((f: any) => !text(f, 260))))
-    || (p.triggerKind !== undefined && !['tools', 'correction', 'feedback'].includes(p.triggerKind))
+    || (p.triggerKind !== undefined && !['tools', 'correction', 'feedback', 'compaction'].includes(p.triggerKind))
     || !Array.isArray(p.sources) || p.sources.length < 1 || p.sources.length > 6 || p.sources.some((s: any) =>
       !s || !integer(s.seq) || !['user', 'assistant'].includes(s.role) || !text(s.text, 1800) || !/^[a-f0-9]{64}$/.test(s.hash))
     || (p.lease !== undefined && (!text(p.lease.job, 64) || !integer(p.lease.pid) || p.lease.pid < 1 || !integer(p.lease.until))))))

@@ -36,6 +36,16 @@ export class MemoryQueue {
       state.cursors[cursor] = row.endSeq
       state.pending ??= []
       if (state.pending.some(p => p.key === row.key)) return
+      if (row.triggerKind !== 'compaction') {
+        const rowSeqs = new Set(row.sources.map(s => s.seq))
+        state.pending = state.pending.filter(p => !(
+          p.sessionId === row.sessionId
+          && p.triggerKind === 'compaction'
+          && p.lease === undefined
+          && p.sources.length > 0
+          && p.sources.every(s => rowSeqs.has(s.seq))
+        ))
+      }
       if (state.pending.length >= 32) {
         const replace = state.pending.findIndex(p => !p.lease)
         state.overflow = (state.overflow ?? 0) + 1

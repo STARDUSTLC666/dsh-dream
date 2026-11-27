@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { type ResolvedDreamConfig } from './config.js'
-import { isDreamReference, maskSecrets } from './mask.js'
+import { extractDreamReferences, isDreamReference, maskSecrets } from './mask.js'
 import { dreamStats, readDreams, saveDream, searchDreams } from './journal.js'
 import { isHumanAccepted } from './memory.js'
 import {
@@ -20,6 +20,7 @@ import {
 import { type SessionDigest } from './sessions.js'
 import { digestSessionsWithFallback, verifyEvidenceWithSessionQuery } from './session-source.js'
 import { readAutomaticState } from './automatic-state.js'
+import { automaticRuntime } from './automatic.js'
 import {
   KnowledgeError,
   lessonFingerprint,
@@ -48,7 +49,7 @@ export interface ContentBlock {
   text: string
 }
 
-/** 注册给 ctx.tools.register 的原始工具定义。 */
+/** 注册给 ctx.tools.register 的原始工具定义（对齐 DSH 0.2.2-rc.3 ToolDefinition 契约）。 */
 export interface DreamToolDefinition {
   name: string
   description: string
@@ -56,9 +57,13 @@ export interface DreamToolDefinition {
   output: {
     schema: Record<string, unknown>
     render(args: unknown, value: unknown): ContentBlock[]
+    presentationMeta?(args: unknown, value: unknown): unknown
   }
   execute(args: unknown, exec: unknown): Promise<unknown>
   timeoutMs?: number
+  isConcurrencySafe?(args: unknown): boolean
+  presentCall?(args: unknown): Record<string, unknown> | undefined
+  presentResult?(args: unknown, result: unknown): Record<string, unknown> | undefined
 }
 
 /** 编译一个值 schema 节点；支持 enum、对象数组 items 与嵌套对象（宿主 schema 子集要求对象显式 additionalProperties）。 */
@@ -172,6 +177,11 @@ function maskReferenceIfNeeded(cfg: ResolvedDreamConfig, text: string): string {
   return cfg.maskSecrets ? maskSecrets(text, isDreamReference(text) ? [text] : []) : text
 }
 
+/** 对自由文本脱敏并保留文中出现的合法 Dream 公共引用 ID（如 lsn_<uuid>），密钥赋值仍先于长令牌规则打码。 */
+function maskJournalTextIfNeeded(cfg: ResolvedDreamConfig, text: string): string {
+  return cfg.maskSecrets ? maskSecrets(text, extractDreamReferences(text)) : text
+}
+
 function knowledgeDirOf(cfg: ResolvedDreamConfig): string {
   return join(cfg.journalDir, 'knowledge')
 }
@@ -180,15 +190,46 @@ function knowledgeStoreOf(cfg: ResolvedDreamConfig): KnowledgeStore {
   return new KnowledgeStore(knowledgeDirOf(cfg), { maskSecrets: cfg.maskSecrets })
 }
 
-function execCwdOf(exec: unknown): string | undefined {
+function execCwdOf(exec: unknown, cfg?: ResolvedDreamConfig): string | undefined {
   const root = asRecord(exec)
-  const agentSession = asRecord(asRecord(root.agent).session), session = asRecord(root.session)
+  const agent = asRecord(root.agent)
+  const rawAgentSession = agent.session
+  const rawRootSession = root.session
+  // Prefer DSH live workingDirectory (tracks mid-session `cd`) before immutable session.header.cwd.
+  if (cfg !== undefined) {
+    const runtime = automaticRuntime(cfg)
+    if (runtime !== undefined) {
+      for (const sess of [rawAgentSession, rawRootSession]) {
+        if (sess !== undefined && sess !== null && typeof sess === 'object') {
+          const live = runtime.effectiveCwd(sess)
+          if (typeof live === 'string' && live.trim() !== '') return live.trim()
+        }
+      }
+    }
+  }
+  const agentSession = asRecord(rawAgentSession), session = asRecord(rawRootSession)
   const candidates = [asRecord(agentSession.header), agentSession, asRecord(session.header), session, root]
   for (const candidate of candidates) {
     const cwd = candidate.cwd
     if (typeof cwd === 'string' && cwd.trim() !== '') return cwd.trim()
   }
   return undefined
+}
+
+function execSignalOf(exec: unknown): AbortSignal | undefined {
+  const signal = asRecord(exec).signal
+  if (typeof signal === 'object' && signal !== null && typeof (signal as AbortSignal).aborted === 'boolean') {
+    return signal as AbortSignal
+  }
+  return undefined
+}
+
+function locationsFromPaths(paths: readonly string[], cfg: ResolvedDreamConfig): Array<{ path: string }> | undefined {
+  const out = paths
+    .slice(0, 8)
+    .filter((p) => p !== '')
+    .map((path) => ({ path: maskIfNeeded(cfg, path) }))
+  return out.length > 0 ? out : undefined
 }
 
 function execModelOf(exec: unknown): string | undefined {
@@ -412,17 +453,43 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
 
   const dreamDigest: DreamToolDefinition = {
     name: 'dream_digest',
-    description: '入梦：回放最近会话的梦原料。读取 DSH 会话日志（多帧 zstd），返回最近 N 个会话的标题、轮数、用户原话摘录、助手结论尾段与工具足迹；自动跳过子代理会话。拿到摘要后请反思并用 dream_save 记梦。',
+    description: '入梦：回放最近会话的梦原料。读取 DSH 会话日志（优先实时 sessionQuery / SQLite FTS5，无缝回退多帧 zstd），返回最近 N 个会话的标题、轮数、用户原话摘录、助手结论尾段与工具足迹；自动跳过子代理会话。支持可选 query（全文检索历史会话）与 workspaceOnly（限定当前工作区）。拿到摘要后请反思并用 dream_save 记梦。',
     parameters: compileParameters({
       maxSessions: { type: 'integer', description: '回放会话数（可选，默认配置值，上限 50）。' },
       mode: { type: 'string', description: '摘要模式：full（默认，全量原料）/ brief（仅意图与结论，省 token）。' },
+      query: { type: 'string', description: '可选全文检索关键词；宿主挂载 SQLite FTS5 时直接走索引检索，否则回退本地摘要过滤。' },
+      workspaceOnly: { type: 'boolean', description: '可选：仅回放当前工作区（支持会话内 cd 后的实时 cwd）下的主会话。' },
     }),
+    isConcurrencySafe: () => true,
+    presentCall: (rawArgs) => {
+      const args = asRecord(rawArgs)
+      const q = optionalString(args, 'query')
+      const maxRaw = args.maxSessions
+      const max = typeof maxRaw === 'number' && Number.isInteger(maxRaw) ? Math.min(50, Math.max(1, maxRaw)) : cfg.maxSessions
+      if (q !== undefined) {
+        return { card: 'generic', kind: 'search', title: '入梦检索：' + clip(maskIfNeeded(cfg, q), 42) }
+      }
+      return { card: 'generic', kind: 'read', title: '入梦回放（最近 ' + max + ' 个会话）' }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.count !== 'number') return undefined
+      const suffix = typeof meta.query === 'string' && meta.query !== '' ? '（匹配「' + clip(meta.query, 28) + '」）' : ''
+      return { card: 'generic', title: '入梦：读取 ' + meta.count + ' 个会话' + suffix }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
         const rec = asRecord(value)
         const sessions = Array.isArray(rec.sessions) ? rec.sessions : []
-        const lines = ['梦原料：最近 ' + sessions.length + ' 个会话']
+        const q = typeof rec.query === 'string' && rec.query !== '' ? rec.query : undefined
+        const scopeNote = rec.workspaceOnly === true ? '（仅当前工作区）' : ''
+        const header = q !== undefined
+          ? '梦原料：检索「' + q + '」命中 ' + sessions.length + ' 个会话' + scopeNote
+          : '梦原料：最近 ' + sessions.length + ' 个会话' + scopeNote
+        const lines = [header]
         for (const item of sessions) {
           const s = asRecord(item)
           lines.push('- ' + (s.title !== '' ? s.title : '(无标题)') + '：' + s.turns + ' 轮，目录 ' + s.cwd)
@@ -431,14 +498,33 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         }
         return [{ type: 'text', text: lines.join('\n') }]
       },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        return {
+          count: typeof rec.count === 'number' ? rec.count : 0,
+          mode: rec.mode === 'brief' ? 'brief' : 'full',
+          ...(typeof rec.query === 'string' && rec.query !== '' ? { query: maskIfNeeded(cfg, rec.query) } : {}),
+          ...(rec.workspaceOnly === true ? { workspaceOnly: true } : {}),
+        }
+      },
     },
-    async execute(rawArgs: unknown) {
+    async execute(rawArgs: unknown, exec: unknown) {
       const args = asRecord(rawArgs)
       const maxRaw = args.maxSessions
       const max = typeof maxRaw === 'number' && Number.isInteger(maxRaw) ? Math.min(50, Math.max(1, maxRaw)) : cfg.maxSessions
       const mode = optionalString(args, 'mode') === 'brief' ? 'brief' : 'full'
-      const mask = (text: string): string => cfg.maskSecrets ? maskSecrets(text) : text
-      const digests = await digestSessionsWithFallback(cfg, max)
+      const query = optionalString(args, 'query')
+      const workspaceOnly = args.workspaceOnly === true
+      const cwd = workspaceOnly ? execCwdOf(exec, cfg) : undefined
+      if (workspaceOnly && cwd === undefined) {
+        throw new Error('workspaceOnly 为 true 但无法从执行上下文取得当前工作区 cwd：已拒绝跨工作区回放。')
+      }
+      const signal = execSignalOf(exec)
+      const mask = (text: string): string => maskJournalTextIfNeeded(cfg, text)
+      const digestOpts = query !== undefined || cwd !== undefined || signal !== undefined
+        ? { ...(query !== undefined ? { query } : {}), ...(cwd !== undefined ? { cwd } : {}), ...(signal !== undefined ? { signal } : {}) }
+        : undefined
+      const digests = await digestSessionsWithFallback(cfg, max, undefined, digestOpts)
       const sessions: Array<Record<string, unknown>> = digests.map((digest) => ({
         id: digest.id,
         title: mask(digest.title),
@@ -452,7 +538,13 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         toolCalls: [...new Set(digest.toolCalls)].map(mask),
         digestText: clip(mask(buildDigestText(digest)), mode === 'brief' ? 400 : cfg.maxCharsPerSession),
       }))
-      return { count: sessions.length, sessions, mode }
+      return {
+        count: sessions.length,
+        sessions,
+        mode,
+        ...(query !== undefined ? { query: mask(query) } : {}),
+        ...(workspaceOnly ? { workspaceOnly: true } : {}),
+      }
     },
     timeoutMs: 120000,
   }
@@ -465,18 +557,40 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       lessons: { type: 'array', items: { type: 'string' }, description: '1-5 条教训（可选，每条以动词开头）。' },
       mood: { type: 'string', description: '心境（可选，默认 平静）。' },
     }),
+    isConcurrencySafe: () => false,
+    presentCall: (rawArgs) => {
+      const mood = optionalString(asRecord(rawArgs), 'mood') ?? '平静'
+      return { card: 'generic', kind: 'edit', title: '记梦（' + clip(maskIfNeeded(cfg, mood), 20) + '）' }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.id !== 'string' || meta.id === '') return undefined
+      return { card: 'generic', title: '记梦已保存：' + meta.id }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
         const rec = asRecord(value)
         return [{ type: 'text', text: '梦已记下（' + rec.id + '，' + rec.at + '），愿醒来时更聪明。' }]
       },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        return {
+          ok: rec.ok === true,
+          id: typeof rec.id === 'string' ? rec.id : '',
+          mood: typeof rec.mood === 'string' ? maskIfNeeded(cfg, rec.mood) : '平静',
+          lessonsCount: Array.isArray(rec.lessons) ? rec.lessons.length : 0,
+        }
+      },
     },
     async execute(rawArgs: unknown) {
       const args = asRecord(rawArgs)
-      const reflection = requiredString(args, 'reflection', '梦境反思')
-      const lessons = stringArray(args, 'lessons').slice(0, 5)
-      const mood = optionalString(args, 'mood') ?? ''
+      const reflection = maskJournalTextIfNeeded(cfg, requiredString(args, 'reflection', '梦境反思'))
+      const lessons = stringArray(args, 'lessons').slice(0, 5).map((lesson) => maskJournalTextIfNeeded(cfg, lesson))
+      const rawMood = optionalString(args, 'mood')
+      const mood = rawMood !== undefined ? maskJournalTextIfNeeded(cfg, rawMood) : ''
       const entry = saveDream(cfg.journalDir, reflection, lessons, mood)
       return { ok: true, ...entry }
     },
@@ -489,6 +603,20 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
     parameters: compileParameters({
       limit: { type: 'integer', description: '条数上限 1-50（默认 10）。' },
     }),
+    isConcurrencySafe: () => true,
+    presentCall: (rawArgs) => {
+      const limitRaw = asRecord(rawArgs).limit
+      const limit = typeof limitRaw === 'number' && Number.isInteger(limitRaw) ? Math.min(50, Math.max(1, limitRaw)) : 10
+      return { card: 'generic', kind: 'read', title: '翻梦（最近 ' + limit + ' 条）' }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.count !== 'number') return undefined
+      const total = typeof meta.total === 'number' ? meta.total : meta.count
+      return { card: 'generic', title: '翻梦：读取 ' + meta.count + ' 条（共 ' + total + ' 条）' }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -513,6 +641,14 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         }
         return [{ type: 'text', text: lines.join('\n') }]
       },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        const stats = asRecord(rec.stats)
+        return {
+          count: typeof rec.count === 'number' ? rec.count : 0,
+          total: typeof stats.total === 'number' ? stats.total : 0,
+        }
+      },
     },
     async execute(rawArgs: unknown) {
       const args = asRecord(rawArgs)
@@ -531,6 +667,18 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       query: { type: 'string', required: true, description: '关键词（必填）。' },
       limit: { type: 'integer', description: '命中上限 1-20（默认 5）。' },
     }),
+    isConcurrencySafe: () => true,
+    presentCall: (rawArgs) => {
+      const q = optionalString(asRecord(rawArgs), 'query') ?? ''
+      return { card: 'generic', kind: 'search', title: '忆梦：' + clip(maskIfNeeded(cfg, q), 48) }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.count !== 'number') return undefined
+      return { card: 'generic', title: '忆梦：命中 ' + meta.count + ' 条梦境' }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -543,6 +691,13 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           lines.push('- [' + d.at + '] ' + String(d.reflection ?? '').slice(0, 120))
         }
         return [{ type: 'text', text: lines.join('\n') }]
+      },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        return {
+          query: typeof rec.query === 'string' ? maskIfNeeded(cfg, rec.query) : '',
+          count: typeof rec.count === 'number' ? rec.count : 0,
+        }
       },
     },
     async execute(rawArgs: unknown) {
@@ -569,6 +724,36 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       backupId: { type: 'string', description: 'rollback 必填：apply 成功返回的 backupId。' },
       projectId: { type: 'string', description: '当前项目 id（可选；用于匹配只带 projectId 的经验，纯增量）。' },
     }),
+    isConcurrencySafe: (rawArgs) => {
+      if (rawArgs === undefined || rawArgs === null) return true
+      if (typeof rawArgs !== 'object' || Array.isArray(rawArgs)) return false
+      const rawMode = (rawArgs as Record<string, unknown>).mode
+      return rawMode === undefined || rawMode === 'preview'
+    },
+    presentCall: (rawArgs) => {
+      const args = asRecord(rawArgs)
+      const mode = optionalString(args, 'mode') ?? 'preview'
+      const targetPath = optionalString(args, 'path')
+      const displayPath = targetPath !== undefined ? maskIfNeeded(cfg, targetPath) : 'AGENTS.md'
+      return {
+        card: 'generic',
+        kind: mode === 'preview' ? 'read' : 'edit',
+        title: '渡梦[' + mode + ']：' + clip(displayPath, 48),
+        ...(targetPath !== undefined ? { locations: [{ path: displayPath }] } : {}),
+      }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      const mode = typeof meta.mode === 'string' ? meta.mode : ''
+      if (mode === '') return undefined
+      if (meta.ok === false) return { card: 'generic', title: '渡梦[' + mode + ']：失败' }
+      if (mode === 'preview') return { card: 'generic', title: '渡梦预览：' + (typeof meta.lessonsCount === 'number' ? meta.lessonsCount : 0) + ' 条经验' }
+      if (mode === 'apply') return { card: 'generic', title: meta.unchanged === true ? '渡梦应用：无变更' : '渡梦已应用' }
+      if (mode === 'rollback') return { card: 'generic', title: '渡梦已回滚' }
+      return undefined
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -632,6 +817,18 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         const deprecationText = typeof deprecation.message === 'string' && deprecation.message !== '' ? '（' + deprecation.message + '）' : ''
         return [{ type: 'text', text: '已把 ' + rec.lessonsCount + ' 条梦境教训桥接：' + actionText + ' ' + rec.path + '。' + deprecationText }]
       },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        const lessons = Array.isArray(rec.lessons) ? rec.lessons : []
+        return {
+          ok: rec.ok !== false,
+          mode: typeof rec.mode === 'string' ? rec.mode : 'preview',
+          lessonsCount: lessons.length,
+          ...(typeof rec.action === 'string' ? { action: rec.action } : {}),
+          ...(rec.unchanged === true ? { unchanged: true } : {}),
+          ...(typeof rec.backupId === 'string' ? { backupId: rec.backupId } : {}),
+        }
+      },
     },
     async execute(rawArgs: unknown, exec: unknown) {
       const args = asRecord(rawArgs)
@@ -640,7 +837,7 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         throw new Error('mode 必须是 preview / apply / rollback（缺省为 preview）。')
       }
       const explicitPath = optionalString(args, 'path')
-      const cwd = execCwdOf(exec)
+      const cwd = execCwdOf(exec, cfg)
       let projectRoot: string
       if (explicitPath !== undefined) {
         projectRoot = cwd ?? dirname(resolve(explicitPath))
@@ -727,6 +924,15 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
     name: 'dream_health',
     description: 'dsh-dream 自检：检查会话目录是否可读、梦境日记目录是否可用、梦境条数。遇到问题时先运行本工具定位。',
     parameters: compileParameters({}),
+    isConcurrencySafe: () => true,
+    presentCall: () => ({ card: 'generic', kind: 'read', title: 'Dream 健康自检' }),
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.ok !== 'boolean') return undefined
+      return { card: 'generic', title: meta.ok ? 'Dream 自检：正常' : 'Dream 自检：发现问题' }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -744,6 +950,11 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           for (const hint of hints) lines.push('- ' + String(hint))
         }
         return [{ type: 'text', text: lines.join('\n') }]
+      },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        const checks = Array.isArray(rec.checks) ? rec.checks : []
+        return { ok: rec.ok === true, checkCount: checks.length }
       },
     },
     async execute() {
@@ -837,6 +1048,27 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       },
       evidence: { type: 'array', items: evidenceItemsSpec(), description: '证据数组（可选，缺省为空数组；无证据时只能保存为 candidate）。' },
     }),
+    isConcurrencySafe: () => false,
+    presentCall: (rawArgs) => {
+      const args = asRecord(rawArgs)
+      const kind = optionalString(args, 'kind') ?? 'lesson'
+      const title = optionalString(args, 'title') ?? ''
+      const locations = locationsFromPaths(stringArray(args, 'files'), cfg)
+      return {
+        card: 'generic',
+        kind: 'edit',
+        title: '学梦[' + kind + ']：' + clip(maskIfNeeded(cfg, title), 44),
+        ...(locations !== undefined ? { locations } : {}),
+      }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.lessonId !== 'string' || meta.lessonId === '') return undefined
+      const verb = meta.created === true ? '新候选已入库' : '已合并到既有经验'
+      return { card: 'generic', title: verb + '：' + meta.lessonId + '（' + String(meta.state ?? 'candidate') + '）' }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -847,6 +1079,16 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
         const notes = Array.isArray(rec.notes) ? rec.notes : []
         for (const note of notes) lines.push('· ' + note)
         return [{ type: 'text', text: lines.join('\n') }]
+      },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        return {
+          ok: rec.ok === true,
+          lessonId: typeof rec.lessonId === 'string' ? rec.lessonId : '',
+          state: typeof rec.state === 'string' ? rec.state : 'candidate',
+          created: rec.created === true,
+          independentSupportCount: typeof rec.independentSupportCount === 'number' ? rec.independentSupportCount : 0,
+        }
       },
     },
     async execute(rawArgs: unknown, exec: unknown) {
@@ -884,7 +1126,7 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       const evidenceInputs = await verifyEvidenceClaims(
         cfg,
         parseEvidenceArgs(args, 'evidence', projectId),
-        { sessionsRoot: cfg.sessionsRoot, projectId, workspaceRoot, cwd: execCwdOf(exec) },
+        { sessionsRoot: cfg.sessionsRoot, projectId, workspaceRoot, cwd: execCwdOf(exec, cfg) },
       )
       const evidenceOrigin = (() => {
         const first = evidenceInputs.find((item) => item.provider !== undefined || item.model !== undefined || item.agentPreset !== undefined)
@@ -995,6 +1237,26 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       currentModel: { type: 'string', description: '当前执行步进的模型 ID（可选；用于对比经验来源模型 originModel，提示跨模型偏移）。' },
       includeCandidates: { type: 'boolean', description: '是否把候选经验纳入任务建议（默认 false；仅明确审阅候选时传 true，无证据候选仍不注入）。' },
     }),
+    isConcurrencySafe: () => true,
+    presentCall: (rawArgs) => {
+      const args = asRecord(rawArgs)
+      const q = optionalString(args, 'query') ?? ''
+      const locations = locationsFromPaths(stringArray(args, 'activeFiles'), cfg)
+      return {
+        card: 'generic',
+        kind: 'search',
+        title: '取梦：' + clip(maskIfNeeded(cfg, q), 48),
+        ...(locations !== undefined ? { locations } : {}),
+      }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (typeof meta.count !== 'number') return undefined
+      const scope = typeof meta.scopeLabel === 'string' && meta.scopeLabel !== '' ? '（' + meta.scopeLabel + '）' : ''
+      return { card: 'generic', title: '取梦：命中 ' + meta.count + ' 条适用经验' + scope }
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -1036,6 +1298,17 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           lines.push('  证据：' + lesson.evidenceSummary)
         }
         return [{ type: 'text', text: lines.join('\n') }]
+      },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        const items = Array.isArray(rec.items) ? rec.items : []
+        const budget = asRecord(rec.budget)
+        return {
+          count: items.length,
+          scopeLabel: typeof rec.scopeLabel === 'string' ? maskIfNeeded(cfg, rec.scopeLabel) : '',
+          usedChars: typeof budget.usedChars === 'number' ? budget.usedChars : 0,
+          maxChars: typeof budget.maxChars === 'number' ? budget.maxChars : 0,
+        }
       },
     },
     async execute(rawArgs: unknown, exec: unknown) {
@@ -1103,6 +1376,29 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
       resolution: { type: 'string', enum: ['prefer', 'drop', 'merge'], description: 'resolve-conflict 必填：prefer=以 lessonId 为准；drop=放弃 lessonId；merge=并入 lessonId（对方 stale）。' },
       note: { type: 'string', description: 'resolve-conflict 必填的解析依据；mark-disputed 可选。' },
     }),
+    isConcurrencySafe: () => false,
+    presentCall: (rawArgs) => {
+      const args = asRecord(rawArgs)
+      const action = optionalString(args, 'action') ?? 'review'
+      const target = optionalString(args, 'targetId') ?? optionalString(args, 'lessonId') ?? ''
+      return {
+        card: 'generic',
+        kind: 'edit',
+        title: '审梦[' + action + ']' + (target !== '' ? '：' + clip(maskReferenceIfNeeded(cfg, target), 40) : ''),
+      }
+    },
+    presentResult: (_rawArgs, rawResult) => {
+      const res = asRecord(rawResult)
+      if (res.isError === true) return undefined
+      const meta = asRecord(res.meta)
+      if (meta.requiresHumanReview === true) {
+        return { card: 'generic', title: '审梦：已建议人工审阅（状态未变）' }
+      }
+      if (typeof meta.state === 'string' && typeof meta.previousState === 'string') {
+        return { card: 'generic', title: '审梦：' + meta.previousState + ' → ' + meta.state }
+      }
+      return undefined
+    },
     output: {
       schema: baseSchema,
       render: (_args, value) => {
@@ -1112,6 +1408,18 @@ export function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinitio
           type: 'text',
           text: '经验 ' + asRecord(rec.lesson).id + '：' + rec.previousState + ' → ' + rec.state + '（revision ' + rec.revision + '）。',
         }]
+      },
+      presentationMeta: (_args, value) => {
+        const rec = asRecord(value)
+        const lessonId = asRecord(rec.lesson).id
+        return {
+          ok: rec.ok === true,
+          ...(rec.requiresHumanReview === true ? { requiresHumanReview: true } : {}),
+          ...(typeof lessonId === 'string' ? { lessonId } : {}),
+          ...(typeof rec.previousState === 'string' ? { previousState: rec.previousState } : {}),
+          ...(typeof rec.state === 'string' ? { state: rec.state } : {}),
+          ...(typeof rec.revision === 'number' ? { revision: rec.revision } : {}),
+        }
       },
     },
     async execute(rawArgs: unknown, exec: unknown) {
@@ -1137,6 +1445,10 @@ export function buildDigestText(digest: SessionDigest): string {
   } else if (digest.streamTail !== '') {
     lines.push('最终回应（流式还原）：')
     lines.push('  < ' + digest.streamTail.slice(-600).replace(/\n/g, ' '))
+  }
+  if (typeof digest.compactionSummary === 'string' && digest.compactionSummary.trim() !== '') {
+    lines.push('压缩摘要：')
+    lines.push('  ~ ' + digest.compactionSummary.replace(/\s+/g, ' ').trim().slice(0, 400))
   }
   if (digest.toolCalls.length > 0) {
     lines.push('工具足迹：' + [...new Set(digest.toolCalls)].slice(0, 30).join(', '))
@@ -1197,7 +1509,7 @@ export async function executeDreamReview(cfg: ResolvedDreamConfig, rawArgs: unkn
     ? await verifyEvidenceClaims(
       cfg,
       parseEvidenceArgs(args, 'evidence', before.scope.projectId),
-      { sessionsRoot: cfg.sessionsRoot, projectId: before.scope.projectId, workspaceRoot: before.scope.workspaceRoot, cwd: execCwdOf(exec) },
+      { sessionsRoot: cfg.sessionsRoot, projectId: before.scope.projectId, workspaceRoot: before.scope.workspaceRoot, cwd: execCwdOf(exec, cfg) },
     )
     : []
   const idempotencyKey = 'dream_review:' + sha256Short(JSON.stringify({

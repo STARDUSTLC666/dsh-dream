@@ -1,7 +1,9 @@
 /**
- * 任务相关经验检索（FREEZE v1 + v1.1 增补 R1/R3/R4）。
+ * 任务相关经验检索（FREEZE v1 + v1.1 增补 R1/R3/R4 + 零依赖混合 BM25F 检索引擎）。
  *
- * 顺序：范围过滤 → 排除 rejected/stale/disputed → 候选/无证据策略过滤 → 版本包名上下文 →
+ * 顺序：范围过滤 → 排除 rejected/stale/disputed → 候选/无证据策略过滤 → 版本/平台适用条件 →
+ * 零依赖混合 BM25F（字段加权 + 文档长度归一化 + 词边界与英文词形还原 + camelCase/路径拆分 +
+ * 双语技术同义桥接 + 概念覆盖率 + 邻近短语加分 + 强核验 read 证据/prevents/files 索引）→
  * 确定性排序 → 按排名整条装入的字符预算（遇第一条放不下即停，rankInversionCount===0）。
  * essential（title/when/action/exceptions，含 scopeLabel）永不截断；metadata（whyRelevant/
  * evidenceSummary）放不下时可截断并置 truncated:true。

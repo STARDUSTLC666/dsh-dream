@@ -23,6 +23,8 @@ export interface SessionDigest {
     toolCalls: string[];
     /** 流式文本还原尾部（来自 text-chunks 打包行，assistant/message 缺失时的兜底梦原料）。 */
     streamTail: string;
+    /** 最近一次 compaction/summary 的非人类压缩摘要摘录（长会话压缩后的兜底上下文）。 */
+    compactionSummary?: string;
     endedAt: number | null;
 }
 /** 扫描 zstd 帧边界（按魔数；误命中由解压失败兜底）。 */

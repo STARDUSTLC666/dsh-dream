@@ -5,7 +5,7 @@ export interface ContentBlock {
     type: 'text';
     text: string;
 }
-/** 注册给 ctx.tools.register 的原始工具定义。 */
+/** 注册给 ctx.tools.register 的原始工具定义（对齐 DSH 0.2.2-rc.3 ToolDefinition 契约）。 */
 export interface DreamToolDefinition {
     name: string;
     description: string;
@@ -17,9 +17,13 @@ export interface DreamToolDefinition {
     output: {
         schema: Record<string, unknown>;
         render(args: unknown, value: unknown): ContentBlock[];
+        presentationMeta?(args: unknown, value: unknown): unknown;
     };
     execute(args: unknown, exec: unknown): Promise<unknown>;
     timeoutMs?: number;
+    isConcurrencySafe?(args: unknown): boolean;
+    presentCall?(args: unknown): Record<string, unknown> | undefined;
+    presentResult?(args: unknown, result: unknown): Record<string, unknown> | undefined;
 }
 /** 构建六个做梦工具。 */
 export declare function buildDreamTools(config: ResolvedDreamConfig): DreamToolDefinition[];

@@ -6,6 +6,8 @@ export interface DshFeaturesStatus {
     messageFeedback: boolean;
     sessionLogExclude: boolean;
     tools: boolean;
+    sessionQuery: boolean;
+    sessionQuerySearch: boolean;
 }
 /** Deliberately excludes reasoning blocks, tool calls/results and image payloads. */
 export declare function automaticVisibleText(value: any): string;
@@ -19,6 +21,7 @@ export declare class AutomaticDream {
     private scheduler?;
     private active;
     private sessions;
+    private sessionCwds;
     private sessionModels;
     private sessionActiveFiles;
     private lastTurnInjected;
@@ -28,7 +31,7 @@ export declare class AutomaticDream {
     private seenFeedbackVersions;
     private activeAuxSessionIds;
     private contextCache;
-    private retrievalStamp;
+    private turnExposedIds;
     private closed;
     private ready;
     private host;
@@ -41,6 +44,7 @@ export declare class AutomaticDream {
     private problem?;
     private checks;
     private injected;
+    private compactionsObserved;
     readonly cfg: ResolvedDreamConfig;
     private readonly now;
     constructor(cfg: ResolvedDreamConfig, now?: () => number);
@@ -76,6 +80,7 @@ export declare class AutomaticDream {
         contribute?: boolean | null;
     }): void;
     flush(): void;
+    private recordSessionCwd;
     private resolveCwd;
     private isMainSession;
     private resolveWorkspaceIdSync;
@@ -90,6 +95,11 @@ export declare class AutomaticDream {
     private handleFeedbackCommitted;
     private enqueueFeedbackExtraction;
     private handleTurnStopping;
+    private isDirectHumanSource;
+    private clearSessionMemoryState;
+    private handleSessionArchived;
+    private handleAgentCreated;
+    private enqueueCompactionExtraction;
     observe(session: any, event: any): void;
     private process;
     private generateBatch;

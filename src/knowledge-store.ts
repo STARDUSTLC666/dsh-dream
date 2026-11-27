@@ -81,7 +81,7 @@ export interface KnowledgeStoreOptions {
   maskSecrets?: boolean
   /** 回放行数上限；默认 MAX_REPLAY_EVENTS，测试可调小。 */
   maxReplayEvents?: number
-  /** 获取锁的最长等待毫秒数；默认 2000。 */
+  /** 获取锁的最长等待毫秒数；默认 5000。 */
   lockTimeoutMs?: number
   /** 锁年龄超过该毫秒数且 pid 不存活才允许接管；默认 30000。 */
   lockStaleMs?: number
@@ -280,6 +280,9 @@ function holderDetails(info: LockInfo): Record<string, unknown> {
 function acquireLock(lockPath: string, options: { timeoutMs: number; staleMs: number; hardLimitMs: number; heartbeatMs: number }): LockHandle {
   const token = randomUUID()
   const deadline = Date.now() + options.timeoutMs
+  const inspectIntervalMs = Math.min(200, Math.max(25, options.staleMs))
+  let nextInspectAt = 0
+  let lastInfo: LockInfo = { present: false, stale: false }
   for (;;) {
     let acquired = false
     try {
@@ -292,7 +295,10 @@ function acquireLock(lockPath: string, options: { timeoutMs: number; staleMs: nu
       acquired = true
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'EEXIST') throw new KnowledgeError('io', '获取知识库锁失败：' + errorMessage(error))
+      const transientWinLock = process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES') && Date.now() < deadline
+      if (code !== 'EEXIST' && !transientWinLock) {
+        throw new KnowledgeError('io', '获取知识库锁失败：' + errorMessage(error))
+      }
     }
     if (acquired) {
       const heartbeat = setInterval(() => refreshLock(lockPath, token), options.heartbeatMs)
@@ -306,44 +312,53 @@ function acquireLock(lockPath: string, options: { timeoutMs: number; staleMs: nu
       }
     }
 
-    const info = readLockInfo(lockPath, options.staleMs)
-    if (info.stale) {
-      // TOCTOU：删除前再确认内容没有变化（他人刚接管/刷新则重新判断）。
-      const recheck = readLockInfo(lockPath, options.staleMs)
-      if (recheck.raw === info.raw) {
-        try {
-          unlinkSync(lockPath)
-          continue
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code
-          if (code === 'ENOENT') continue
-          if (Date.now() >= deadline) {
-            throw new KnowledgeError('io', '检测到过期知识库锁但无法接管：' + errorMessage(error), holderDetails(info))
+    const now = Date.now()
+    if (now >= nextInspectAt || now >= deadline) {
+      lastInfo = readLockInfo(lockPath, options.staleMs)
+      nextInspectAt = now + inspectIntervalMs
+      if (lastInfo.stale) {
+        // TOCTOU：删除前再确认内容没有变化（他人刚接管/刷新则重新判断）。
+        const recheck = readLockInfo(lockPath, options.staleMs)
+        if (recheck.raw === lastInfo.raw) {
+          try {
+            unlinkSync(lockPath)
+            nextInspectAt = 0
+            continue
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code
+            if (code === 'ENOENT') {
+              nextInspectAt = 0
+              continue
+            }
+            if (Date.now() >= deadline) {
+              throw new KnowledgeError('io', '检测到过期知识库锁但无法接管：' + errorMessage(error), holderDetails(lastInfo))
+            }
           }
         }
+        sleepSync(5 + Math.floor(Math.random() * 15))
+        continue
       }
-      sleepSync(25)
-      continue
-    }
 
-    if (info.present && info.pid !== undefined && info.alive === true && (info.ageMs ?? 0) > options.hardLimitMs) {
-      throw new KnowledgeError(
-        'io',
-        '知识库锁被进程 ' + info.pid + ' 持有 ' + Math.round(info.ageMs ?? 0) + 'ms（超过硬上限 ' + options.hardLimitMs + 'ms 且心跳停滞）；请结束该进程后重试，或确认无人写入后手动删除 ' + lockPath,
-        holderDetails(info),
-      )
-    }
-    if (Date.now() >= deadline) {
-      if (info.present) {
+      if (lastInfo.present && lastInfo.pid !== undefined && lastInfo.alive === true && (lastInfo.ageMs ?? 0) > options.hardLimitMs) {
         throw new KnowledgeError(
           'io',
-          '知识库被其他进程占用（pid=' + (info.pid === undefined ? '未知' : String(info.pid)) + '，age=' + Math.round(info.ageMs ?? 0) + 'ms），请稍后重试',
-          holderDetails(info),
+          '知识库锁被进程 ' + lastInfo.pid + ' 持有 ' + Math.round(lastInfo.ageMs ?? 0) + 'ms（超过硬上限 ' + options.hardLimitMs + 'ms 且心跳停滞）；请结束该进程后重试，或确认无人写入后手动删除 ' + lockPath,
+          holderDetails(lastInfo),
+        )
+      }
+    }
+
+    if (now >= deadline) {
+      if (lastInfo.present) {
+        throw new KnowledgeError(
+          'io',
+          '知识库被其他进程占用（pid=' + (lastInfo.pid === undefined ? '未知' : String(lastInfo.pid)) + '，age=' + Math.round(lastInfo.ageMs ?? 0) + 'ms），请稍后重试',
+          holderDetails(lastInfo),
         )
       }
       throw new KnowledgeError('io', '获取知识库锁超时，请稍后重试')
     }
-    sleepSync(25)
+    sleepSync(4 + Math.floor(Math.random() * 12))
   }
 }
 
@@ -453,7 +468,7 @@ export class KnowledgeStore {
     this.lockPath = join(knowledgeDir, '.lock')
     this.mask = options.maskSecrets !== false
     this.maxReplayEvents = maxReplay
-    this.lockTimeoutMs = numberOption(options.lockTimeoutMs, 2000)
+    this.lockTimeoutMs = numberOption(options.lockTimeoutMs, 5000)
     this.lockStaleMs = numberOption(options.lockStaleMs, 30000)
     this.lockHardLimitMs = numberOption(options.lockHardLimitMs, 600000)
     this.lockHeartbeatMs = Math.max(10, numberOption(options.lockHeartbeatMs, 5000))

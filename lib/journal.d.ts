@@ -43,5 +43,5 @@ export interface DreamStats {
  * 大小写，不再二次 flatMap（否则同一条教训的三个数值会来自不同的扫描）。
  */
 export declare function dreamStats(journalDir: string): DreamStats;
-/** 关键词检索梦境（不区分大小写，命中 reflection/lessons；扫描全量，上限见 FULL_SCAN_LIMIT）。 */
+/** 关键词检索梦境（不区分大小写，命中 reflection/lessons；优先精确子串，多词无连续命中时回落全词 AND；扫描全量，上限见 FULL_SCAN_LIMIT）。 */
 export declare function searchDreams(journalDir: string, query: string, limit: number): DreamEntry[];

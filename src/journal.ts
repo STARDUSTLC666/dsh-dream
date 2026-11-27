@@ -195,14 +195,20 @@ export function dreamStats(journalDir: string): DreamStats {
   return { total, moods: { ...moods }, topLessons, skippedLines }
 }
 
-/** 关键词检索梦境（不区分大小写，命中 reflection/lessons；扫描全量，上限见 FULL_SCAN_LIMIT）。 */
+/** 关键词检索梦境（不区分大小写，命中 reflection/lessons；优先精确子串，多词无连续命中时回落全词 AND；扫描全量，上限见 FULL_SCAN_LIMIT）。 */
 export function searchDreams(journalDir: string, query: string, limit: number): DreamEntry[] {
   const needle = query.toLowerCase()
   const keepLimit = Math.min(FULL_SCAN_LIMIT, Math.max(0, Math.floor(limit)))
-  const hits: DreamEntry[] = []
+  const terms = needle.trim().split(/\s+/).filter((term) => term !== '')
+  const exactHits: DreamEntry[] = []
+  const andHits: DreamEntry[] = []
   scanDreams(journalDir, (entry) => {
     const haystack = (entry.reflection + ' ' + entry.lessons.join(' ')).toLowerCase()
-    if (haystack.includes(needle) && hits.length < keepLimit) hits.push(entry)
+    if (haystack.includes(needle)) {
+      if (exactHits.length < keepLimit) exactHits.push(entry)
+    } else if (terms.length > 1 && andHits.length < keepLimit && terms.every((term) => haystack.includes(term))) {
+      andHits.push(entry)
+    }
   })
-  return hits
+  return exactHits.length > 0 ? exactHits : andHits
 }

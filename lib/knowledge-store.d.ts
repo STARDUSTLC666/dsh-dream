@@ -14,7 +14,7 @@ export interface KnowledgeStoreOptions {
     maskSecrets?: boolean;
     /** 回放行数上限；默认 MAX_REPLAY_EVENTS，测试可调小。 */
     maxReplayEvents?: number;
-    /** 获取锁的最长等待毫秒数；默认 2000。 */
+    /** 获取锁的最长等待毫秒数；默认 5000。 */
     lockTimeoutMs?: number;
     /** 锁年龄超过该毫秒数且 pid 不存活才允许接管；默认 30000。 */
     lockStaleMs?: number;

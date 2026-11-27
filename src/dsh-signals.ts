@@ -44,9 +44,11 @@ export interface VerificationGateMessage {
 
 const FILE_TOOL_NAMES = new Set([
   'read',
+  'read_image',
   'write',
   'edit',
   'apply_patch',
+  'str_replace_editor',
   'delete',
   'multi_edit',
   'notebook_edit',
@@ -60,6 +62,7 @@ const MUTATING_FILE_TOOL_NAMES = new Set([
   'write',
   'edit',
   'apply_patch',
+  'str_replace_editor',
   'delete',
   'multi_edit',
   'notebook_edit',
@@ -244,7 +247,7 @@ export function extractAssistantMessageModel(
     const event = asRecord(rawEvent)
     const type = event.type
     const data = asRecord(event.data)
-    if (type === 'request/context') {
+    if (type === 'request/context' || type === 'model/selection') {
       if (typeof data.model === 'string' && data.model.trim() !== '') latestModel = data.model.trim()
     } else if (type === 'request/header') {
       const config = asRecord(asRecord(data.header).config)
@@ -379,7 +382,7 @@ function parsePatchFilePaths(patchText: string): string[] {
     if (trimmed !== '' && trimmed !== '/dev/null' && !paths.includes(trimmed)) paths.push(trimmed)
   }
   for (const line of patchText.split(/\r?\n/)) {
-    const applyMatch = /^\*\*\*\s+(?:Update|Add|Delete|Move to)\s+File:\s+(.+)$/i.exec(line)
+    const applyMatch = /^\*\*\*\s+(?:(?:Update|Add|Delete)\s+File|Move\s+to(?:\s+File)?):\s+(.+)$/i.exec(line)
     if (applyMatch !== null) {
       add(applyMatch[1])
       continue
@@ -407,9 +410,21 @@ function parseToolArgs(rawArgs: unknown): Record<string, unknown> {
   return asRecord(rawArgs)
 }
 
-/** 判断工具名称是否属于文件修改类工具（用于区分只读问答轮与真实改文件轮）。 */
-export function isMutatingFileTool(toolName: unknown): boolean {
-  return typeof toolName === 'string' && MUTATING_FILE_TOOL_NAMES.has(toolName.trim().toLowerCase())
+/**
+ * 判断工具调用是否属于文件修改类操作（用于区分只读问答轮与真实改文件轮）。
+ * 对 `str_replace_editor` 这类读写复合工具，传入 `rawArgs` 时将 `command: 'view'` 识别为只读；
+ * 未传 `rawArgs` 时保持向后兼容，按默认修改类工具处理。
+ */
+export function isMutatingFileTool(toolName: unknown, rawArgs?: unknown): boolean {
+  if (typeof toolName !== 'string') return false
+  const name = toolName.trim().toLowerCase()
+  if (!MUTATING_FILE_TOOL_NAMES.has(name)) return false
+  if (name === 'str_replace_editor' && rawArgs !== undefined) {
+    const args = parseToolArgs(rawArgs)
+    const cmd = typeof args.command === 'string' ? args.command.trim().toLowerCase() : ''
+    if (cmd === 'view') return false
+  }
+  return true
 }
 
 /** 从一次工具执行对象提取全部工作区内相对文件路径（仅路径，不含正文）。 */

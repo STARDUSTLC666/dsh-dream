@@ -36,6 +36,8 @@ export interface SessionDigest {
   toolCalls: string[]
   /** 流式文本还原尾部（来自 text-chunks 打包行，assistant/message 缺失时的兜底梦原料）。 */
   streamTail: string
+  /** 最近一次 compaction/summary 的非人类压缩摘要摘录（长会话压缩后的兜底上下文）。 */
+  compactionSummary?: string
   endedAt: number | null
 }
 
@@ -178,11 +180,19 @@ export function digestSessionFile(filePath: string, maxUserMessages: number): Se
     } else if (type === 'user/message') {
       if (formatVersion >= 4 && typeof data === 'object' && data !== null) {
         const source = (data as Record<string, unknown>).source
-        // User-role injections are context, not the human's original words.
-        if (typeof source === 'object' && source !== null && (source as Record<string, unknown>).kind !== 'user') continue
+        // User-role injections (runtime-context, compact-checkpoint, notices) and agent relays are not the human's original words.
+        if (typeof source === 'object' && source !== null) {
+          const srcRec = source as Record<string, unknown>
+          if (srcRec.kind !== 'user' || typeof srcRec.form === 'string') continue
+        }
       }
       const msg = textOf(data)
       if (msg !== '' && digest.userMessages.length < maxUserMessages * 2) digest.userMessages.push(msg)
+    } else if (type === 'compaction/summary') {
+      if (typeof data === 'object' && data !== null) {
+        const summaryText = blockText((data as Record<string, unknown>).summary).trim()
+        if (summaryText !== '') digest.compactionSummary = summaryText.slice(-1200)
+      }
     } else if (type === 'assistant/message') {
       const msg = textOf(data)
       if (msg !== '') {
